@@ -1,0 +1,11 @@
+node_modules/
+build/
+.test-profile/
+.test-profile-native/
+.test-profile-native-fresh/
+*.log
+*.tmp
+.npm-cache/
+.npm-logs/
+.env*
+!.env.example

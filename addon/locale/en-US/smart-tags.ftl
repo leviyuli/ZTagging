@@ -1,0 +1,9 @@
+smart-tags-open =
+    .label = Smart Tags…
+smart-tags-analyze-selected =
+    .label = Suggest Smart Tags for Selected Items
+smart-tags-analyze-collections =
+    .label = Suggest Smart Tags in Selected Collections
+smart-tags-section = Smart Tags
+smart-tags-section-button = Open Smart Tags
+smart-tags-undo = Smart Tags changes

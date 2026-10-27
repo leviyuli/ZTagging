@@ -1,0 +1,110 @@
+{
+  "extension": "Smart Tags for Zotero",
+  "version": "0.1.0",
+  "target": "Zotero 10.0.6 on Windows",
+  "automatedTests": {
+    "passed": 117,
+    "failed": 0
+  },
+  "nativeSmoke": {
+    "status": "passed",
+    "checks": [
+      {
+        "name": "isolatedDataDirectory",
+        "passed": true
+      },
+      {
+        "name": "isolatedProfile",
+        "passed": true
+      },
+      {
+        "name": "extensionStartup",
+        "passed": true
+      },
+      {
+        "name": "menuAPI",
+        "passed": true
+      },
+      {
+        "name": "sectionAPI",
+        "passed": true
+      },
+      {
+        "name": "sourceGlobals",
+        "passed": true
+      },
+      {
+        "name": "automaticAssignmentInitiallyOff",
+        "passed": true
+      },
+      {
+        "name": "managerSnapshot",
+        "passed": true
+      },
+      {
+        "name": "hostScan",
+        "passed": true
+      },
+      {
+        "name": "rclDefinitionPresent",
+        "passed": true
+      },
+      {
+        "name": "nativeTagApplied",
+        "passed": true
+      },
+      {
+        "name": "manualTagPreserved",
+        "passed": true
+      },
+      {
+        "name": "unrelatedPaperUntouched",
+        "passed": true
+      },
+      {
+        "name": "ownedAssignmentRecorded",
+        "passed": true
+      },
+      {
+        "name": "historyRecorded",
+        "passed": true
+      },
+      {
+        "name": "nativeUndo",
+        "passed": true
+      },
+      {
+        "name": "savedSearch",
+        "passed": true
+      },
+      {
+        "name": "isolatedServerPort",
+        "passed": true
+      },
+      {
+        "name": "nativeOAuthCallback",
+        "passed": true
+      },
+      {
+        "name": "callbackNoStoreHeader",
+        "passed": true
+      },
+      {
+        "name": "callbackDisposed",
+        "passed": true
+      }
+    ]
+  },
+  "managerUI": [
+    "Overview",
+    "Vocabulary",
+    "Settings"
+  ],
+  "liveAI": "Not run; configure your own ChatGPT sign-in or API key and use Test connection.",
+  "workingLibraryModified": false,
+  "sha256": "814b89790c01a6335c0d57ed8c0e7d0b3f0de65a4afff9e6b2b26f27caef8c67",
+  "nativeBundleMatchesInstaller": true,
+  "managerReadyInMatchedBundle": true,
+  "repository": "https://github.com/leviyuli/ZTagging",
+  "publicationChanges": "Repository update URL and hashed update manifest; runtime bundle unchanged."
+}
