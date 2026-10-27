@@ -1,9 +1,9 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "target": "Zotero 10.0.6 on Windows",
   "automatedTests": {
-    "passed": 117,
+    "passed": 132,
     "failed": 0
   },
   "nativeSmoke": {
@@ -98,13 +98,37 @@
   "managerUI": [
     "Overview",
     "Vocabulary",
+    "Definition editor",
+    "Review",
     "Settings"
   ],
   "liveAI": "Not run; configure your own ChatGPT sign-in or API key and use Test connection.",
   "workingLibraryModified": false,
-  "sha256": "814b89790c01a6335c0d57ed8c0e7d0b3f0de65a4afff9e6b2b26f27caef8c67",
+  "sha256": "9d93860912c9e729d8a6f1bf108d2238d5fe24c286ce7565e989bd14364d7f1c",
   "nativeBundleMatchesInstaller": true,
   "managerReadyInMatchedBundle": true,
   "repository": "https://github.com/leviyuli/ZTagging",
-  "publicationChanges": "Repository update URL and hashed update manifest; runtime bundle unchanged."
+  "publicationChanges": "Version 0.1.1 replaces native select and model datalist popups with an HTML listbox control; update manifest points to the tested installer.",
+  "dropdownValidation": {
+    "automatedRegressions": 15,
+    "nativePointerSelection": [
+      "analysis-scope",
+      "tag-facet",
+      "settings-provider"
+    ],
+    "nativeKeyboardSelection": [
+      "analysis-scope",
+      "vocabulary-status",
+      "review-filter"
+    ],
+    "nativeEscapeDismissal": "settings-provider",
+    "nativePopupRendering": [
+      "analysis-scope",
+      "vocabulary-status",
+      "tag-facet",
+      "review-filter",
+      "settings-provider"
+    ],
+    "conditionalPickers": "Account and discovered-model pickers use the same tested control; no live sign-in or model discovery was run."
+  }
 }

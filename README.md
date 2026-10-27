@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It bui
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.1.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.1.0.xpi).
+2. Select [`smart-tags-0.1.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.1.1.xpi).
 3. Open **Tools → Smart Tags…**. The right-hand item pane also has a Smart Tags section.
 4. In **Settings**, configure one connection, discover/select a text-capable model, and click **Test connection**.
 5. Start with **Pilot · 50 papers** on Overview and click **Rebuild vocabulary**. Review the draft definitions under Vocabulary, edit them as needed, and approve your choices.
@@ -15,6 +15,8 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It bui
 The classifier usually proposes up to five core tags plus matching custom tags; it does not pad papers to a minimum. Routine assignment uses approved definitions. New topics are presented for vocabulary review rather than silently added as native tags.
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
+
+Version 0.1.1 fixes overlapping, unselectable dropdowns in the manager. All pickers use the same mouse- and keyboard-accessible control, including discovered models; model IDs can also be entered manually.
 
 ## AI connections and cost
 

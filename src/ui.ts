@@ -1,4 +1,5 @@
 import type { DisplayCleanup, DisplayPaper, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
+import { createDropdown, cleanupDropdowns } from './dropdown';
 
 type Child = Node | string | null | undefined | false;
 type ModalState = { kind: 'apply' | 'cleanup'; ids: string[] } | { kind: 'search' } | null;
@@ -97,17 +98,10 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     element.addEventListener('input', () => onInput(element.value));
     return element;
   }
-  function select<T extends string>(id: string, value: T, choices: [T, string][], onChange: (value: T) => void) {
-    const element = h('select');
-    element.id = id;
-    for (const [key, label] of choices) {
-      const option = h('option', '', label);
-      option.value = key;
-      element.append(option);
-    }
-    element.value = value;
-    element.addEventListener('change', () => onChange(element.value as T));
-    return element;
+  function select<T extends string>(id: string, value: T, choices: [T, string][], onChange: (value: T) => void, accessibleName?: string) {
+    const control = createDropdown(win, { id, value, choices, onChange: next => onChange(next as T), disabled: busy });
+    if (accessibleName) control.setAttribute('aria-label', accessibleName);
+    return control;
   }
   function checkbox(id: string, checked: boolean, label: string, onChange: (value: boolean) => void, disabled = false) {
     const element = h('input');
@@ -289,7 +283,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     const query = vocabQuery.toLocaleLowerCase();
     const tags = s.tags.filter(tag => (vocabStatus === 'all' || tag.status === vocabStatus || (vocabStatus === 'custom' && tag.custom)) && (!query || `${tag.name} ${tag.description} ${tag.aliases.join(' ')}`.toLocaleLowerCase().includes(query)));
     const search = input('vocabulary-search', vocabQuery, value => { vocabQuery = value; render(); }, 'Find a tag or concept…', 'search');
-    const toolbar = h('div', 'toolbar', search, select('vocabulary-status', vocabStatus, [['all', 'All definitions'], ['draft', 'Drafts'], ['approved', 'Approved'], ['custom', 'Custom topics']], value => { vocabStatus = value; render(); }), button('New tag', () => newTag()), button('Custom topic', () => newTag(true), 'primary'));
+    const toolbar = h('div', 'toolbar', search, select('vocabulary-status', vocabStatus, [['all', 'All definitions'], ['draft', 'Drafts'], ['approved', 'Approved'], ['custom', 'Custom topics']], value => { vocabStatus = value; render(); }, 'Vocabulary status'), button('New tag', () => newTag()), button('Custom topic', () => newTag(true), 'primary'));
     const draftIds = s.tags.filter(tag => tag.status === 'draft').map(tag => tag.id);
     const list = h('div', '');
     if (!tags.length) list.append(h('div', 'card', empty('No matching definitions', s.tags.length ? 'Try another search, or add the concept you need.' : 'Run a vocabulary rebuild from Overview, or start by defining a custom topic.')));
@@ -364,7 +358,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     const visible = suggestions.slice(reviewPage * PAGE_SIZE, (reviewPage + 1) * PAGE_SIZE);
     const applicableSelected = [...selectedSuggestions].filter(id => { const item = suggestionMap.get(id); return !!item && !item.applied && item.status !== 'rejected'; });
     const accepted = s.suggestions.filter(item => item.status === 'accepted' && !item.applied).map(item => item.id);
-    const toolbar = h('div', 'toolbar', select('review-filter', reviewFilter, [['pending', 'Pending review'], ['accepted', 'Accepted, not applied'], ['rejected', 'Rejected'], ['applied', 'Applied'], ['all', 'All suggestions']], value => { reviewFilter = value; reviewPage = 0; render(); }),
+    const toolbar = h('div', 'toolbar', select('review-filter', reviewFilter, [['pending', 'Pending review'], ['accepted', 'Accepted, not applied'], ['rejected', 'Rejected'], ['applied', 'Applied'], ['all', 'All suggestions']], value => { reviewFilter = value; reviewPage = 0; render(); }, 'Suggestion status'),
       button('Select this page', () => { for (const item of visible) if (!item.applied && item.status !== 'rejected') selectedSuggestions.add(item.id); render(); }),
       button('Clear selection', () => { selectedSuggestions.clear(); render(); }, 'quiet'),
       h('span', 'search-results', `${suggestions.length} suggestions`));
@@ -480,12 +474,13 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
         render();
       }, 'primary'), button('Remove key', () => run('remove-api-key', undefined, 'Saved API key removed.'), 'danger', !s.connection.apiKeyStored)));
     }
-    const models = h('datalist');
-    models.id = 'available-models';
-    for (const model of s.models) { const option = h('option'); option.value = model; models.append(option); }
     const modelInput = input('settings-model', draft.model, value => { mark('model', value); render(); }, 'Choose a model available to this connection');
-    modelInput.setAttribute('list', 'available-models');
-    connection.append(h('div', 'divider'), field('Model', modelInput), models,
+    connection.append(h('div', 'divider'), field('Model', modelInput, 'Enter a model ID or choose from discovered models below.'));
+    if (s.models.length) connection.append(field('Discovered models', select('settings-discovered-model', s.models.includes(draft.model) ? draft.model : '', [
+      ...(!s.models.includes(draft.model) ? [['', 'Choose a discovered model'] as [string, string]] : []),
+      ...s.models.map(model => [model, model] as [string, string]),
+    ], value => { if (value) { mark('model', value); render(); } })));
+    connection.append(
       h('div', 'actions', button('Discover models', async () => { await saveSettings(); await run('discover-models', undefined, 'Available model list updated.'); }), button('Test connection', async () => { await saveSettings(); await run('test-connection', undefined, 'Connection test succeeded.'); }, 'primary', !draft.model.trim())),
       h('p', 'card-description', 'Testing sends a small AI request through the selected connection.'));
     if (s.connection.credentialStorage) connection.append(h('p', 'card-description', `Credential storage: ${s.connection.credentialStorage}`));
@@ -633,8 +628,10 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     win.scrollTo(0, scrollY);
   }
   function render() {
+    cleanupDropdowns(doc);
     try { renderContent(); }
     catch (error) {
+      cleanupDropdowns(doc);
       diagnostic(`render failed: ${error instanceof Error ? error.message : String(error)}`);
       try {
         app!.setAttribute('data-smart-tags-state', 'error');
@@ -652,6 +649,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   const destroy = () => {
     if (disposed) return;
     disposed = true;
+    cleanupDropdowns(doc);
     unsubscribe();
     if (signingIn) void api.invoke('cancel-sign-in').catch(() => {});
     if (toastTimer) win.clearTimeout(toastTimer);
