@@ -159,7 +159,10 @@ function managerDialog() {
       return find(app) || null;
     },
     createElement() { throw new Error('An XML manager document requires the explicit HTML namespace'); },
-    createElementNS(namespace: string, name: string) { assert.equal(namespace, 'http://www.w3.org/1999/xhtml'); return new Element(doc, name); },
+    createElementNS(namespace: string, name: string) {
+      assert.ok(['http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/svg'].includes(namespace), `Unexpected element namespace: ${namespace}`);
+      return new Element(doc, name);
+    },
     createTextNode(text: string) { const textNode = new Element(doc, '#text'); textNode.textContent = text; return textNode; },
   };
   const win: any = {

@@ -29,7 +29,7 @@ await mkdir(data, { recursive: true });
 await mkdir(path.join(profile, 'extensions'), { recursive: true });
 await cp(source, nativeAddon, { recursive: true });
 await build({ entryPoints: [path.join(root, 'scripts', 'native-smoke.js')], outfile: path.join(nativeAddon, 'content', 'native-smoke.js'), bundle: true, format: 'iife', platform: 'browser', target: 'firefox140', legalComments: 'none' });
-const configuration = { root, data, profile, reportPath, port: 23149 };
+const configuration = { root, data, profile, reportPath, port: 23149, openManager: process.argv.includes('--open-manager'), theme: process.argv.includes('--light-theme') ? 'light' : 'system' };
 const bootstrapPath = path.join(nativeAddon, 'bootstrap.js');
 const bootstrap = await readFile(bootstrapPath, 'utf8');
 const needle = 'await smartTagsScope.SmartTags.startup({ id, version, rootURI });';
@@ -60,6 +60,10 @@ const preferences = {
   'extensions.zoteroWinWordIntegration.skipInstallation': true,
   'extensions.zoteroOpenOfficeIntegration.skipInstallation': true,
 };
+if (configuration.theme === 'light') {
+  preferences['browser.theme.toolbar-theme'] = 1;
+  preferences['ui.systemUsesDarkTheme'] = 0;
+}
 await writeFile(path.join(profile, 'user.js'), Object.entries(preferences).map(([key, value]) => `user_pref(${JSON.stringify(key)}, ${JSON.stringify(value)});`).join('\n') + '\n');
 await writeFile(reportPath, JSON.stringify({ status: 'prepared', configuration, note: 'Launch the isolated Zotero instance. No library or account has been accessed by this preparation script.' }, null, 2));
 console.log(JSON.stringify({ prepared: true, configuration, executable: 'C:\\Program Files\\Zotero\\zotero.exe', arguments: ['-no-remote', '-profile', profile, '-datadir', data, '-purgecaches', '-ZoteroDebugText'], next: 'Launch with an isolated process outside the process sandbox. Inspect the manager manually; the hook leaves Zotero running.' }, null, 2));

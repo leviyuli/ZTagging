@@ -87,6 +87,7 @@ void (async () => {
     } finally { callback?.dispose(); }
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
     report.syntheticItemIDs = items.map(item => item.id);
+    if (config.openManager) await Zotero.SmartTags.openManager();
     report.status = 'passed';
     report.completedAt = new Date().toISOString();
     report.note = 'No real AI request or authentication was performed. Leave this isolated app running for manual manager inspection.';

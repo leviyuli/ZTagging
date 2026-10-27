@@ -1,6 +1,6 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "target": "Zotero 10.0.6 on Windows",
   "automatedTests": {
     "passed": 132,
@@ -98,37 +98,42 @@
   "managerUI": [
     "Overview",
     "Vocabulary",
-    "Definition editor",
     "Review",
+    "Explore library",
+    "Queue & history",
     "Settings"
   ],
   "liveAI": "Not run; configure your own ChatGPT sign-in or API key and use Test connection.",
   "workingLibraryModified": false,
-  "sha256": "9d93860912c9e729d8a6f1bf108d2238d5fe24c286ce7565e989bd14364d7f1c",
+  "sha256": "63d3255aa260726aeff84c7a5210dac3665e8ae4af80ccbdfe0cf6bb329769e3",
   "nativeBundleMatchesInstaller": true,
   "managerReadyInMatchedBundle": true,
   "repository": "https://github.com/leviyuli/ZTagging",
-  "publicationChanges": "Version 0.1.1 replaces native select and model datalist popups with an HTML listbox control; update manifest points to the tested installer.",
+  "publicationChanges": "Version 0.1.2 adds the Notion-inspired workspace layout, neutral light/dark styling, grouped navigation, breadcrumbs, and decorative SVG icons. Accessible HTML dropdowns remain in use.",
   "dropdownValidation": {
     "automatedRegressions": 15,
     "nativePointerSelection": [
-      "analysis-scope",
-      "tag-facet",
-      "settings-provider"
+      "analysis-scope"
     ],
     "nativeKeyboardSelection": [
-      "analysis-scope",
-      "vocabulary-status",
-      "review-filter"
+      "vocabulary-status"
     ],
-    "nativeEscapeDismissal": "settings-provider",
     "nativePopupRendering": [
       "analysis-scope",
-      "vocabulary-status",
-      "tag-facet",
-      "review-filter",
-      "settings-provider"
+      "vocabulary-status"
     ],
     "conditionalPickers": "Account and discovered-model pickers use the same tested control; no live sign-in or model discovery was run."
+  },
+  "workspaceValidation": {
+    "reference": "https://www.notion.com/help/intro-to-workspaces",
+    "nativeThemes": [
+      "light",
+      "dark"
+    ],
+    "nativeChecksPerTheme": 21,
+    "breadcrumbNavigation": true,
+    "navigationFocusRestoration": true,
+    "productionBundleMatchesNative": true,
+    "productionStylesheetMatchesNative": true
   }
 }

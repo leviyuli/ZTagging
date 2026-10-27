@@ -13,6 +13,15 @@ const pageTitles: Record<ManagerPage, [string, string]> = {
   activity: ['Queue & history', 'Follow analysis progress and review changes that have been applied.'],
   settings: ['Connections & settings', 'Choose an AI connection and control automatic assignment and API spending.'],
 };
+const pageNames: Record<ManagerPage, string> = { overview: 'Overview', vocabulary: 'Vocabulary', review: 'Review', library: 'Explore library', activity: 'Queue & history', settings: 'Settings' };
+const iconPaths = {
+  overview: ['M3 10.5 12 3l9 7.5', 'M5 9v12h14V9', 'M9 21v-7h6v7'],
+  vocabulary: ['M20 13 13 20a2 2 0 0 1-3 0l-7-7V4h9l8 6a2 2 0 0 1 0 3Z', 'M7.5 8h.01'],
+  review: ['M9 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-4', 'M9 2h6v5H9z', 'm8 13 3 3 5-5'],
+  library: ['M12 5v16', 'M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z'],
+  activity: ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6', 'M12 7v5l3 2'],
+  settings: ['M4 4v16M12 4v16M20 4v16', 'M1 8h6M9 16h6M17 10h6'],
+} as const;
 
 /** Mount a credential-free manager. All data access and writes go through the host. */
 export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Promise<void>; destroy: () => void } {
@@ -64,6 +73,17 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     }
     return element;
   }
+  function icon(name: ManagerPage): SVGSVGElement {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const svg = doc.createElementNS(namespace, 'svg');
+    for (const [key, value] of Object.entries({ class: 'ui-icon', viewBox: '0 0 24 24', width: '18', height: '18', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(key, value);
+    for (const path of iconPaths[name]) {
+      const element = doc.createElementNS(namespace, 'path');
+      element.setAttribute('d', path);
+      svg.append(element);
+    }
+    return svg;
+  }
   function badge(text: string, type = '') { return h('span', `pill ${type}`, text); }
   function button(text: string, action: () => void | Promise<unknown>, kind = '', disabled = false): HTMLButtonElement {
     const element = h('button', kind, text);
@@ -114,8 +134,8 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     labelElement.htmlFor = id;
     return labelElement;
   }
-  function card(title: string, description: string, body: Node, footer?: Node) {
-    return h('section', 'card', h('div', 'card-header', h('div', '', h('h2', '', title), description ? h('p', 'card-description', description) : null)), h('div', 'card-body', body), footer ? h('div', 'card-footer', footer) : null);
+  function card(title: string, description: string, body: Node, footer?: Node, className = '') {
+    return h('section', `card ${className}`.trim(), h('div', 'card-header', h('div', '', h('h2', '', title), description ? h('p', 'card-description', description) : null)), h('div', 'card-body', body), footer ? h('div', 'card-footer', footer) : null);
   }
   function notify(message: string, error = false) {
     toast = message;
@@ -236,7 +256,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       ['Enable routine assignment', 'Approve the pilot first. New papers can then use the same vocabulary.'],
     ].forEach(([title, description], index) => steps.append(h('li', 'step', h('span', 'step-number', String(index + 1)), h('div', '', h('h3', '', title), h('p', '', description)))));
     const pilot = h('div', '', h('p', '', s.pilotReviewed ? 'Your pilot has been marked as reviewed. Automatic assignment can be enabled in Settings.' : 'Review the pilot vocabulary and its paper suggestions before enabling automatic assignment.'), h('div', 'actions', button('Open review', () => nav('review')), button(s.pilotReviewed ? 'Pilot reviewed' : 'Mark pilot reviewed', () => run('mark-pilot-reviewed', undefined, 'Pilot review recorded.'), 'primary', s.pilotReviewed || !approvedTags().length || !s.papers.length)));
-    return h('div', '', stats, h('div', 'grid', card('Start an analysis', 'A small pilot is a useful first step.', runControls()), card('How Smart Tags works', '', steps)), h('div', 'section-gap', card('Pilot review', 'Your decisions guide future assignments.', pilot)), h('div', 'notice section-gap', 'Your existing collections and Zotero columns stay as they are. Smart Tags organizes content through native tags and optional saved searches.'));
+    return h('div', '', stats, h('div', 'grid', card('Start an analysis', 'A small pilot is a useful first step.', runControls(), undefined, 'overview-primary'), card('How Smart Tags works', '', steps, undefined, 'overview-guide')), h('div', 'section-gap', card('Pilot review', 'Your decisions guide future assignments.', pilot)), h('div', 'notice section-gap', 'Your existing collections and Zotero columns stay as they are. Smart Tags organizes content through native tags and optional saved searches.'));
   }
 
   function newTag(custom = false) {
@@ -577,21 +597,32 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       return;
     }
     const s = state;
-    const sidebar = h('aside', 'sidebar', h('div', 'brand', h('span', 'brand-mark', '#'), h('div', '', h('strong', '', 'Smart Tags'), h('small', '', 'FOR ZOTERO'))));
+    const sidebar = h('aside', 'sidebar', h('div', 'brand', h('span', 'brand-mark', icon('vocabulary')), h('div', '', h('strong', '', 'ZTagging'), h('small', '', 'Personal library'))));
     const navigation = h('nav', 'nav');
-    navigation.setAttribute('aria-label', 'Smart Tags sections');
-    const navItems: [ManagerPage, string, string, number?][] = [['overview', '◈', 'Overview'], ['vocabulary', '▤', 'Vocabulary', s.tags.length], ['review', '✓', 'Review', s.suggestions.filter(item => item.status === 'pending' && !item.applied).length], ['library', '⌕', 'Explore library'], ['activity', '↻', 'Queue & history'], ['settings', '⚙', 'Settings']];
-    for (const [target, icon, label, count] of navItems) {
+    navigation.setAttribute('aria-label', 'Library pages');
+    const utilities = h('nav', 'nav');
+    utilities.setAttribute('aria-label', 'Library tools');
+    const navItems: [ManagerPage, number?][] = [['overview'], ['vocabulary', s.tags.length], ['review', s.suggestions.filter(item => item.status === 'pending' && !item.applied).length], ['library'], ['activity'], ['settings']];
+    for (const [target, count] of navItems) {
       const navButton = button('', () => nav(target), `nav-button ${page === target ? 'active' : ''}`);
+      navButton.id = `nav-${target}`;
       navButton.disabled = false;
-      navButton.append(h('span', 'nav-icon', icon), h('span', '', label));
+      navButton.append(h('span', 'nav-icon', icon(target)), h('span', '', pageNames[target]));
       if (count !== undefined && count > 0) navButton.append(h('span', 'nav-count', count.toLocaleString()));
       if (page === target) navButton.setAttribute('aria-current', 'page');
-      navigation.append(navButton);
+      (target === 'activity' || target === 'settings' ? utilities : navigation).append(navButton);
     }
     const connected = s.settings.provider === 'api' ? s.connection.apiKeyStored : s.connection.chatgptSignedIn;
-    sidebar.append(navigation, h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? s.settings.provider === 'api' ? 'OpenAI API' : 'ChatGPT plan' : 'Connection needed'), h('p', '', `Vocabulary v${s.vocabularyVersion}`), h('p', 'muted', 'Personal library · local settings')));
-    const workspace = h('main', 'workspace', h('header', 'page-header', h('div', '', h('div', 'eyebrow', 'Smart Tags / ' + (page === 'activity' ? 'Activity' : page[0].toUpperCase() + page.slice(1))), h('h1', '', pageTitles[page][0]), h('p', 'subtitle', pageTitles[page][1])), h('div', 'header-status', busy ? h('span', 'busy-indicator', 'Working…') : s.settings.autoAssign ? 'Automatic assignment on' : 'Review before applying')));
+    sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workspace'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected' : 'Connection needed'), h('p', '', `Vocabulary v${s.vocabularyVersion} · Stored locally`)));
+    const home = button('Personal library', () => nav('overview'), 'breadcrumb-home');
+    home.id = 'workspace-home';
+    home.disabled = false;
+    const breadcrumbs = h('nav', 'breadcrumbs', home, h('span', 'breadcrumb-divider', '/'), h('span', 'breadcrumb-current', pageNames[page]));
+    breadcrumbs.setAttribute('aria-label', 'Breadcrumb');
+    const currentCrumb = breadcrumbs.lastElementChild;
+    currentCrumb?.setAttribute('aria-current', 'page');
+    const topbar = h('div', 'workspace-topbar', breadcrumbs, h('div', 'header-status', busy ? h('span', 'busy-indicator', 'Working…') : s.settings.autoAssign ? 'Automatic assignment on' : 'Review before applying'));
+    const workspace = h('main', 'workspace', h('header', 'page-header', h('div', '', h('div', 'workspace-page-icon', icon(page)), h('h1', '', pageTitles[page][0]), h('p', 'subtitle', pageTitles[page][1]))));
     const strip = queueStrip();
     if (strip) workspace.append(strip);
     if (signingIn) {
@@ -602,7 +633,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     for (const warning of s.warnings || []) workspace.append(h('div', 'notice warning', warning));
     const contents = page === 'overview' ? renderOverview() : page === 'vocabulary' ? renderVocabulary() : page === 'review' ? renderReview() : page === 'library' ? renderLibrary() : page === 'activity' ? renderActivity() : renderSettings();
     workspace.append(contents);
-    const shell = h('div', 'shell', sidebar, workspace);
+    const shell = h('div', 'shell', sidebar, h('div', 'workspace-frame', topbar, workspace));
     if (toast) {
       const toastElement = h('div', `toast ${toastError ? 'error' : ''}`, toast);
       toastElement.setAttribute('role', toastError ? 'alert' : 'status');
