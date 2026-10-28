@@ -1,4 +1,5 @@
 import { AppController, initialState, validState, validLegacyState, migrateState } from './controller.ts';
+import { normalizeTagDefinitions } from './core.ts';
 import type { AppState } from './controller.ts';
 import { ZoteroHost, SecureCredentials, registerOAuthCallback, chooseJSONFile } from './platform.ts';
 import { ProviderClient } from './providers.ts';
@@ -154,13 +155,21 @@ export async function startup(data: StartupData) {
   const profilePath = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
   const directory = PathUtils.join(profilePath, 'smart-tags');
   await IOUtils.makeDirectory(directory, { ignoreExisting: true, createAncestors: true });
+  let legacyBaseline: import('./core.ts').TagDefinition[] | undefined;
+  const baselinePath=PathUtils.join(directory,'state.json.pre-v3.json');
+  if(await IOUtils.exists(baselinePath)) {
+    try {
+      const baseline=JSON.parse(await IOUtils.readUTF8(baselinePath));
+      if(validLegacyState(baseline)&&Array.isArray(baseline.tags))legacyBaseline=baseline.tags.filter((tag:import('./core.ts').TagDefinition)=>normalizeTagDefinitions([tag]).length===1);
+    } catch { /* Without a readable baseline, legacy definitions are preserved. */ }
+  }
   store = new AtomicStore<AppState>({
     read: path => IOUtils.readUTF8(path),
     exists: path => IOUtils.exists(path),
     writeAtomic: (path, text) => IOUtils.writeUTF8(path, text, { tmpPath: `${path}.tmp` }),
     readBytes:path=>IOUtils.read(path),
     copyExact:async(source,destination)=>{await IOUtils.copy(source,destination,{noOverwrite:true});},
-  }, PathUtils.join(directory, 'state.json'), initialState, validState, migrateState, validLegacyState);
+  }, PathUtils.join(directory, 'state.json'), initialState, validState, value=>migrateState(value,{legacyBaseline}), validLegacyState);
   const loaded = await store.load();
   if (store.recovered) loaded.warnings=upsertWarning(loaded.warnings,{code:'state-recovery',message:'Smart Tags restored its previous valid state from the local backup.',context:'startup',conditionFingerprint:'state-backup-recovery'});
   credentials = new SecureCredentials();

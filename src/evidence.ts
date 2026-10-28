@@ -2,15 +2,16 @@ import {allocateOpaqueId,fingerprint} from './core.ts';
 export {allocateOpaqueId} from './core.ts';
 import type {Evidence,Facet} from './core.ts';
 import type {PaperFacts} from './taxonomy.ts';
-import {terminologyKey} from './naming.ts';
+import {terminologyKey,NORMALIZATION_VERSION} from './naming.ts';
+import type {NormalizationVersion} from './naming.ts';
 
 export interface FactSource {
   factConceptId:string;paperId:string;name:string;facet?:Facet;evidence:Evidence[];summary:string;
   metadataFingerprint:string;inputFingerprint:string;provider:string;model:string;extractionVersion:1;
 }
-export interface RegistryEntry {registryId:string;key:string;sourceIds:string[]}
+export interface RegistryEntry {registryId:string;key:string;sourceIds:string[];normalizationVersion?:NormalizationVersion}
 export interface EvidenceCatalog {sources:Record<string,FactSource>;entries:Record<string,RegistryEntry>;registryAliases?:Record<string,string>}
-export interface RegistrySnapshot extends EvidenceCatalog {id:string;protocolVersion:2;paperIds:string[]}
+export interface RegistrySnapshot extends EvidenceCatalog {id:string;protocolVersion:2;paperIds:string[];normalizationVersion?:NormalizationVersion}
 export type IdentityAllocator=(prefix:string)=>string;
 export function createEmptyEvidenceCatalog():EvidenceCatalog{return {sources:{},entries:{}};}
 export function ensureFactConceptIds(facts:readonly PaperFacts[],allocate:IdentityAllocator=allocateOpaqueId):void {
@@ -24,19 +25,20 @@ const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 /** Catalog growth never mutates source records or already returned snapshot objects. */
 export function createRegistrySnapshot(facts:readonly PaperFacts[],catalog:EvidenceCatalog,allocate:IdentityAllocator=allocateOpaqueId):RegistrySnapshot {
   ensureFactConceptIds(facts,allocate);
-  const sources:Record<string,FactSource>={},entries:Record<string,RegistryEntry>={},byKey=new Map(Object.values(catalog.entries).map(entry=>[entry.key,entry]));
+  const sources:Record<string,FactSource>={},entries:Record<string,RegistryEntry>={},byKey=new Map(Object.values(catalog.entries).map(entry=>[entry.key,entry])),bySource=new Map(Object.values(catalog.entries).flatMap(entry=>entry.sourceIds.map(id=>[id,entry] as const)));
   for(const fact of facts)for(const concept of fact.concepts){
     const id=concept.factConceptId!,source:FactSource={factConceptId:id,paperId:fact.paperId,name:concept.name,...(concept.facet?{facet:concept.facet}:{}),evidence:clone(concept.evidence),summary:fact.summary,metadataFingerprint:fact.metadataFingerprint,inputFingerprint:fact.inputFingerprint,provider:fact.provider,model:fact.model,extractionVersion:1};
     if(catalog.sources[id]&&fingerprint(catalog.sources[id])!==fingerprint(source))throw new Error(`Immutable factual source changed: ${id}.`);
     if(!catalog.sources[id])catalog.sources[id]=source;
     sources[id]=clone(catalog.sources[id]);
-    const key=terminologyKey(concept.name);let entry=byKey.get(key);
-    if(!entry){let registryId:string;do{registryId=allocate('registry');}while(catalog.entries[registryId]);entry={registryId,key,sourceIds:[]};catalog.entries[registryId]=entry;byKey.set(key,entry);}
+    const key=terminologyKey(concept.name);let entry=bySource.get(id);
+    if(!entry){const candidate=byKey.get(key);if(candidate&&terminologyKey(concept.name,candidate.normalizationVersion??1)===candidate.key)entry=candidate;}
+    if(!entry){let registryId:string;do{registryId=allocate('registry');}while(catalog.entries[registryId]);entry={registryId,key,sourceIds:[],normalizationVersion:NORMALIZATION_VERSION};catalog.entries[registryId]=entry;byKey.set(key,entry);}
     if(!entry.sourceIds.includes(id))entry.sourceIds.push(id);
-    const selected=entries[entry.registryId]??={registryId:entry.registryId,key:entry.key,sourceIds:[]};selected.sourceIds.push(id);
+    const selected=entries[entry.registryId]??={registryId:entry.registryId,key:entry.key,sourceIds:[],normalizationVersion:entry.normalizationVersion??1};selected.sourceIds.push(id);
   }
   for(const entry of Object.values(entries))entry.sourceIds=[...new Set(entry.sourceIds)].sort();
-  return {id:allocate('snapshot'),protocolVersion:2,paperIds:[...new Set(facts.map(fact=>fact.paperId))].sort(),sources,entries};
+  return {id:allocate('snapshot'),protocolVersion:2,paperIds:[...new Set(facts.map(fact=>fact.paperId))].sort(),sources,entries,normalizationVersion:NORMALIZATION_VERSION};
 }
 export function validateRegistrySnapshot(snapshot:RegistrySnapshot):string[] {
   const issues:string[]=[];
@@ -53,7 +55,7 @@ export function validateRegistrySnapshot(snapshot:RegistrySnapshot):string[] {
     if(id!==entry.registryId||!entry.key||!entry.sourceIds?.length||reserved.has(id)||reserved.has(entry.registryId))issues.push(`Invalid or reserved registry entry: ${id}.`);
     for(const sourceId of entry.sourceIds??[]){
       if(!Object.hasOwn(snapshot.sources,sourceId))issues.push(`Registry ${id} references unknown factual source ${sourceId}.`);
-      else if(entry.key!==terminologyKey(snapshot.sources[sourceId].name))issues.push(`Registry ${id} has a scientific identity key that differs from factual source ${sourceId}.`);
+      else if(entry.key!==terminologyKey(snapshot.sources[sourceId].name,entry.normalizationVersion??snapshot.normalizationVersion??1))issues.push(`Registry ${id} has a scientific identity key that differs from factual source ${sourceId}.`);
     }
   }
   return [...new Set(issues)];

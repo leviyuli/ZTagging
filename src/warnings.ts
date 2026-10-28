@@ -1,3 +1,5 @@
+import {fingerprint} from './core.ts';
+
 /** A warning is a persisted episode of a condition, rather than a disposable UI message. */
 export interface WarningRecord {
   id: string;
@@ -96,6 +98,29 @@ export function dismissWarnings(records: readonly WarningRecord[], ids?: readonl
   const selected = ids && new Set(ids);
   return records.map(record => record.status === 'active' && (!selected || selected.has(record.id))
     ? { ...record, status: 'dismissed' } : record);
+}
+
+/** Completed operations belong in history; recording them must not create a persistent banner. */
+export function recordWarningNotice(records:readonly WarningRecord[],input:WarningInput):WarningRecord[] {
+  const next=upsertWarning(records,input),latest=next.findLast(record=>record.code===input.code&&record.context===input.context&&sameSet(record.paperIds,input.paperIds??[]));
+  return latest?resolveWarnings(next,{ids:[latest.id]}):next;
+}
+
+export interface TopicWarningInput {
+  paperId:string;runId?:string;context:string;conditionFingerprint:string;topics:readonly string[];now?:string;
+}
+/** Success in one assignment phase cannot hide another paper's unresolved topics. */
+export function updateTopicWarnings(records:readonly WarningRecord[],input:TopicWarningInput):WarningRecord[] {
+  if(!input.topics.length)return resolveWarnings(records,{code:'unapproved-topics',context:input.context,paperIds:[input.paperId]});
+  const topics=unique(input.topics);
+  return upsertWarning(records,{code:'unapproved-topics',context:input.context,paperIds:[input.paperId],runIds:input.runId?[input.runId]:[],
+    conditionFingerprint:fingerprint({input:input.conditionFingerprint,topics}),now:input.now,
+    message:`Unapproved topics found: ${topics.slice(0,6).join(', ')}. Add definitions or rebuild the vocabulary to review them.`});
+}
+
+/** Old completed merge-review notices already describe a successful corrective action. */
+export function migrateWarningEpisodes(records:readonly WarningRecord[]):WarningRecord[] {
+  return records.map(record=>!record.legacy&&record.code==='merge-review-notice'&&record.status==='active'?{...record,status:'resolved'}:record);
 }
 
 /** Legacy strings contain no trustworthy observation dates, counts, phase, or paper associations. */

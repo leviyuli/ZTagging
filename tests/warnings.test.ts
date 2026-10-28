@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dismissWarnings, migrateLegacyWarnings, resolveWarnings, upsertWarning, validWarningRecord } from '../src/warnings.ts';
+import { dismissWarnings, migrateLegacyWarnings, resolveWarnings, upsertWarning, validWarningRecord, recordWarningNotice, updateTopicWarnings, migrateWarningEpisodes } from '../src/warnings.ts';
 import type { WarningInput, WarningRecord } from '../src/warnings.ts';
 
 const observed = '2026-10-28T10:00:00.000Z';
@@ -102,4 +102,25 @@ test('warning schema rejects malformed associations, statuses, and invented inva
   for (const override of [{ paperIds: [1] }, { status: 'hidden' }, { occurrenceCount: 0 }, { firstSeenAt: 'unknown' }, { id: '' }]) {
     assert.equal(validWarningRecord({ ...record, ...override }), false);
   }
+});
+
+test('completed merge reviews enter history immediately without creating active banners',()=>{
+  const records=recordWarningNotice([],{code:'merge-review-notice',message:'Discarded invalid merge suggestions after review.',context:'taxonomy-review',conditionFingerprint:'proposal-one',now:observed});
+  assert.equal(records.length,1);assert.equal(records[0].status,'resolved');assert.equal(records[0].firstSeenAt,observed);assert.equal(records[0].occurrenceCount,1);
+  const existing=upsertWarning([],{code:'merge-review-notice',message:'Completed merge review.',context:'application',conditionFingerprint:'old-notice',now:observed});
+  const migrated=migrateWarningEpisodes(existing);assert.equal(migrated[0].status,'resolved');assert.equal(migrated[0].firstSeenAt,observed);assert.equal(existing[0].status,'active');
+});
+
+test('unapproved topics resolve only after successful reevaluation of that paper and assignment phase',()=>{
+  const details={paperId:'paper-one',runId:'run-one',context:'assignment:core',conditionFingerprint:'input-one',topics:['Co topic'],now:observed};
+  let records=updateTopicWarnings([],details);records=updateTopicWarnings(records,{...details,paperId:'paper-two'});records=updateTopicWarnings(records,{...details,context:'assignment:detail'});
+  records=updateTopicWarnings(records,{...details,topics:[]});assert.deepEqual(records.map(record=>record.status),['resolved','active','active']);
+  assert.deepEqual(records[0].paperIds,['paper-one']);assert.deepEqual(records[0].runIds,['run-one']);
+});
+
+test('topic dismissal survives restart and changed topic conditions can create a new episode',()=>{
+  const details={paperId:'paper',context:'assignment:core',conditionFingerprint:'same-paper',topics:['topic one'],now:observed};
+  let records=dismissWarnings(updateTopicWarnings([],details)),first=records[0].id;records=JSON.parse(JSON.stringify(records));
+  records=updateTopicWarnings(records,{...details,runId:'later-run'});assert.equal(records.length,1);assert.equal(records[0].status,'dismissed');assert.equal(records[0].id,first);
+  records=updateTopicWarnings(records,{...details,topics:['topic two']});assert.equal(records.length,2);assert.equal(records[1].status,'active');assert.notEqual(records[1].id,first);
 });

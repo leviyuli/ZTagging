@@ -25,7 +25,7 @@ test('bulk confirmation includes pending eligible core mappings and preserves gl
   const result=confirmProposalMappings(proposal,undefined,'2026-10-28T01:00:00.000Z');assert.equal(result,proposal);
   for(const name of ['electrode resistance','surface process']){const tagId=id(name);assert.equal(proposal.mappingConfirmations![tagId].confirmedAt,'2026-10-28T01:00:00.000Z');assert.ok(proposal.support[tagId].paperIds.length);}
   assert.deepEqual(proposal.mappingConfirmations![already],originalConfirmation);assert.equal(proposal.mappingConfirmations![wrong],undefined);assert.deepEqual(proposal.support[wrong].paperIds,[]);assert.equal(proposal.mappingConfirmations!['custom-detail'],undefined);assert.equal(proposal.tags.find(tag=>tag.custom)!.name,'My DIY Name');
-  assert.ok(proposal.issues.some(message=>message.includes('limit is 2')));assert.ok(proposal.issues.some(message=>message.includes('global API budget')));assert.ok(proposal.validationIssues!.some(issue=>issue.code==='scientific-contradiction'&&isProposalIssueBlocking(proposal,issue)));assert.ok(proposal.tags.filter(tag=>!tag.custom).every(tag=>tag.status==='draft'));
+  assert.ok(!proposal.issues.some(message=>message.includes('limit is 2')));assert.ok(proposal.issues.some(message=>message.includes('global API budget')));assert.ok(proposal.validationIssues!.some(issue=>issue.code==='scientific-contradiction'&&isProposalIssueBlocking(proposal,issue)));assert.ok(proposal.tags.filter(tag=>!tag.custom).every(tag=>tag.status==='draft'));
 });
 
 test('bulk selection is atomic for stale IDs and leaves unselected or error-bearing mappings pending',()=>{

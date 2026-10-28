@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Smart Tags for Zotero",
-  "version": "0.3.2",
-  "description": "An approved tag vocabulary, evidence-backed suggestions, custom topics, and reversible cleanup.",
+  "version": "0.4.0",
+  "description": "Build a useful tag list with AI, answer scientific questions, and review paper tags before applying.",
   "author": "Smart Tags contributors",
   "applications": {
     "zotero": {
@@ -12,5 +12,8 @@
       "strict_max_version": "10.0.*"
     }
   },
-  "icons": { "48": "content/icon.svg", "96": "content/icon.svg" }
+  "icons": {
+    "48": "content/icon.svg",
+    "96": "content/icon.svg"
+  }
 }

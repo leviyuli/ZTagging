@@ -27,8 +27,8 @@ function facts() { return { summary: 'EIS measures catalyst-layer transport resi
   concepts: [{ name: 'Electrochemical impedance spectroscopy', facet: 'method', evidence: [{ source: 'abstract', text: QUOTE }] }] }; }
 function taxonomy(data: any, invalid = false) {
   return { tags: [{ key: 'eis', name: 'EIS', fullName: 'Electrochemical impedance spectroscopy',
-    description: 'Electrochemical impedance spectroscopy measurements.', facet: 'method', aliases: [], parentKeys: [], relatedKeys: [],
-    supportRegistryIds: [...data.conceptRegistry.filter((entry: any) => entry.sources.some((source: any) => source.label === 'Electrochemical impedance spectroscopy')).map((entry: any) => entry.registryId), ...(invalid ? [BAD_REGISTRY] : [])],
+    description: 'Electrochemical impedance spectroscopy measurements.', facet: 'method', aliases: [], parentKeys: invalid ? [BAD_REGISTRY] : [], relatedKeys: [],
+    supportRegistryIds: data.conceptRegistry.filter((entry: any) => entry.sources.some((source: any) => source.label === 'Electrochemical impedance spectroscopy')).map((entry: any) => entry.registryId),
   }], merges: [], excluded: [] };
 }
 
@@ -54,7 +54,7 @@ async function harness(handler: Handler) {
       const prompt = request.messages.find((message: any) => message.role === 'user').content;
       const marker = 'INPUT_DATA_JSON:\n', at = prompt.indexOf(marker); assert.ok(at >= 0);
       const data = JSON.parse(prompt.slice(at + marker.length));
-      const kind = data.permittedRegistry ? 'correction' : data.protocolVersion === 2 ? 'taxonomy' : data.approvedVocabulary ? 'assignment' : 'facts';
+      const kind = data.preparationPolicyVersion || data.permittedRegistry ? 'correction' : data.protocolVersion === 2 ? 'taxonomy' : data.approvedVocabulary ? 'assignment' : 'facts';
       const call: Call = { kind, data }; calls.push(call); return handler(call, calls.length - 1);
     }) as typeof fetch,
   });
@@ -79,15 +79,16 @@ test('completed malformed consolidation remains reviewable and billed by actual 
   assert.equal(checkpoint.phase, 'needs-review'); assert.equal(checkpoint.value, MALFORMED); assert.equal(checkpoint.correctionAttempts, 0);
   assert.ok(proposal.issues.some(issue => /malformed|JSON/i.test(issue))); assert.equal(proposal.rawResponse, MALFORMED);
   assert.ok(checkpoint.diagnostics!.some(issue => /not valid JSON/i.test(issue)));
-  assert.ok(Math.abs(h.state.run!.spentUSD - 2 * REQUEST_COST) < 1e-12, 'completed malformed output still uses known actual token usage');
-  const snapshot = await h.controller.snapshot(); assert.ok(snapshot.queue.consolidation!.rawResponses!.some(reply => reply.response.includes(MALFORMED)));
+  assert.equal(h.state.run!.preparation!.attempts, 3);assert.equal(h.state.run!.preparation!.responses.length, 3);
+  assert.ok(Math.abs(h.state.run!.spentUSD - 5 * REQUEST_COST) < 1e-12, 'initial and bounded repair replies retain their actual token usage');
+  const snapshot = await h.controller.snapshot(); assert.equal(snapshot.queue.consolidation, undefined);assert.equal(snapshot.tagPreparation!.status,'failed');assert.ok(!JSON.stringify(snapshot).includes(MALFORMED));
   assert.equal(validState(h.state), true); assertSafe(h);
   const count = h.calls.length, restored: AppState = copy(h.state);
   restored.run!.status = 'paused'; restored.run!.vocabFinished = false; restored.taxonomyProposal = null;
   const restarted = new AppController(restored, h.env); t.after(async () => { await restarted.shutdown(); });
   await restarted.initialize(); await restarted.invoke('resume'); await restarted.waitForIdle();
   assert.equal(restored.run!.status, 'idle'); assert.equal(h.calls.length, count); assert.equal(restored.run!.consolidation!.value, MALFORMED);
-  assert.ok(Math.abs(restored.run!.spentUSD - 2 * REQUEST_COST) < 1e-12);
+  assert.ok(Math.abs(restored.run!.spentUSD - 5 * REQUEST_COST) < 1e-12);
   assert.ok(restored.taxonomyProposal!.issues.length); await assert.rejects(restarted.invoke('approve-taxonomy', { id: restored.taxonomyProposal!.id }), /malformed|JSON|review|evidence/i);
 });
 
@@ -99,42 +100,41 @@ test('malformed assignment output pauses before suggestions or native writes whi
   assert.ok(Math.abs(h.state.run!.spentUSD - REQUEST_COST) < 1e-12); assertSafe(h);
 });
 
-test('malformed correction diagnostics preserve candidate identities and valid evidence until manual unsupported-link removal', async t => {
+test('malformed preparation repairs preserve candidate identities and valid evidence until an explicit edit', async t => {
   const badCorrection = 'A completed reference correction with malformed JSON: }';
   const h = await harness(call => call.kind === 'facts' ? completion(facts()) : call.kind === 'taxonomy' ? completion(taxonomy(call.data, true)) : completion(badCorrection));
   t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await run(h);
   const checkpoint = h.state.run!.consolidation!, proposal = h.state.taxonomyProposal!, tag = proposal.tags.find(tag => tag.name === 'EIS')!;
-  assert.equal(h.state.run!.status, 'idle'); assert.equal(checkpoint.phase, 'needs-review'); assert.equal(checkpoint.correctionAttempts, 1);
-  assert.equal(checkpoint.correctionValue, badCorrection); assert.ok(proposal.correctionDiagnostics!.some(issue => /parsed|JSON/i.test(issue)));
-  assert.ok(checkpoint.diagnostics!.some(issue => /JSON/i.test(issue)));
+  assert.equal(h.state.run!.status, 'idle'); assert.equal(checkpoint.phase, 'needs-review'); assert.equal(checkpoint.correctionAttempts, 0);
+  assert.equal(h.state.run!.preparation!.attempts,3);assert.ok(h.state.run!.preparation!.responses.every(reply=>reply.raw===badCorrection));assert.ok(h.state.tagPreparation!.diagnostics.some(issue=>/read|JSON/i.test(issue)));
   const initial = copy(checkpoint.value), originalTag = copy(tag), originalSources = [...proposal.support[tag.id].sourceIds!];
   const correction = h.calls.find(call => call.kind === 'correction')!;
-  assert.equal(correction.data.candidates.find((candidate: any) => candidate.name === 'EIS').id, tag.id);
+  assert.equal(correction.data.tags.find((candidate: any) => candidate.name === 'EIS').id, tag.id);
   assert.equal(checkpoint.candidateIds.eis, tag.id); assert.deepEqual(proposal.support[tag.id].paperIds, ['1:DIAGNOSTICS']);
-  assert.ok(proposal.support[tag.id].registryIds!.includes(BAD_REGISTRY));
-  assert.ok(Math.abs(h.state.run!.spentUSD - 3 * REQUEST_COST) < 1e-12); assertSafe(h);
-  const snapshot = await h.controller.snapshot(); assert.ok(snapshot.queue.consolidation!.rawResponses!.some(reply => reply.response.includes(badCorrection)));
+  assert.ok(proposal.unresolvedRelationships!.some(value=>value.reference===BAD_REGISTRY));
+  assert.ok(Math.abs(h.state.run!.spentUSD - 5 * REQUEST_COST) < 1e-12); assertSafe(h);
+  const snapshot = await h.controller.snapshot(); assert.equal(snapshot.queue.consolidation, undefined);assert.ok(!JSON.stringify(snapshot).includes(badCorrection));
   const restored = copy(h.state), requestsBeforeRestart = h.calls.length;
   restored.run!.status = 'paused'; restored.run!.vocabFinished = false; restored.taxonomyProposal = null;
   const restarted = new AppController(restored, h.env); t.after(async () => { await restarted.shutdown(); });
   await restarted.initialize(); await restarted.invoke('resume'); await restarted.waitForIdle();
   assert.equal(h.calls.length, requestsBeforeRestart, 'reparsing a completed malformed correction cannot send another automatic attempt');
-  assert.equal(restored.run!.consolidation!.correctionAttempts, 1); assert.equal(restored.run!.consolidation!.correctionValue, badCorrection);
+  assert.equal(restored.run!.preparation!.attempts, 3); assert.ok(restored.run!.preparation!.responses.every(reply=>reply.raw===badCorrection));
   assert.deepEqual(restored.taxonomyProposal!.tags.find(candidate => candidate.id === tag.id), originalTag);
   assert.deepEqual(restored.taxonomyProposal!.support[tag.id].sourceIds, originalSources);
-  assert.ok(Math.abs(restored.run!.spentUSD - 3 * REQUEST_COST) < 1e-12);
-  await assert.rejects(h.controller.invoke('approve-taxonomy', { id: proposal.id }), /registry|support|evidence/i);
+  assert.ok(Math.abs(restored.run!.spentUSD - 5 * REQUEST_COST) < 1e-12);
+  await assert.rejects(h.controller.invoke('approve-taxonomy', { id: proposal.id }), /registry|support|evidence|relationship/i);
   const requestCount = h.calls.length;
-  await h.controller.invoke('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId: BAD_REGISTRY });
+  proposal.unresolvedRelationships=[];await h.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags:proposal.tags});
   assert.deepEqual(proposal.tags.find(candidate => candidate.id === tag.id), originalTag);
   assert.deepEqual(proposal.support[tag.id].sourceIds, originalSources); assert.deepEqual(proposal.issues, []);
   assert.deepEqual(checkpoint.value, initial, 'manual recovery does not rewrite the original model response');
-  assert.equal(h.calls.length, requestCount); assert.ok(proposal.correctionDiagnostics!.length);
+  assert.equal(h.calls.length, requestCount); assert.equal(h.state.run!.preparation!.responses.length,3);
   await h.controller.invoke('approve-taxonomy', { id: proposal.id }); assert.equal(h.state.taxonomyReady, true); assertSafe(h);
 });
 
 test('truncated provider output cannot be approved even if its partial assistant text is valid taxonomy JSON', async t => {
-  const h = await harness(call => call.kind === 'facts' ? completion(facts()) : completion(taxonomy(call.data), 'length'));
+  const h = await harness(call => call.kind === 'facts' ? completion(facts()) : call.kind==='taxonomy'?completion(taxonomy(call.data), 'length'):completion(MALFORMED));
   t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await run(h);
   const checkpoint = h.state.run!.consolidation!, proposal = h.state.taxonomyProposal!;
   assert.equal(h.state.run!.status, 'idle'); assert.equal(typeof checkpoint.value, 'string');
@@ -142,7 +142,7 @@ test('truncated provider output cannot be approved even if its partial assistant
   assert.ok(proposal.tags.some(tag => tag.name === 'EIS'), 'valid-looking partial content is available for diagnostics');
   assert.ok(proposal.issues.some(issue => /partial|completed|regenerate/i.test(issue)));
   await assert.rejects(h.controller.invoke('approve-taxonomy', { id: proposal.id }), /partial|completed|regenerate/i);
-  assert.equal(h.calls.filter(call => call.kind === 'correction').length, 0); assertSafe(h);
+  assert.equal(h.calls.filter(call => call.kind === 'correction').length, 3);assert.equal(h.state.run!.preparation!.attempts,3); assertSafe(h);
 });
 
 test('HTTP authentication bodies never become model diagnostics or leak credentials into checkpoints and snapshots', async t => {
@@ -156,5 +156,5 @@ test('HTTP authentication bodies never become model diagnostics or leak credenti
   assert.equal(h.state.taxonomyProposal, null); assert.equal(h.state.run!.jobs[0].status, 'completed');
   const snapshot = await h.controller.snapshot(), serialized = JSON.stringify({ state: h.state, snapshot, persisted: h.persisted });
   assert.ok(!serialized.includes(KEY)); assert.ok(!serialized.includes(bodyMarker));
-  assert.deepEqual(snapshot.queue.consolidation!.rawResponses, []); assertSafe(h);
+  assert.equal(snapshot.queue.consolidation, undefined); assertSafe(h);
 });

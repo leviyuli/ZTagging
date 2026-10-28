@@ -1,5 +1,8 @@
 import {canonicalTagKey} from './core.ts';
+import type {Facet} from './core.ts';
 
+export type NormalizationVersion=1|2;
+export const NORMALIZATION_VERSION:NormalizationVersion=2;
 export interface TerminologyEntry {name:string;fullName:string;aliases:string[]}
 /** Deliberately finite: scientific equivalence is never inferred by deleting punctuation or suffixes. */
 export const TERMINOLOGY:readonly TerminologyEntry[]=[
@@ -18,13 +21,31 @@ export const TERMINOLOGY:readonly TerminologyEntry[]=[
   {name:'EIS',fullName:'electrochemical impedance spectroscopy',aliases:[]},
 ];
 
-export function terminologyFor(label:string):TerminologyEntry|undefined {
+const exactNames=new Map(TERMINOLOGY.flatMap(entry=>[entry.name,entry.fullName,...entry.aliases].map(label=>[canonicalTagKey(label),entry] as const)));
+const technology=TERMINOLOGY.filter(entry=>!['Co','CO'].includes(entry.name));
+const abbreviationNames=new Map(technology.flatMap(entry=>[entry.name,`${entry.name}s`,...entry.aliases.filter(alias=>/^[A-Z-]+s?$/.test(alias))].map(label=>[label,entry] as const)));
+for(const [alias,name] of Object.entries({'AEM-FC':'AEMFC','PEM-FC':'PEMFC','AEM-WE':'AEMWE','PEM-WE':'PEMWE'}))abbreviationNames.set(alias,technology.find(entry=>entry.name===name)!);
+const ordinary=(value:string)=>canonicalTagKey(value.replace(/[-‐‑–]/g,' ').replace(/\s+/g,' ').trim());
+const expandedNames=new Map<string,TerminologyEntry|null>();
+for(const entry of technology)for(const label of [entry.fullName,...entry.aliases]){const key=ordinary(label),previous=expandedNames.get(key);expandedNames.set(key,previous&&previous!==entry?null:previous===null?null:entry);}
+
+export function terminologyFor(label:string,version:NormalizationVersion=2):TerminologyEntry|undefined {
   const key=canonicalTagKey(label);
-  return TERMINOLOGY.find(entry=>[entry.name,entry.fullName,...entry.aliases].some(value=>canonicalTagKey(value)===key));
+  const exact=exactNames.get(key);
+  if(exact||version===1)return exact;
+  const short=abbreviationNames.get(label.trim());if(short)return short;
+  const expanded=/^(.*?)\s*\(([^()]+)\)\s*$/.exec(label),full=expanded?expanded[1]:label;
+  const match=expandedNames.get(ordinary(full));if(!match)return undefined;
+  return !expanded||abbreviationNames.get(expanded[2].trim())?.name===match.name?match:undefined;
 }
 /** Only dictionary-established equivalence may coalesce persistent registry entries. */
-export function terminologyKey(label:string):string {return canonicalTagKey(terminologyFor(label)?.name??label);}
-export function equivalentTerminology(a:string,b:string):boolean{return terminologyKey(a)===terminologyKey(b);}
+export function terminologyKey(label:string,version:NormalizationVersion=2):string {return canonicalTagKey(terminologyFor(label,version)?.name??label);}
+export function equivalentTerminology(a:string,b:string,version:NormalizationVersion=2):boolean{return terminologyKey(a,version)===terminologyKey(b,version);}
+export function preferredTechnologyFacet(label:string):Facet|undefined {
+  const name=terminologyFor(label)?.name;
+  if(!name)return undefined;
+  return ['FC','PEMFC','AEMFC','WE','PEMWE','AEMWE'].includes(name)?'system':name==='EIS'?'method':'component';
+}
 
 const SINGULAR:Readonly<Record<string,string>>=Object.freeze({'schottky barriers':'schottky barrier','fuel cells':'fuel cell','catalyst layers':'catalyst layer','grooved catalyst layers':'grooved catalyst layer','batteries':'battery','electrodes':'electrode','membranes':'membrane','nanoparticles':'nanoparticle'});
 function ordinaryWord(word:string):string {
@@ -32,8 +53,8 @@ function ordinaryWord(word:string):string {
   // The canonical comparator already recognizes elemental symbols and chemical formulae.
   return canonicalTagKey(word)===word&&/[A-Z]/.test(word)?word:word.toLowerCase();
 }
-export function preferredCoreNaming(name:string,fullName=name,aliases:readonly string[]=[]):{name:string;fullName:string;aliases:string[]} {
-  const known=terminologyFor(name)??terminologyFor(fullName);
+export function preferredCoreNaming(name:string,fullName=name,aliases:readonly string[]=[],version:NormalizationVersion=2):{name:string;fullName:string;aliases:string[]} {
+  const known=terminologyFor(name,version)??terminologyFor(fullName,version);
   if(known)return {name:known.name,fullName:known.fullName,aliases:[...new Set([...aliases,name,fullName,...known.aliases])].filter(value=>value!==known.name&&value!==known.fullName)};
   const normalize=(value:string)=>{const ordinary=value.trim().replace(/\s+/g,' ').split(' ').map(ordinaryWord).join(' ');return SINGULAR[ordinary]??ordinary;};
   const preferred=normalize(name),full=normalize(fullName);

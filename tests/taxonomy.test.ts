@@ -88,10 +88,10 @@ test('unapproved false aliases do not survive consolidation or prevent stable ID
   assert.ok(approved.issues.some(issue=>issue.includes('Ambiguous')),'Already approved equivalences require review before being changed');
 });
 
-test('the core cap counts both parents and leaves, never silently truncates, and can be configured above default60',()=>{
+test('the core target never truncates or blocks supported distinct concepts',()=>{
   const facts=Array.from({length:61},(_,i)=>fact(`p${i}`,`Concept ${i}`,`Evidence supporting scientific concept ${i}.`));
   const raw={tags:facts.map((f,i)=>rawTag(`c${i}`,`Concept ${i}`,`Concept ${i}`,{support:[link(f.paperId,f.concepts[0].name)]}))};
-  const over=createTaxonomyProposal(raw,facts,[]);assert.equal(over.tags.length,61);assert.ok(over.issues.some(issue=>issue.includes('61 core concepts')));
+  const over=createTaxonomyProposal(raw,facts,[]);assert.equal(over.tags.length,61);assert.deepEqual(over.issues,[]);
   assert.deepEqual(createTaxonomyProposal(raw,facts,[],{limit:70}).issues,[]);
   assert.throws(()=>createTaxonomyProposal(raw,facts,[],{limit:0}),/between 1 and 500/);
 });

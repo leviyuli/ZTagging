@@ -54,12 +54,27 @@ test('store recovers a valid backup when current JSON is corrupt and retains tha
   assert.equal(JSON.parse(mem.files.get('state.json.bak')!).count, 4);
 });
 
-test('invalid schema uses the backup instead of silently resetting user decisions', async () => {
+test('an invalid current shape uses the backup instead of silently resetting user decisions', async () => {
   const mem = memoryIO();
-  mem.files.set('state.json', JSON.stringify({ schemaVersion: 99, count: 100 }));
+  mem.files.set('state.json', JSON.stringify({ schemaVersion: 1, count: 'invalid' }));
   mem.files.set('state.json.bak', JSON.stringify({ schemaVersion: 1, count: 5 }));
   const store = new AtomicStore(mem.io, 'state.json', () => ({ schemaVersion: 1, count: 0 }), valid);
   assert.equal((await store.load()).count, 5); assert.equal(store.recovered, true);
+});
+
+test('a newer schema never falls back to an older backup or permits downgrade writes',async()=>{
+  const mem=memoryIO(),original=JSON.stringify({schemaVersion:4,count:51});mem.files.set('state.json',original);mem.files.set('state.json.bak',JSON.stringify({schemaVersion:3,count:4}));
+  const store=new AtomicStore(mem.io,'state.json',initialV3,validV3,migrateV3,validLegacy);
+  await assert.rejects(store.load(),/newer schema 4/);assert.equal(store.recovered,false);assert.equal(mem.writes.length,0);
+  await assert.rejects(store.save({schemaVersion:3,count:5}),/Refusing to replace newer/);assert.equal(mem.files.get('state.json'),original);assert.equal(mem.writes.length,0);
+  await assert.rejects(store.save({schemaVersion:2,count:5}),/different Smart Tags schema/);assert.equal(mem.files.get('state.json'),original);
+});
+
+test('schema-validator exceptions in corrupt current state still permit restoring the valid backup',async()=>{
+  const mem=memoryIO();mem.files.set('state.json',JSON.stringify({schemaVersion:1,count:51,broken:true}));mem.files.set('state.json.bak',JSON.stringify({schemaVersion:1,count:4}));
+  const validator=(value:unknown):value is State=>{if((value as {broken?:boolean})?.broken)throw new Error('Corrupt nested state');return valid(value);};
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),validator);assert.equal((await store.load()).count,4);
+  await store.save({schemaVersion:1,count:5});assert.equal(JSON.parse(mem.files.get('state.json')!).count,5);assert.equal(JSON.parse(mem.files.get('state.json.bak')!).count,4);
 });
 
 test('unrecoverable state fails closed without rewriting either generation', async () => {
@@ -121,7 +136,7 @@ function legacyState() {
 
 test('schema-one migration preserves 107 drafts, manual decisions, ownership, and native snapshots',()=>{
   const old=legacyState(),before=JSON.stringify(old),migrated=migrateState(old);
-  assert.equal(migrated.schemaVersion,3);assert.equal(validState(migrated),true);assert.equal(migrated.tags.filter(t=>!t.custom).length,107);
+  assert.equal(migrated.schemaVersion,4);assert.equal(validState(migrated),true);assert.equal(migrated.tags.filter(t=>!t.custom).length,107);
   assert.equal(migrated.taxonomyReady,false);assert.equal(migrated.taxonomyProposal,null);assert.deepEqual(migrated.facts,{});
   assert.equal(migrated.settings.coreConceptLimit,60);assert.equal(migrated.tags[0].matchingMode,'suggest');
   assert.deepEqual(migrated.decisions,old.decisions);assert.deepEqual(migrated.ownership,old.ownership);assert.deepEqual(migrated.nativeTags,old.nativeTags);
@@ -138,10 +153,10 @@ test('the store writes an exact version-aware backup before migrating or persist
   assert.equal(JSON.parse(mem.files.get('state.json')!).schemaVersion,3);
 });
 
-test('application migration uses the schema-three backup and structural legacy validator',async()=>{
+test('application migration uses the schema-four backup and structural legacy validator',async()=>{
   const mem=memoryIO(),original=JSON.stringify(legacyState(),null,2)+'\n';mem.files.set('state.json',original);
   const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  assert.equal((await store.load()).schemaVersion,3);assert.equal(mem.files.get('state.json.pre-v3.json'),original);
+  assert.equal((await store.load()).schemaVersion,4);assert.equal(mem.files.get('state.json.pre-v4.json'),original);
 });
 
 test('a later migration retains an earlier source backup and preserves different source bytes separately',async()=>{

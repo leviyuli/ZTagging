@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0
+
+- Replaced the technical vocabulary-review screen with a researcher-facing Tags workspace: prepare the list, edit names and definitions, answer scientific questions, then apply the list.
+- Added up to three additional preparation requests through the selected provider/model, with persistent attempt counts, saved replies, budget controls, and explicit retry after unsuccessful checks.
+- Separated provenance from scientific relevance with source-level judgements. Generated naming, categories, unsupported topics, and relationships can be repaired automatically; protected edits, DIY names, and remembered choices remain under user control.
+- Made 60 a preferred core-tag count. Scientifically distinct topics can remain separate when the list exceeds that preference.
+- Added versioned terminology normalization while retaining historical evidence identities and human confirmations.
+- Made Apply tag list save the vocabulary and start paper suggestions. Native tag writes still require a separate reviewed batch Apply, with undo.
+- Upgraded local state to schema 4 with an immutable exact-byte backup. Existing factual extraction, pending reviews, user edits, choices, history, credentials, and spent-budget history are preserved.
+- Removed eligible unused legacy generated drafts only when an original baseline proves they are unchanged and the reference graph shows they are unneeded. Native paper tags and retained definitions are untouched; no separate legacy archive is created.
+- Resolved unfamiliar-topic notices after successful reevaluation of the same paper/phase, kept completed merge reviews in history, and replaced persistent success banners with brief confirmations.
+- Refused newer state schemas and downgrade writes rather than replacing them with an older backup generation.
+
 ## 0.3.2
 
 - Added Confirm all mappings across every proposal page, skipping blocked or already confirmed concepts and keeping vocabulary approval separate.

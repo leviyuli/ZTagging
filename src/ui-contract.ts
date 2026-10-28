@@ -70,6 +70,24 @@ export interface DisplayJob {
   status: string;
   error?: string;
 }
+export interface DisplayTagQuestion {
+  id: string;
+  title: string;
+  description: string;
+  paperIds: string[];
+  choices: { id: string; label: string; description: string }[];
+}
+/** Human decisions and prepared tags; source identities stay in the preparation module. */
+export interface DisplayTagPreparation {
+  id: string;
+  status: 'checking' | 'questions' | 'ready' | 'failed';
+  tags: DisplayTag[];
+  questions: DisplayTagQuestion[];
+  canApply: boolean;
+  scopeCount: number;
+  targetCount: number;
+  error?: string;
+}
 export interface ManagerSettings {
   provider: 'api' | 'chatgpt' | 'deepseek';
   model: string;
@@ -85,6 +103,7 @@ export interface ManagerSnapshot {
   pilotReviewed: boolean;
   taxonomyReady?: boolean;
   taxonomyProposal?: DisplayTaxonomyProposal;
+  tagPreparation?: DisplayTagPreparation;
   analyzedPaperCount?: number;
   taxonomyArchives?: { id: string; date: string; version: number; reason: string; count: number }[];
   tags: DisplayTag[];

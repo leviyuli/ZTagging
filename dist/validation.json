@@ -1,18 +1,19 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.3.2",
-  "verifiedAt": "2026-10-28T10:16:53.224Z",
+  "version": "0.4.0",
+  "verifiedAt": "2026-10-28T13:13:08.406Z",
   "target": "Zotero 10.0.6 on Windows",
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "consolidationProtocolVersion": 2,
+  "preparationPolicyVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 454,
+    "passed": 496,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 102,
+    "passed": 81,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -283,223 +284,155 @@
         "passed": true
       },
       {
-        "name": "v030IsolatedDataGuard",
+        "name": "v040IsolatedDataGuard",
         "passed": true
       },
       {
-        "name": "v030IsolatedProfileGuard",
+        "name": "v040IsolatedProfileGuard",
         "passed": true
       },
       {
-        "name": "v030ApplicationSchema",
+        "name": "v040StateSchema",
         "passed": true
       },
       {
-        "name": "v030InstalledZoteroTarget",
+        "name": "v040LargeCleanPreparation",
         "passed": true
       },
       {
-        "name": "v030NativeMigrationExactByteBackup",
+        "name": "v040LargeHumanUIFast",
         "passed": true
       },
       {
-        "name": "v030NativeLegacyWarningUnknownMetadata",
+        "name": "v040NoRoutineProofControls",
         "passed": true
       },
       {
-        "name": "v030NativeMigrationReloadIdempotent",
+        "name": "v040CuratedTechnologyReadyWithoutQuestions",
         "passed": true
       },
       {
-        "name": "v030NativeDefaultTagsSurvivesStartupRestore",
+        "name": "v040EditorScrollKeepsSaveVisible",
         "passed": true
       },
       {
-        "name": "v030NativeStartupWindowRestoresCollections",
+        "name": "v040NarrowEditorKeepsSaveVisible",
         "passed": true
       },
       {
-        "name": "v030SyntheticUncertainMapping",
+        "name": "v040UnsavedEditorBlocksApply",
         "passed": true
       },
       {
-        "name": "v030NativeUncertainProposalRendering",
+        "name": "v040SuccessNoticeExpires",
         "passed": true
       },
       {
-        "name": "v030NativePrivateEvidenceExportControl",
+        "name": "v040ApplyCreatesSeparatePaperPreview",
         "passed": true
       },
       {
-        "name": "v030NativeScientificConfirmationAction",
+        "name": "v040OnlyUnresolvedScopeBecomesQuestion",
         "passed": true
       },
       {
-        "name": "v030NativeWarningPaperLinks",
-        "passed": true
-      },
-      {
-        "name": "v030NativeWarningDismissalPersisted",
-        "passed": true
-      },
-      {
-        "name": "v030NativeWarningReloadHistory",
-        "passed": true
-      },
-      {
-        "name": "v030NativeDismissAllPreservesRecords",
-        "passed": true
-      },
-      {
-        "name": "v030NativeNoAISideEffects",
-        "passed": true
-      },
-      {
-        "name": "v030NativeTagsUnchangedDuringReview",
-        "passed": true
-      },
-      {
-        "name": "v031IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v031IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v031LargeSyntheticEvidenceShape",
-        "passed": true
-      },
-      {
-        "name": "v031LargeProposalRenderBudget",
-        "passed": true
-      },
-      {
-        "name": "v031LargeProposalBoundedInitialDOM",
-        "passed": true
-      },
-      {
-        "name": "v031LargeEvidencePageBounded",
-        "passed": true
-      },
-      {
-        "name": "v031LargeConfirmationBudget",
-        "passed": true
-      },
-      {
-        "name": "v031LargeReviewStatePreserved",
-        "passed": true
-      },
-      {
-        "name": "v032ProposedConceptActionsVisible",
-        "passed": true
-      },
-      {
-        "name": "v032StagedEditKeepsIdentityAndConfirmation",
-        "passed": true
-      },
-      {
-        "name": "v032BulkConfirmationIncludesAllPages",
-        "passed": true
-      },
-      {
-        "name": "v032BulkConfirmationBudget",
-        "passed": true
-      },
-      {
-        "name": "v032BulkConfirmationDoesNotApprove",
-        "passed": true
-      },
-      {
-        "name": "v032RemoveOnlyChangesProposal",
-        "passed": true
-      },
-      {
-        "name": "v031ActivityReviewIsCompact",
-        "passed": true
-      },
-      {
-        "name": "v031LargeReviewNoNativeTagWrites",
+        "name": "v040QuestionChoiceFinishesPreparation",
         "passed": true
       }
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "vocabularyPerformance": {
-    "native": {
-      "papers": 51,
-      "sources": 428,
-      "coreConcepts": 60,
-      "initialIssues": 99,
-      "snapshotBytes": 755824,
-      "initialRenderMS": 82,
-      "confirmationMS": 863,
-      "initialQuoteNodes": 0,
-      "visibleConcepts": 20,
-      "sourcePageSize": 20,
-      "reviewStatePreserved": true
-    },
-    "privateReadOnlyReplay": {
-      "sourceCount": 428,
-      "issueCount": 101,
-      "baseline": {
-        "threeIssuePassesMS": 1188.9,
-        "validationMS": 1164.1,
-        "confirmationMS": 1124,
-        "snapshotMS": 38.7
-      },
-      "patched": {
-        "threeIssuePassesMS": 23.9,
-        "validationMS": 146.5,
-        "confirmationMS": 137.6,
-        "snapshotMS": 5.9
-      },
-      "sourceEvidenceUnchanged": true,
-      "existingConfirmationsUnchanged": true,
-      "definitionsUnchanged": true,
-      "providerRequests": 0,
-      "nativeWrites": 0
-    }
+  "preparationWorkflow": {
+    "routineChecksAutomatic": true,
+    "extraModelRequestsMaximum": 3,
+    "attemptsPersistAcrossRestart": true,
+    "budgetRejectionBeforeDispatchDoesNotConsumeAttempt": true,
+    "incompleteRepliesDiagnosticOnly": true,
+    "explicitRetryRetainsSpentBudget": true,
+    "providerNeverChangesAutomatically": true,
+    "perSourceDecisions": true,
+    "protectedHumanAnswersAndEdits": true,
+    "removedTagsStayRemoved": true,
+    "softTarget": 60,
+    "previewAfterTagListApply": true,
+    "nativeBatchApplySeparateAndUndoable": true
   },
-  "queueReviewUI": "Reviewable proposals use a compact Vocabulary link; unparsed output retains collapsed technical diagnostics.",
-  "bulkReview": {
-    "nativeMappings": 14,
-    "milliseconds": 3474,
-    "separateApproval": true,
-    "editKeepsIdentityAndConfirmation": true,
-    "removeOnlyChangesProposal": true,
-    "skipsBlockedAndAlreadyConfirmed": true,
-    "staleSelectionAtomic": true
+  "managerUI": {
+    "normalScreensHideEvidenceInternals": true,
+    "tagListPagination": true,
+    "independentEditorScroll": true,
+    "fixedSaveAndCancelFooter": true,
+    "narrowDrawer": true,
+    "dirtyEditorBlocksApply": true,
+    "noticeDurationMS": 4000,
+    "nativeSyntheticPapers": 51,
+    "nativeSyntheticSources": 428,
+    "largeRenderMS": 125,
+    "questionCount": 1
+  },
+  "privateReadOnlyReplay": {
+    "status": "passed",
+    "schemaVersion": 4,
+    "selectedPapers": 51,
+    "cachedFacts": 97,
+    "definitionsBefore": 107,
+    "definitionsAfter": 29,
+    "completedJobs": 51,
+    "extractionRequests": 0,
+    "preparationRequests": 0,
+    "modelTransport": "deterministic empty-repair fixture; no live AI request",
+    "nativeWrites": 0,
+    "exactByteBackup": true,
+    "sourceBytesUnchanged": true,
+    "quotesAndProvenanceUnchanged": true,
+    "snapshotRestrictedToSelectedPapers": true,
+    "proofsPreserved": true,
+    "restartAddedRequests": 0,
+    "initializeMs": 496,
+    "managerSnapshotMs": 2,
+    "preparationStatus": "ready"
+  },
+  "migration": {
+    "exactByteCollisionSafeBackup": true,
+    "noModelRequests": true,
+    "cachedFactsPreserved": true,
+    "historicalIdentityAndConfirmationCompatibility": true,
+    "referenceAwareLegacyDeletion": true,
+    "noSeparateLegacyArchive": true,
+    "newerSchemasAndDowngradeWritesRefused": true
+  },
+  "notices": {
+    "dismissalPersists": true,
+    "conditionSpecificResolution": true,
+    "completedMergeNoticesInHistory": true,
+    "cachedEmptyFactsRecheckPDF": true
   },
   "deslopCleanup": {
     "applied": true,
-    "scope": "Focused diff review, typed provider diagnostics, flatter correction failure handling, typed warning lookup, and reusable test setup; input safeguards retained."
+    "scope": "Focused diff review, unused exports/imports and redundant catch removal; retained native, budget, persistence and scientific input safeguards."
   },
   "testStructure": {
     "skill": "codebase-design",
-    "core": "Public fingerprint interface with historical golden vectors and immutable-sharing tests.",
-    "proposal": "Batch eligibility, atomicity, and proof compatibility through the taxonomy interface.",
-    "controller": "Persistence and native side effects through invoke.",
-    "ui": "Typed harness options and accessible controls through mountManager; no imported test modules or broad shared harness."
+    "module": "TagPreparation workflows through prepare, applyRepair and answer.",
+    "controller": "Persistence and side effects through invoke and restart.",
+    "manager": "Accessible controls through mountManager; obsolete technical review assertions replaced, no broad shared test harness."
   },
   "rightItemAndInformationPaneSection": false,
   "workingLibraryModified": false,
   "publicArtifactPrivateDataScan": "passed",
-  "limits": "No live provider request or account authentication was performed. Native UI checks are programmatic; screenshots were not inspected. Timing measurements are specific to this environment.",
+  "limits": "No live AI request or account authentication was performed. Native UI checks are programmatic; screenshots were not inspected. Timing measurements are specific to this environment.",
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.3.2.xpi",
-      "bytes": 291691,
-      "sha256": "78b645d98fb747e4b412c98816e2c55e6071318831c55642bfe0d936b1f7f317"
+      "file": "smart-tags-0.4.0.xpi",
+      "bytes": 323729,
+      "sha256": "2c658f267213d387dfc8755b1d353ddcaa54c016a897b5d602c3ff6ac88689a5"
     },
     "source": {
-      "file": "smart-tags-0.3.2-source.zip",
-      "bytes": 298067,
-      "sha256": "3bafd3b0984964d45595a3245d1925ac0332c74b5f7ac71d77ecc98c5fc3dab4"
+      "file": "smart-tags-0.4.0-source.zip",
+      "bytes": 334003,
+      "sha256": "c0a08c9a79f807e75354aeb0d391f232aea62a37cbf511db5f1e20db61a1b495"
     }
   },
-  "sha256": "78b645d98fb747e4b412c98816e2c55e6071318831c55642bfe0d936b1f7f317",
-  "sourceSha256": "3bafd3b0984964d45595a3245d1925ac0332c74b5f7ac71d77ecc98c5fc3dab4",
   "repository": "https://github.com/leviyuli/ZTagging"
 }

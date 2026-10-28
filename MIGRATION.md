@@ -1,21 +1,35 @@
-# Upgrading to Smart Tags 0.3.0
+# Upgrading to Smart Tags 0.4.0
 
-**0.3.2 review controls:** Install over 0.3.0 or 0.3.1 and continue the existing proposal. Confirm all mappings records eligible pending confirmations across every page; it does not approve the vocabulary or resolve blocked concepts. Edit and Remove operate on the staged concepts. Existing evidence, decisions, and native tags remain intact.
+Install the new XPI over the existing extension and open **Tools → Smart Tags…**. Startup upgrades local application state to **schema 4**. Consolidation continues to use ID-based protocol 2; terminology normalization is versioned separately. Migration performs no model requests and changes no native Zotero tags, collections, columns, or credentials.
 
-**0.3.1 performance patch:** Install over 0.3.0 and reopen Smart Tags. It uses the same schema and confirmation hash format. Your pending proposal, confirmed mappings, evidence, and settings remain available; continue reviewing without rebuilding. Technical failures without a reviewable proposal remain accessible under collapsed diagnostics in Queue & history.
+## Continuing an existing review
 
-Install the new XPI over the existing extension. Startup migrates local application state to schema 3; consolidation uses protocol 2. Migration makes no provider requests and changes no native Zotero tags, collections, item columns, or credentials.
+For a review created in 0.3.x, open **Tags**. The extension retains the current proposal, selected evidence, saved edits, human confirmations, and completed paper analysis. It runs local preparation checks first. If more scientific checking is needed, choose **Resume checks**; if a preparation run cannot finish, **Try again** starts another bounded attempt. You do not need to discard the review or repeat unchanged factual extraction.
 
-Before replacing state.json, the extension creates an exact-byte state.json.pre-v3.json backup in the profile's smart-tags directory. A different existing backup is preserved and a numbered backup is created. Backup or migration-write failures stop safely rather than loading an older valid .bak generation. Keep these private profile files out of public repositories.
+The new preparation stage can make **up to three additional requests** after the initial tag-list draft, using your explicitly selected provider and model. These requests use the existing budget controls. The old one-correction checkpoint remains in history and does not consume the new preparation allowance. A dispatched request counts even if it fails or is interrupted; a budget rejection before dispatch does not. Pause, restart, and ordinary Resume preserve the counter and saved responses. An explicit retry retains prior preparation replies and spent-budget history.
 
-Existing validated paper facts receive local IDs without changing their source wording, quotations, fingerprints, extractor version, or provider/model provenance. Completed jobs, including the reported 51-paper selected rebuild, remain completed when their evidence is unchanged. Settings, previously spent budget, decisions, locks, ownership, assignment journals, and historical tag IDs remain intact.
+**Questions** contains choices that the available scientific context cannot settle. Existing edits, DIY names, and human choices remain protected. The preferred number of core tags is **60**, with distinct concepts allowed to remain separate above that number.
 
-Name-based consolidation replies and incompatible pending proposals are invalidated. For a paused rebuild, open Queue & history and choose Resume to generate an ID-based consolidated proposal. If the previous rebuild had already finished, start Rebuild vocabulary again with the intended scope. One initial consolidation request and at most one reference correction may be needed; completed unchanged paper extraction is reused. Newly available PDF evidence or changed metadata refreshes only affected papers.
+When ready, **Apply tag list** saves the vocabulary and starts assignment suggestions for the same papers. Inspect those in **Paper suggestions**, then confirm a separate batch Apply to write native tags. That batch has an undo record in **Activity**. Preparing a list, answering questions, and applying the list do not enable unattended assignment. Review the tagging pilot before enabling automation in Settings.
 
-The vocabulary's existing presentation is not frozen. Review new preferred abbreviations, full names, aliases, hierarchy, and source mappings before approval. DIY names remain under your control. Native tag renames/merges remain a separate reviewed cleanup operation.
+## Backups and retained evidence
 
-Old warning strings are imported into notice history as unverified legacy records. Their original dates, counts, and affected papers were not recorded and are not fabricated. New warnings identify papers and phases; Dismiss hides a current episode, while successful reevaluation marks it resolved. Reinstalling does not delete this history.
+Before writing schema 4, the extension creates an immutable, exact-byte **state.json.pre-v4.json** backup in the profile's `smart-tags` directory. A different existing backup is kept and a numbered filename is used. Earlier pre-v2/pre-v3 backups remain intact. Backup, migration, or migration-write failures stop without substituting an older valid `.bak` generation. A state file from a newer schema is refused, including attempted downgrade writes.
 
-Schema-v1/v2 definition exports remain importable. Legacy evidence links are converted only through validated unique matches; ambiguous or scientifically uncertain mappings remain blocked for review. Protocol-v2 proposal imports preserve factual identities and reject modified quotations, stale source fingerprints, and forged verification caches. Equivalent registry entries from another catalog use recorded canonical identity mappings when required.
+Factual source wording, quotations, fingerprints, extractor version, provider/model provenance, and existing IDs are retained. Completed jobs remain reusable when their evidence is unchanged. Settings, credentials, previously spent budget, decisions, locks, assignment ownership, native snapshots, and undo journals are preserved. Changed metadata or newly readable PDFs refresh affected papers. Private profile backups contain library metadata and should stay out of public artifacts.
 
-After publishing a revised core taxonomy, complete and review a tagging pilot before enabling unattended assignment. The core concept limit remains 60 by default.
+Schema-3 pending reviews keep their evidence snapshots, candidate allocations, raw replies, and historical human proofs. Obsolete coverage entries for already removed candidates are pruned from active derived coverage; the original source evidence and review history remain retained. New source-level scientific judgements and researcher answers are stored separately from historical confirmation records.
+
+## Safe legacy-draft cleanup
+
+Unused generated drafts from the old vocabulary are removed from active extension definitions only when an original baseline proves their fields are unchanged. Custom, approved, edited, manually referenced, historically referenced, and current-proposal definitions are kept, together with definitions needed by their relationships. Unknown origins or a missing baseline cause definitions to be retained.
+
+This is permanent cleanup of eligible extension draft records, backed by the standard exact-byte migration backup. It creates no additional legacy archive and removes no native paper tags. The current review and its stable IDs remain available. Regular vocabulary history and tag-change undo continue to work.
+
+## Notices and older installations
+
+**Activity** keeps actionable notices with affected-paper links and persistent dismissal. Successful reevaluation resolves only the corresponding paper and processing phase. Unfamiliar-topic notices clear when fresh assignment analysis no longer finds that condition; completed merge reviews belong in history. A later successful request does not establish the missing usage of an earlier request or confirm an earlier remote revocation. Brief success confirmations disappear after the action.
+
+From schema 1 or 2, the earlier local evidence-identity upgrade runs before schema 4. It adds local IDs without repeating unchanged factual extraction, and invalidates incompatible name-based consolidation checkpoints and proposals. Resume the saved work or prepare tags again for the intended scope. Legacy support links are converted only through uniquely validated matches; ambiguous or scientifically uncertain links remain unresolved. Old warning strings remain historical, unverified notices without invented paper associations or dates.
+
+Older definition exports remain importable. Private proposal/evidence exports retain their source and vocabulary checks. Normal definition export stays separate from exports containing paper wording and quotations.

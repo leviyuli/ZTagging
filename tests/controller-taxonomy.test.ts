@@ -39,8 +39,8 @@ function taxonomyResponse(data:any){
 function assignmentResponse(data:any){return {summary:'Classification of supported systems and methods.',concepts:[],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.filter((t:any)=>t.name==='FC'||t.facet!=='system'||data.paper.abstract.toLowerCase().includes(t.fullName.toLowerCase())).map((t:any)=>({tagId:t.id,reason:'The source directly supports this scientific concept.',confidence:'high',match:'substantive',evidence:[{source:'abstract',text:data.paper.abstract}]}))};}
 class AI {
   calls:Call[]=[];
-  handler:(call:Call)=>unknown|Promise<unknown>=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?taxonomyResponse(call.data):call.kind==='correction'?{repairs:[]}:assignmentResponse(call.data);
-  async completeJson(_s:string,prompt:string,settings:ProviderSettings):Promise<CompletionResult>{const marker='INPUT_DATA_JSON:\n',data=JSON.parse(prompt.slice(prompt.indexOf(marker)+marker.length)),kind=data.protocolVersion===2||data.facts?'taxonomy':data.permittedRegistry?'correction':data.approvedVocabulary?'assignment':'facts';const call:Call={data,settings:copy(settings),kind};this.calls.push(call);const value=await this.handler(call);return {value,text:JSON.stringify(value),usage:{inputTokens:100,outputTokens:50},usageKnown:true,estimatedCostUSD:null};}
+  handler:(call:Call)=>unknown|Promise<unknown>=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?taxonomyResponse(call.data):call.kind==='correction'?repairedReferences(call.data):assignmentResponse(call.data);
+  async completeJson(_s:string,prompt:string,settings:ProviderSettings):Promise<CompletionResult>{const marker='INPUT_DATA_JSON:\n',data=JSON.parse(prompt.slice(prompt.indexOf(marker)+marker.length)),kind=data.preparationPolicyVersion?'correction':data.protocolVersion===2||data.facts?'taxonomy':data.permittedRegistry?'correction':data.approvedVocabulary?'assignment':'facts';const call:Call={data,settings:copy(settings),kind};this.calls.push(call);const value=await this.handler(call);return {value,text:JSON.stringify(value),usage:{inputTokens:100,outputTokens:50},usageKnown:true,estimatedCostUSD:null};}
   async hasApiKey(){return false;}async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};}
   async setApiKey(){}async removeApiKey(){}async testConnection(){return this.completeJson('','INPUT_DATA_JSON:\n{"facts":[]}',{mode:'chatgpt',model:'test'});}async listModels(){return [];}async signIn(){return this.getSession();}cancelSignIn(){}async signOut(){return {revoked:true};}async selectAccount(){}
 }
@@ -86,10 +86,9 @@ test('a staged proposal cannot publish after source metadata changes',async()=>{
   assert.equal(h.state.taxonomyReady,false);assert.equal(h.host.writes.length,0);
 });
 
-test('over-budget proposals remain staged and cannot change the active vocabulary',async()=>{
+test('a soft concept target preserves supported distinctions and leaves native data untouched until apply',async()=>{
   const h=harness();h.state.settings.coreConceptLimit=2;const before=copy(h.state.tags);await run(h);
-  assert.ok(h.state.taxonomyProposal!.issues.some(issue=>issue.includes('limit is 2')));
-  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:h.state.taxonomyProposal!.id}),/limit|proposal evidence issues/);
+  assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(h.state.tagPreparation!.status,'ready');assert.ok(h.state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length>2);
   assert.deepEqual(h.state.tags,before);assert.equal(h.host.writes.length,0);
 });
 
@@ -155,7 +154,7 @@ test('proposal import refuses forged coverage, missing fingerprints, or unsuppor
     (value:any)=>{value.facts[0].concepts[0].evidence[0].text='An invented source passage.';},
   ]){
     const target=harness();await target.controller.invoke('scan',{scope:'library'});const document=copy(original);corrupt(document);
-    await assert.rejects(target.controller.invoke('import-vocabulary',{value:document}),/coverage|fingerprint|passage|source|facts/i);
+    await assert.rejects(target.controller.invoke('import-vocabulary',{value:document}),/coverage|fingerprint|passage|source|facts|incomplete/i);
     assert.equal(target.state.taxonomyProposal,null);assert.equal(target.host.writes.length,0);
   }
 });
@@ -199,19 +198,17 @@ test('a completed consolidation checkpoint resumes after interruption without a 
   assert.equal(restored.run?.status,'idle');assert.ok(restored.taxonomyProposal);assert.equal(ai.calls.length,0);assert.equal(h.host.writes.length,0);
 });
 
-test('invalid approved-identity merges stay blocked through edits until explicitly discarded without AI calls',async()=>{
+test('invalid generated merges are discarded locally while protected IDs and remembered choices survive',async()=>{
   const h=harness(2);h.state.tags.push(tag('approved-fc','FC',{status:'approved',fullName:'Fuel cell'}));
   h.state.decisions['1:P1|approved-fc']={rejected:true};
   h.ai.handler=call=>{if(call.kind==='facts')return factsResponse(call.data);const raw=taxonomyResponse(call.data);raw.merges=[{fromId:'approved-fc',toKey:'missing-target'}] as any;return raw;};
   await run(h);const proposal=h.state.taxonomyProposal!,calls=h.ai.calls.length;
-  assert.equal(h.state.run?.status,'idle');assert.equal(proposal.unresolvedMerges?.length,1);
-  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/invalid merge/);
+  assert.equal(h.state.run?.status,'idle');assert.deepEqual(proposal.unresolvedMerges??[],[]);assert.equal(proposal.tags.find(t=>t.name==='FC')!.id,'approved-fc');
   proposal.tags.find(t=>t.name==='EIS')!.description='A manually reviewed EIS definition.';
   await h.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags:proposal.tags});
-  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/invalid merge|uncertain|evidence/);
+  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/uncertain|evidence|meaning|review/i);
   const eis=proposal.tags.find(t=>t.name==='EIS')!;
   await h.controller.invoke('confirm-taxonomy-mapping',{id:proposal.id,tagId:eis.id});
-  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/invalid merge/);
   await h.controller.invoke('discard-invalid-merges',{id:proposal.id});
   const resolved=h.state.taxonomyProposal!;assert.deepEqual(resolved.unresolvedMerges??[],[]);assert.deepEqual(resolved.issues,[]);
   assert.equal(resolved.tags.find(t=>t.name==='FC')!.id,'approved-fc');assert.equal(resolved.tags.find(t=>t.name==='EIS')!.description,'A manually reviewed EIS definition.');
@@ -235,34 +232,34 @@ test('a new rebuild can replace a paused unaccepted rebuild while reusing its co
   assert.notEqual(h.state.taxonomyProposal!.tags[0].description,'Previous unaccepted draft');assert.equal(h.host.writes.length,0);
 });
 
-function invalidReferenceResponse(data:any){const raw=taxonomyResponse(data);raw.tags.find((candidate:any)=>candidate.key==='eis')!.supportRegistryIds.push('unpermitted-registry');return raw;}
-function repairedReferences(data:any){return {repairs:data.candidates.filter((candidate:any)=>candidate.name==='EIS').map((candidate:any)=>({tagId:candidate.id,supportRegistryIds:data.permittedRegistry.filter((entry:any)=>entry.sources.some((source:any)=>source.name===EIS)).map((entry:any)=>entry.registryId)}))};}
+function invalidReferenceResponse(data:any){const raw=taxonomyResponse(data);raw.tags.find((candidate:any)=>candidate.key==='eis')!.parentKeys=['unpermitted-parent'];return raw;}
+function repairedReferences(data:any){return {tags:data.tags.filter((candidate:any)=>candidate.name==='EIS').map((candidate:any)=>({tagId:candidate.id,broaderIds:[],supportRegistryIds:data.support[candidate.id].registryIds}))};}
 
-test('v3 consolidation makes exactly one reference correction with the selected provider and persistent identities',async()=>{
+test('preparation repairs generated relationships with the selected provider and persistent identities',async()=>{
   const h=harness(3);h.ai.handler=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?invalidReferenceResponse(call.data):call.kind==='correction'?repairedReferences(call.data):assignmentResponse(call.data);
   await run(h);const proposal=h.state.taxonomyProposal!,checkpoint=h.state.run!.consolidation!;
-  assert.equal(checkpoint.protocolVersion,2);assert.equal(checkpoint.correctionAttempts,1);assert.equal(checkpoint.phase,'ready');assert.deepEqual(proposal.issues,[]);
+  assert.equal(checkpoint.protocolVersion,2);assert.equal(h.state.run!.preparation!.attempts,1);assert.equal(checkpoint.correctionAttempts,0);assert.equal(checkpoint.phase,'ready');assert.deepEqual(proposal.issues,[]);
   assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,3);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);
   const correction=h.ai.calls.find(call=>call.kind==='correction')!;assert.equal(correction.settings.mode,'chatgpt');assert.equal(correction.settings.model,'test-model');
-  for(const candidate of correction.data.candidates)assert.ok(proposal.tags.some(tag=>tag.id===candidate.id));
-  assert.ok(checkpoint.value);assert.ok(checkpoint.correctionValue);assert.equal(h.host.writes.length,0);
+  for(const candidate of correction.data.tags)assert.ok(proposal.tags.some(tag=>tag.id===candidate.id));
+  assert.ok(checkpoint.value);assert.ok(h.state.run!.preparation!.responses[0].raw);assert.equal(h.host.writes.length,0);
 });
 
-test('exhausted reference correction retains diagnostics and restart cannot reset its attempt',async()=>{
+test('exhausted preparation retains diagnostics and restart cannot reset its three attempts',async()=>{
   const h=harness(2);h.ai.handler=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?invalidReferenceResponse(call.data):{repairs:[]};
-  await run(h);const proposal=h.state.taxonomyProposal!;assert.ok(proposal.issues.length);assert.equal(h.state.run!.consolidation!.correctionAttempts,1);
+  await run(h);const proposal=h.state.taxonomyProposal!;assert.ok(proposal.issues.length);assert.equal(h.state.run!.preparation!.attempts,3);
   await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/registry|correction|support|diagnostic|evidence/i);
   const restored=copy(h.state);restored.run!.status='paused';restored.run!.vocabFinished=false;restored.taxonomyProposal=null;
   const ai=new AI();ai.handler=()=>{throw new Error('An exhausted correction must not call the provider after restart');};
   const controller=new AppController(restored,{host:h.host,ai,persist:async()=>{}});await controller.initialize();await controller.invoke('resume');await controller.waitForIdle();
-  assert.equal(ai.calls.length,0);assert.equal(restored.run!.consolidation!.correctionAttempts,1);assert.ok(restored.taxonomyProposal!.issues.length);assert.equal(h.host.writes.length,0);
+  assert.equal(ai.calls.length,0);assert.equal(restored.run!.preparation!.attempts,3);assert.ok(restored.taxonomyProposal!.issues.length);assert.equal(h.host.writes.length,0);
 });
 
-test('manual removal of an unsupported link makes an exhausted correction actionable while retaining its diagnostics',async()=>{
+test('editing an exhausted generated relationship makes the retained proposal actionable without another request',async()=>{
   const h=harness();h.ai.handler=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?invalidReferenceResponse(call.data):{repairs:[]};
   await run(h);const proposal=h.state.taxonomyProposal!,id=proposal.tags.find(tag=>tag.name==='EIS')!.id,calls=h.ai.calls.length;
-  assert.ok(proposal.correctionDiagnostics!.length);await h.controller.invoke('remove-taxonomy-support',{id:proposal.id,tagId:id,registryId:'unpermitted-registry'});
-  assert.deepEqual(proposal.issues,[]);assert.ok(proposal.correctionDiagnostics!.length);assert.equal(h.ai.calls.length,calls);
+  assert.equal(h.state.run!.preparation!.responses.length,3);proposal.unresolvedRelationships=[];await h.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags:proposal.tags});
+  assert.deepEqual(proposal.issues,[]);assert.equal(h.state.run!.preparation!.responses.length,3);assert.equal(h.ai.calls.length,calls);assert.ok(proposal.tags.some(tag=>tag.id===id));
   await h.controller.invoke('approve-taxonomy',{id:proposal.id});assert.equal(h.state.taxonomyReady,true);assert.equal(h.host.writes.length,0);
 });
 
@@ -270,65 +267,65 @@ test('explicit regeneration starts a fresh bounded correction generation while r
   const h=harness();let regenerating=false;h.ai.handler=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?(regenerating?taxonomyResponse(call.data):invalidReferenceResponse(call.data)):{repairs:[]};
   await run(h);const originalGeneration=h.state.run!.consolidation!.generationId,facts=JSON.stringify(h.state.facts),proposalId=h.state.taxonomyProposal!.id;
   regenerating=true;await h.controller.invoke('regenerate-taxonomy',{id:proposalId});await h.controller.waitForIdle();
-  assert.notEqual(h.state.run!.consolidation!.generationId,originalGeneration);assert.equal(h.state.run!.consolidation!.correctionAttempts,0);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(JSON.stringify(h.state.facts),facts);
-  assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,2);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.equal(h.host.writes.length,0);
+  assert.notEqual(h.state.run!.consolidation!.generationId,originalGeneration);assert.equal(h.state.run!.preparation!.attempts,0);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(JSON.stringify(h.state.facts),facts);
+  assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,2);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,3);assert.equal(h.host.writes.length,0);
 });
 
-test('budget rejection before correction dispatch leaves the single attempt available for Resume',async()=>{
+test('budget rejection before preparation dispatch leaves all attempts available for Resume',async()=>{
   const h=harness();h.state.settings={...h.state.settings,provider:'api',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:5};
   h.ai.handler=call=>{
     if(call.kind==='facts')return factsResponse(call.data);
     if(call.kind==='taxonomy'){h.state.run!.settings.budgetUSD=h.state.run!.spentUSD;return invalidReferenceResponse(call.data);}
     return repairedReferences(call.data);
   };
-  await run(h);assert.equal(h.state.run!.status,'paused');assert.equal(h.state.run!.consolidation!.correctionAttempts,0);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,0);assert.ok(h.state.taxonomyProposal);
+  await run(h);assert.equal(h.state.run!.status,'paused');assert.equal(h.state.run!.preparation!.attempts,0);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,0);assert.ok(h.state.taxonomyProposal);
   await h.controller.invoke('save-settings',{settings:{...h.state.settings,budgetUSD:5}});await h.controller.invoke('resume');await h.controller.waitForIdle();
   assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);
-  assert.equal(h.state.run!.consolidation!.correctionAttempts,1);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
+  assert.equal(h.state.run!.preparation!.attempts,1);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
 });
 
-test('persistence failure before correction dispatch rolls back the attempt and reservation so Resume can dispatch once',async()=>{
+test('persistence failure before preparation dispatch rolls back the attempt and reservation so Resume can dispatch once',async()=>{
   const h=harness();h.state.settings={...h.state.settings,provider:'api',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:5};
   h.ai.handler=call=>call.kind==='facts'?factsResponse(call.data):call.kind==='taxonomy'?invalidReferenceResponse(call.data):repairedReferences(call.data);
   let failCorrectionWrite=true,lastSavedSpent=0,spentBeforeFailure=0,rejectedReservation=0,failedWrites=0;
   const saved:AppState[]=[],controller=new AppController(h.state,{host:h.host,ai:h.ai,persist:async state=>{
     const run=state.run;
-    if(failCorrectionWrite&&run?.consolidation?.phase==='correcting'&&run.consolidation.correctionAttempts===1){
+    if(failCorrectionWrite&&run?.preparation?.pending&&run.preparation.attempts===1){
       failCorrectionWrite=false;failedWrites++;spentBeforeFailure=lastSavedSpent;rejectedReservation=run.spentUSD-lastSavedSpent;assert.ok(rejectedReservation>0);throw new Error('Synthetic atomic state write failure before provider dispatch');
     }
     lastSavedSpent=run?.spentUSD??0;saved.push(copy(state));
   }});
   await controller.invoke('rebuild',{scope:'library'});await controller.waitForIdle();
-  assert.equal(failedWrites,1);assert.equal(h.state.run!.status,'paused');assert.equal(h.state.run!.consolidation!.correctionAttempts,0);assert.equal(h.state.run!.consolidation!.phase,'validating');assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,0);
-  assert.equal(h.state.run!.spentUSD,spentBeforeFailure);assert.equal(saved.at(-1)!.run!.spentUSD,spentBeforeFailure);assert.equal(saved.at(-1)!.run!.consolidation!.correctionAttempts,0);assert.ok(h.state.taxonomyProposal);
-  await controller.invoke('resume');await controller.waitForIdle();assert.equal(h.state.run!.consolidation!.correctionAttempts,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,1);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
+  assert.equal(failedWrites,1);assert.equal(h.state.run!.status,'paused');assert.equal(h.state.run!.preparation!.attempts,0);assert.equal(h.state.run!.preparation!.pending,false);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,0);
+  assert.equal(h.state.run!.spentUSD,spentBeforeFailure);assert.equal(saved.at(-1)!.run!.spentUSD,spentBeforeFailure);assert.equal(saved.at(-1)!.run!.preparation!.attempts,0);assert.ok(h.state.taxonomyProposal);
+  await controller.invoke('resume');await controller.waitForIdle();assert.equal(h.state.run!.preparation!.attempts,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,1);assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy').length,1);assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
   assert.ok(Math.abs(h.state.run!.spentUSD-spentBeforeFailure-rejectedReservation)<1e-12);assert.equal(h.host.writes.length,0);
 });
 
-test('authentication failure after correction dispatch consumes the attempt and survives Resume',async()=>{
+test('authentication failure consumes each dispatched preparation attempt and cannot exceed three across Resume',async()=>{
   const h=harness();h.ai.handler=call=>{if(call.kind==='facts')return factsResponse(call.data);if(call.kind==='taxonomy')return invalidReferenceResponse(call.data);throw new Error('OpenAI authentication HTTP 401');};
-  await run(h);assert.equal(h.state.run!.consolidation!.correctionAttempts,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.ok(h.state.taxonomyProposal);
-  const factsBefore=JSON.stringify(h.state.facts);await h.controller.invoke('resume');await h.controller.waitForIdle();
-  assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.equal(JSON.stringify(h.state.facts),factsBefore);assert.ok(h.state.taxonomyProposal!.issues.length);assert.equal(h.host.writes.length,0);
+  await run(h);assert.equal(h.state.run!.preparation!.attempts,1);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.ok(h.state.taxonomyProposal);
+  const factsBefore=JSON.stringify(h.state.facts);for(let index=0;index<3;index++){await h.controller.invoke('resume');await h.controller.waitForIdle();}
+  assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,3);assert.equal(h.state.run!.preparation!.attempts,3);assert.equal(JSON.stringify(h.state.facts),factsBefore);assert.ok(h.state.taxonomyProposal!.issues.length);assert.equal(h.host.writes.length,0);
 });
 
-test('cancelling a dispatched correction retains its attempt across restart',async()=>{
+test('cancelling the third dispatched preparation retains its exhausted counter across restart',async()=>{
   const h=harness();let entered!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
-  h.ai.handler=async call=>{if(call.kind==='facts')return factsResponse(call.data);if(call.kind==='taxonomy')return invalidReferenceResponse(call.data);entered();await gate;throw new DOMException('Cancelled correction','AbortError');};
-  await h.controller.invoke('rebuild',{scope:'library'});await started;assert.equal(h.state.run!.consolidation!.correctionAttempts,1);
+  let repairs=0;h.ai.handler=async call=>{if(call.kind==='facts')return factsResponse(call.data);if(call.kind==='taxonomy')return invalidReferenceResponse(call.data);if(++repairs<3)return {tags:[]};entered();await gate;throw new DOMException('Cancelled correction','AbortError');};
+  await h.controller.invoke('rebuild',{scope:'library'});await started;assert.equal(h.state.run!.preparation!.attempts,3);
   await h.controller.invoke('cancel');release();await h.controller.waitForIdle();const restored=copy(h.state);restored.run!.status='paused';restored.run!.vocabFinished=false;
   const ai=new AI();ai.handler=()=>{throw new Error('Cancelled dispatched corrections cannot be retried automatically');};const controller=new AppController(restored,{host:h.host,ai,persist:async()=>{}});
-  await controller.invoke('resume');await controller.waitForIdle();assert.equal(ai.calls.length,0);assert.equal(restored.run!.consolidation!.correctionAttempts,1);assert.equal(h.host.writes.length,0);
+  await controller.invoke('resume');await controller.waitForIdle();assert.equal(ai.calls.length,0);assert.equal(restored.run!.preparation!.attempts,3);assert.equal(h.host.writes.length,0);
 });
 
-test('uncertain mappings wait for explicit per-tag confirmation instead of spending the correction attempt',async()=>{
+test('legacy mapping confirmation remains available after the selected-model preparation cannot resolve a meaning',async()=>{
   const h=harness();h.ai.handler=call=>{
     if(call.kind==='facts')return {summary:'Proton transport resistance is studied.',concepts:[{name:'catalyst-layer proton resistance',facet:'phenomenon',evidence:[{source:'abstract',text:call.data.paper.abstract}]}],needsPDF:false};
     if(call.kind==='taxonomy')return {tags:[{key:'r','name':'protonic resistance',fullName:'protonic resistance',description:'Protonic resistance in a catalyst layer.',facet:'phenomenon',aliases:['catalyst-layer proton resistance'],supportRegistryIds:call.data.conceptRegistry.map((entry:any)=>entry.registryId)}],merges:[],excluded:[]};
     throw new Error('Uncertainty must be resolved by the user');
   };
   await run(h);const proposal=h.state.taxonomyProposal!,id=proposal.tags.find(tag=>!tag.custom)!.id;
-  assert.equal(h.state.run!.consolidation!.correctionAttempts,0);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,0);assert.ok(proposal.issues.length);
+  assert.equal(h.state.run!.consolidation!.correctionAttempts,0);assert.equal(h.ai.calls.filter(call=>call.kind==='correction').length,1);assert.equal(h.state.run!.preparation!.attempts,1);assert.ok(proposal.issues.length);
   await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/Confirm|meaning|review/i);
   await h.controller.invoke('confirm-taxonomy-mapping',{id:proposal.id,tagId:id});assert.deepEqual(proposal.issues,[]);assert.deepEqual(proposal.support[id].paperIds,['1:P1']);
   const before=copy(proposal.support[id]),identity=proposal.tags.find(tag=>tag.id===id)!.id;proposal.tags.find(tag=>tag.id===id)!.name='Reviewed resistance';
@@ -342,7 +339,7 @@ test('schema3 migration resumes 51 completed selected jobs without extracting an
     legacy.papers[source.id]=copy(source);const facts=normalizeFacts(factsResponse({paper:source}),source,'chatgpt','test-model');for(const concept of facts.concepts)delete concept.factConceptId;legacy.facts[source.id]=facts;
   }
   const selected=[...h.host.papers.values()].slice(0,51);legacy.run={id:'legacy-selected-51',kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:selected.map((paper,i)=>({id:`legacy-job-${i}`,paperId:paper.id,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Unknown supporting registry concept: Anion exchange membrane water electrolyzers (AEMWEs).',spentUSD:1.75,settings:copy(legacy.settings),vocabularyVersion:0,consolidation:{inputFingerprint:'old-name-protocol',value:{tags:[]},failed:true}};
-  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,3);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
+  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,4);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
   assert.equal(Object.keys(migrated.facts).length,97);assert.equal(migrated.run!.spentUSD,1.75);assert.deepEqual(migrated.settings,legacy.settings);assert.equal(migrateState(migrated),migrated);
   const ai=new AI();ai.handler=call=>{if(call.kind==='facts')throw new Error('Migration Resume must reuse the completed factual extraction');return taxonomyResponse(call.data);};
   const controller=new AppController(migrated,{host:h.host,ai,persist:async()=>{}});await controller.invoke('resume');await controller.waitForIdle();
@@ -394,8 +391,8 @@ test('removing a staged concept clears its hierarchy and detail contexts without
 
 test('explicit proposal export carries exact evidence identities while vocabulary export contains definitions only',async()=>{
   const h=harness(2);await run(h,'rebuild','selected');const documents:any[]=[],controller=new AppController(h.state,{host:h.host,ai:h.ai,persist:async()=>{},exportFile:async value=>{documents.push(copy(value));}}),proposal=h.state.taxonomyProposal!;
-  await controller.invoke('export-vocabulary');const definitions=documents[0];assert.equal(definitions.format,'zotero-smart-tags-vocabulary');assert.equal(definitions.schemaVersion,3);assert.ok(definitions.tags);assert.equal(definitions.facts,undefined);assert.equal(definitions.proposal,undefined);assert.equal(definitions.evidenceSnapshot,undefined);
-  await controller.invoke('export-taxonomy-proposal',{id:proposal.id});const document=documents[1];assert.equal(document.format,'zotero-smart-tags-proposal');assert.equal(document.schemaVersion,3);assert.equal(document.sourceVocabularyFingerprint,fingerprint(h.state.tags));
+  await controller.invoke('export-vocabulary');const definitions=documents[0];assert.equal(definitions.format,'zotero-smart-tags-vocabulary');assert.equal(definitions.schemaVersion,4);assert.ok(definitions.tags);assert.equal(definitions.facts,undefined);assert.equal(definitions.proposal,undefined);assert.equal(definitions.evidenceSnapshot,undefined);
+  await controller.invoke('export-taxonomy-proposal',{id:proposal.id});const document=documents[1];assert.equal(document.format,'zotero-smart-tags-proposal');assert.equal(document.schemaVersion,4);assert.equal(document.sourceVocabularyFingerprint,fingerprint(h.state.tags));
   assert.equal(document.facts.length,1);assert.equal(document.facts[0].paperId,'1:P1');assert.deepEqual(document.proposal.evidenceSnapshot,proposal.evidenceSnapshot);assert.deepEqual(document.proposal.support,proposal.support);
   assert.deepEqual(document.facts[0].concepts.map((concept:any)=>concept.factConceptId),h.state.facts['1:P1'].concepts.map(concept=>concept.factConceptId));assert.equal(h.host.writes.length,0);
 });
@@ -427,14 +424,14 @@ test('imported forged verification caches cannot authorize a Co to CO scientific
   tag.name='CO';tag.fullName='carbon monoxide';tag.description='Carbon monoxide molecules.';const meaning={description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples},meaningId=fingerprint(meaning);
   proposal.validatedEvidenceLinks={[tag.id]:{[registryId]:fingerprint({snapshot:snapshot.id,entry,sources:entry.sourceIds.map(id=>snapshot.sources[id]),meaning:meaningId})}};proposal.evidenceScientificIdentities={[tag.id]:'CO'};proposal.evidenceMeaningFingerprints={[tag.id]:meaningId};proposal.mappingConfirmations={[tag.id]:{fingerprint:fingerprint({snapshot,tagId:tag.id,meaning,registryIds:[registryId]}),confirmedAt:'2026-10-28T00:00:00.000Z'}};proposal.validationIssues=[];proposal.issues=[];
   const target=harness();target.host.papers.set(1,copy(paper));await target.controller.invoke('scan',{scope:'library'});await target.controller.invoke('import-vocabulary',{value:document});
-  const imported=target.state.taxonomyProposal!;assert.ok(imported.validationIssues!.some(issue=>issue.code==='scientific-contradiction'));assert.deepEqual(imported.mappingConfirmations,{});assert.deepEqual(imported.support[tag.id].paperIds,[]);
+  const imported=target.state.taxonomyProposal!;assert.ok(imported.validationIssues!.some(issue=>issue.code==='scientific-contradiction'));assert.deepEqual(imported.support[tag.id].paperIds,[]);
   await assert.rejects(target.controller.invoke('approve-taxonomy',{id:imported.id}),/evidence|scientific/i);assert.equal(target.ai.calls.length,0);assert.equal(target.host.writes.length,0);
 });
 
-test('presentation-renamed proposals import stable registry/source links but require fresh confirmation of uncertain meaning',async()=>{
+test('presentation-renamed proposals import stable registry/source links and valid exact-snapshot human proofs',async()=>{
   const source=uncertainHarness();await run(source);const proposal=source.state.taxonomyProposal!,tagId=proposal.tags.find(tag=>!tag.custom)!.id;await source.controller.invoke('confirm-taxonomy-mapping',{id:proposal.id,tagId});
   proposal.tags.find(tag=>tag.id===tagId)!.name='Reviewed resistance';proposal.tags.find(tag=>tag.id===tagId)!.fullName='Reviewed protonic resistance label';await source.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags:proposal.tags});const document=proposalDocument(source),support=copy(proposal.support[tagId]);
   const target=harness();await target.controller.invoke('scan',{scope:'library'});await target.controller.invoke('import-vocabulary',{value:document});const imported=target.state.taxonomyProposal!;
-  assert.ok(imported.tags.some(tag=>tag.id===tagId));assert.deepEqual(imported.support[tagId].registryIds,support.registryIds);assert.deepEqual(Object.keys(imported.evidenceSnapshot!.sources).sort(),Object.keys(proposal.evidenceSnapshot!.sources).sort());assert.deepEqual(imported.mappingConfirmations,{});assert.ok(imported.validationIssues!.some(issue=>issue.code==='uncertain-meaning'));
-  await assert.rejects(target.controller.invoke('approve-taxonomy',{id:imported.id}),/evidence|scientific/i);await target.controller.invoke('confirm-taxonomy-mapping',{id:imported.id,tagId});assert.deepEqual(imported.support[tagId].sourceIds,support.sourceIds);assert.deepEqual(imported.support[tagId].paperIds,support.paperIds);assert.equal(target.ai.calls.length,0);assert.equal(target.host.writes.length,0);
+  assert.ok(imported.tags.some(tag=>tag.id===tagId));assert.deepEqual(imported.support[tagId].registryIds,support.registryIds);assert.deepEqual(Object.keys(imported.evidenceSnapshot!.sources).sort(),Object.keys(proposal.evidenceSnapshot!.sources).sort());assert.deepEqual(imported.mappingConfirmations,proposal.mappingConfirmations);
+  assert.deepEqual(imported.support[tagId].sourceIds,support.sourceIds);assert.deepEqual(imported.support[tagId].paperIds,support.paperIds);assert.deepEqual(imported.issues,[]);assert.equal(target.ai.calls.length,0);assert.equal(target.host.writes.length,0);
 });

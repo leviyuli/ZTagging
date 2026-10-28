@@ -9,6 +9,13 @@ export interface StateIO {
   copyExact?(source: string, destination: string): Promise<void>;
 }
 
+class NewerStateError extends Error {}
+function stateVersion(value:unknown):number|undefined {
+  if(!value||typeof value!=='object')return undefined;
+  const version=(value as {schemaVersion?:unknown}).schemaVersion;
+  return Number.isInteger(version)?version as number:undefined;
+}
+
 export class AtomicStore<T extends {schemaVersion: number}> {
   private tail: Promise<void> = Promise.resolve();
   recovered = false;
@@ -57,14 +64,16 @@ export class AtomicStore<T extends {schemaVersion: number}> {
       try {
         original = await this.io.read(path);
         parsed = JSON.parse(original);
+        const version=stateVersion(parsed),target=this.initial().schemaVersion;
+        if(version!==undefined&&version>target)throw new NewerStateError(`Smart Tags state uses newer schema ${version}; schema ${target} cannot open or replace it. Install the matching extension version.`);
         const current = this.validate(parsed);
-        const version = (parsed as {schemaVersion?: unknown} | null)?.schemaVersion;
         // Production supplies structural legacy validation. The fallback keeps the generic
         // store compatible with clients that previously supplied only a migration function.
         isLegacy = !current && !!this.migrate && (this.canMigrate ? this.canMigrate(parsed)
           : Number.isInteger(version) && (version as number) > 0 && (version as number) < this.initial().schemaVersion);
         if (!current && !isLegacy) throw new Error('Unsupported or invalid Smart Tags state');
       } catch (error) {
+        if(error instanceof NewerStateError)throw error;
         if (path.endsWith('.bak')) throw new Error('Smart Tags state and backup could not be read. Preserve the files and restore a backup.');
         if (!await this.io.exists(this.path + '.bak')) throw error;
         continue;
@@ -84,12 +93,17 @@ export class AtomicStore<T extends {schemaVersion: number}> {
     return this.initial();
   }
   save(value: T): Promise<void> {
+    if(value.schemaVersion!==this.initial().schemaVersion)return Promise.reject(new Error('Refusing to save a different Smart Tags schema version. Load and migrate its state first.'));
     const text = JSON.stringify(value);
     const next = this.tail.catch(()=>{}).then(async () => {
       if (await this.io.exists(this.path)) {
         const old = await this.io.read(this.path);
         let validOld = false;
-        try { validOld = this.validate(JSON.parse(old)); } catch { /* Keep the last valid backup for an invalid current generation. */ }
+        let parsed:unknown;
+        try { parsed=JSON.parse(old); } catch { /* Keep the last valid backup for an invalid current generation. */ }
+        const version=stateVersion(parsed);
+        if(version!==undefined&&version>value.schemaVersion)throw new NewerStateError(`Refusing to replace newer Smart Tags schema ${version} with schema ${value.schemaVersion}.`);
+        if(parsed!==undefined)try{validOld=this.validate(parsed);}catch{/* A malformed current generation must not overwrite its valid backup. */}
         if (validOld) await this.writeAtomic(this.path + '.bak', old);
       }
       await this.writeAtomic(this.path, text);

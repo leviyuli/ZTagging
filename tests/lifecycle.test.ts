@@ -168,6 +168,10 @@ function managerDialog() {
       const find = (element: any): any => element?.id === id ? element : element?.children?.map(find).find(Boolean);
       return find(app) || null;
     },
+    querySelector(selector: string) {
+      const find = (element: any): any => element?.className?.split(/\s+/).includes(selector.slice(1)) ? element : element?.children?.map(find).find(Boolean);
+      return find(app) || null;
+    },
     createElement() { throw new Error('An XML manager document requires the explicit HTML namespace'); },
     createElementNS(namespace: string, name: string) {
       assert.ok(['http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/svg'].includes(namespace), `Unexpected element namespace: ${namespace}`);
@@ -206,7 +210,7 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
   const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, 3);
+  assert.equal(state.schemaVersion, 4);
   assert.deepEqual(state.warnings, []);
   assert.equal(state.settings.autoAssign, false);
   assert.equal(state.run, null);
@@ -232,17 +236,17 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
   delete old.evidenceCatalog;delete old.taxonomyEvidence;
   const original = `${JSON.stringify(old, null, 3)}\r\n`;
   const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v3.json`;
+  const occupiedBackup = `${statePath}.pre-v4.json`;
   native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
   native.files.set(occupiedBackup, 'An older immutable migration backup.');
   await native.app.startup(startup);
   try {
     const migrated = JSON.parse(native.files.get(statePath)!);
-    assert.equal(migrated.schemaVersion, 3);assert.equal(migrated.vocabularyVersion, 7);
+    assert.equal(migrated.schemaVersion, 4);assert.equal(migrated.vocabularyVersion, 7);
     assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
     assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v3.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v3.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v4.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v4.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
     assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
     assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
     assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
@@ -260,7 +264,7 @@ test('native backup recovery records an active warning without restoring legacy 
   await native.app.startup(startup);
   try {
     const restored = JSON.parse(native.files.get(statePath)!);
-    assert.equal(restored.schemaVersion, 3);assert.equal(restored.vocabularyVersion, 4);
+    assert.equal(restored.schemaVersion, 4);assert.equal(restored.vocabularyVersion, 4);
     assert.ok(restored.warnings.some((warning: any) => warning.status === 'active' && /restored.*previous valid state/i.test(warning.message)));
     assert.ok(restored.warnings.every((warning: unknown) => warning && typeof warning === 'object'));
     assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
@@ -393,7 +397,7 @@ test('the real manager renders in an XML chrome document using explicit HTML nam
   for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready', dialog.app!.textContent);
   assert.match(dialog.app!.textContent, /Your library, clearly tagged/);
-  assert.match(dialog.app!.textContent, /Rebuild vocabulary/);
+  assert.match(dialog.app!.textContent, /Prepare tags/);
   assert.doesNotMatch(dialog.app!.textContent, /Opening Smart Tags/);
   assert.equal(native.errors.length, 0);
   await native.app.shutdown();
