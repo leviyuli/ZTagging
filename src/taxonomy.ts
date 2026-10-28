@@ -8,12 +8,14 @@ export interface PaperFacts {
   extractionVersion:1;summary:string;concepts:FactConcept[];needsPDF:boolean;
 }
 export interface TaxonomySupport {paperIds:string[];evidence?:({paperId:string}&Evidence)[]}
+export interface UnresolvedMerge {fromId:string;toReference:string;reason:string}
 export interface TaxonomyProposal {
   id:string;createdAt:string;inputFingerprint:string;baseVersion:number;coreLimit:number;tags:TagDefinition[];
   support:Record<string,TaxonomySupport>;merges:{fromId:string;toId:string}[];
   excluded:{name:string;reason:string}[];issues:string[];paperIds:string[];
   paperFingerprints?:Record<string,string>;
   paperInputFingerprints?:Record<string,string>;
+  unresolvedMerges?:UnresolvedMerge[];
 }
 export interface ProposalOptions {limit?:number;baseVersion?:number;createdAt?:string}
 
@@ -71,12 +73,14 @@ export function buildConsolidationPrompt(facts:readonly PaperFacts[],existing:re
     'Quotes and provenance are validated and retained locally. Compact facts contain every grounded concept; conceptRegistry groups only canonical spellings and retains every supporting paper ID. Registry summary is one representative paper, not a claim about every source.',
     'With conceptRegistry, use supportConcepts to reference exact registry names. Each reference expands locally to all that concept\'s paperIds and original verified quotes; do not repeat hundreds of IDs. With small per-paper facts, use support entries linking paperId and exact conceptNames.',
     'Every direct support concept must be equivalent to the proposed name, fullName, or a declared genuine alias. Narrower concepts support broader parents through valid child relations, not false aliases. Never attach a paper merely because it has unrelated evidence. Do not invent IDs, concepts, or quotes.',
-    'Keep optional niche details outside the core. Never generate DIY/custom tags: existing custom definitions are preserved outside the budget. Preserve approved definitions; draft aliases are hypotheses and may be corrected.',
+    'Keep optional niche details outside the core. Never generate DIY/custom tags: existing custom definitions are preserved outside the budget. Preserve approved definitions. draftCandidates are unaccepted, replaceable suggestions, not an approved vocabulary: reconsider them globally and overwrite, rename, or omit them freely. Draft aliases are hypotheses and may be corrected. They have no authoritative merge IDs.',
     'Prefer established unambiguous abbreviations such as FC, PEMFC, AEMFC, WE, PEMWE, AEMWE, CL, GDL, PTL, and EIS. Do not invent acronyms. Store unambiguous full forms and genuine synonyms. Keep Co and CO distinct.',
     'Aliases mean the same concept. Parents mean IS-A, not part-of or vague relevance. PEMFC and AEMFC are children of FC, never synonyms. MEA may relate to FC but is not a fuel cell. relatedKeys do not confer inherited search or assignment. Is-a edges must share a facet and avoid cycles.',
     'A merge must retain the same concept, never collapse merely related or broader/narrower topics. Explain excluded details instead of endlessly expanding core labels. Parent support is inherited from supported children. Produce one complete globally considered proposal.',
+    'Every merge.fromId must be copied literally from mergeSourceIds, which contains only approved core concept IDs. Never invent, hash, shorten, or substitute a proposed candidate key for an old source ID. Every merge.toKey must name one of your proposed tags[].key values. Omit a merge when you cannot establish an exact approved old identity. When mergeSourceIds is empty, return merges:[]; rebuilding unaccepted drafts requires no merge bookkeeping.',
   ].join(' ');
-  const input={coreLimit:limit,existingVocabulary:existing.map(tag=>({...tag,fullName:tag.fullName??tag.name,relatedIds:tag.relatedIds??[],matchingMode:tag.matchingMode??(tag.custom?'suggest':'auto')})),
+  const input={coreLimit:limit,mergeSourceIds:existing.filter(tag=>!tag.custom&&tag.status==='approved').map(tag=>tag.id),existingVocabulary:existing.filter(tag=>tag.custom||tag.status==='approved').map(tag=>({...tag,fullName:tag.fullName??tag.name,relatedIds:tag.relatedIds??[],matchingMode:tag.matchingMode??(tag.custom?'suggest':'auto')})),
+    draftCandidates:existing.filter(tag=>!tag.custom&&tag.status!=='approved').map(tag=>({name:tag.name,fullName:tag.fullName??tag.name,description:tag.description,facet:tag.facet,aliases:tag.aliases})),
     ...(facts.length<=100?{facts:facts.map(fact=>({paperId:fact.paperId,summary:text(fact.summary,240),concepts:fact.concepts.map(concept=>({name:concept.name,...(concept.facet?{facet:concept.facet}:{})}))}))}:{paperCount:new Set(facts.map(fact=>fact.paperId)).size,conceptRegistry:buildConceptRegistry(facts),unmappedPaperIds:facts.filter(fact=>!fact.concepts.length).map(fact=>fact.paperId)})};
   return `${instructions}\n\nINPUT_DATA_JSON:\n${JSON.stringify(input)}`;
 }
@@ -149,29 +153,41 @@ export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],e
   }
   const targetEntry=(reference:string)=>byKey.get(reference)??(labels.get(canonicalTagKey(reference))?.length===1?labels.get(canonicalTagKey(reference))![0]:undefined);
   const oldTargets=new Map<string,Entry>();
+  const unresolvedMerges:UnresolvedMerge[]=[],quarantinedSources=new Set<string>();
+  const hasApprovedCore=existing.some(tag=>!tag.custom&&tag.status==='approved');
   // Unapproved draft aliases are hypotheses, not authoritative equivalences.
   const inheritedNames=(old:TagDefinition)=>old.status==='approved'?names(old):[old.name,old.fullName??''].filter(Boolean);
-  if(input.merges!==undefined&&!Array.isArray(input.merges))throw new Error('Consolidation merges must be an array.');
-  for(const value of (input.merges as unknown[]|undefined)??[]){
+  if(hasApprovedCore&&input.merges!==undefined&&!Array.isArray(input.merges))throw new Error('Consolidation merges must be an array.');
+  const groupedMerges=new Map<string,{fromId:string;toReference:string;target?:Entry;reason?:string}[]>();
+  for(const value of Array.isArray(input.merges)?input.merges:[]){
     const merge=object(value),fromId=text(merge?.fromId,160),old=existingById.get(fromId);
-    if(!old)throw new Error(`Unknown old concept in a merge: ${fromId}.`);
-    if(old.custom)throw new Error('Existing DIY/custom definitions cannot be merged or replaced by AI consolidation.');
-    const reference=text(merge?.toKey??merge?.toId??merge?.toName,160),target=targetEntry(reference);
-    if(!target)throw new Error(`Unknown merge target: ${reference}.`);
-    if(oldTargets.has(fromId)&&oldTargets.get(fromId)!==target)throw new Error(`An old concept has conflicting merge targets: ${fromId}.`);
-    oldTargets.set(fromId,target);
+    // Unaccepted core drafts are replaceable candidates. Their model-supplied merge
+    // instructions confer no identity or alias claims; only local exact-label reuse applies.
+    if(old&&!old.custom&&old.status!=='approved')continue;
+    if(!old&&!hasApprovedCore)continue;
+    const toReference=text(merge?.toKey??merge?.toId??merge?.toName,160),target=targetEntry(toReference);
+    const reason=!merge?'Malformed merge suggestion.':!old?`Unknown old concept ID: ${fromId||'(missing)'}.`:old.custom?'Existing DIY/custom definitions cannot be merged or replaced by AI consolidation.':!target?`Unknown proposed merge target: ${toReference||'(missing)'}.`:undefined;
+    const group=groupedMerges.get(fromId)??[];group.push({fromId,toReference,target,reason});groupedMerges.set(fromId,group);
+  }
+  for(const [fromId,group] of groupedMerges){
+    const invalid=group.some(merge=>merge.reason),conflicting=new Set(group.map(merge=>merge.target).filter(Boolean)).size>1;
+    if(invalid||conflicting){
+      if(existingById.has(fromId))quarantinedSources.add(fromId);
+      for(const merge of group)unresolvedMerges.push({fromId,toReference:merge.toReference,reason:merge.reason??(conflicting?'Conflicting targets for this old concept; all of its merge suggestions were withheld.':'Another merge for this old concept is invalid; all of its merge suggestions were withheld.')});
+    }else oldTargets.set(fromId,group[0].target!);
   }
   // Exact equivalent labels preserve concept IDs even if the model omits an explicit identity merge.
   for(const old of existing.filter(tag=>!tag.custom)){
-    if(oldTargets.has(old.id))continue;
+    if(oldTargets.has(old.id)||quarantinedSources.has(old.id))continue;
     const matches=new Set(inheritedNames(old).flatMap(label=>labels.get(canonicalTagKey(label))??[]));
     if(matches.size===1)oldTargets.set(old.id,[...matches][0]);
     else if(matches.size>1&&old.status==='approved')issues.push(`Approved names or aliases of ${old.name} map to multiple proposed concepts. Review that equivalence before replacing it.`);
   }
-  const claimedIds=new Set(existing.filter(tag=>tag.custom).map(tag=>tag.id));
+  const claimedIds=new Set([...existing.filter(tag=>tag.custom).map(tag=>tag.id),...quarantinedSources]);
   for(const entry of entries){
     const oldIds=[...oldTargets].filter(([,target])=>target===entry).map(([id])=>id).sort((a,b)=>Number(existingById.get(b)!.status==='approved')-Number(existingById.get(a)!.status==='approved')||order(a,b));
     const survivor=oldIds.find(id=>!claimedIds.has(id));if(survivor)entry.tag.id=survivor;
+    else if(claimedIds.has(entry.tag.id)){let salt=0;do{entry.tag.id=`tag-${fingerprint([canonicalTagKey(entry.tag.name),entry.key,'unresolved identity',salt++])}`;}while(claimedIds.has(entry.tag.id));}
     claimedIds.add(entry.tag.id);
     entry.tag.aliases=[...new Set([...entry.tag.aliases,...oldIds.flatMap(id=>inheritedNames(existingById.get(id)!))])].filter(alias=>alias!==entry.tag.name&&alias!==entry.tag.fullName);
   }
@@ -248,5 +264,5 @@ export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],e
   const inputFingerprint=fingerprint({facts:[...facts].sort((a,b)=>order(a.paperId,b.paperId)),existing,limit,baseVersion});
   return {id:`taxonomy-${fingerprint([inputFingerprint,tags])}`,createdAt:options.createdAt??new Date().toISOString(),inputFingerprint,baseVersion,coreLimit:limit,tags,support,
     merges:[...oldTargets].map(([fromId,target])=>({fromId,toId:target.tag.id})).filter(merge=>merge.fromId!==merge.toId).sort((a,b)=>order(a.fromId,b.fromId)),
-    excluded,issues:[...new Set(issues)],paperIds:[...factById.keys()].sort(),paperFingerprints:Object.fromEntries([...factById].map(([paperId,fact])=>[paperId,fact.metadataFingerprint])),paperInputFingerprints:Object.fromEntries([...factById].map(([paperId,fact])=>[paperId,fact.inputFingerprint]))};
+    excluded,issues:[...new Set(issues)],...(unresolvedMerges.length?{unresolvedMerges:[...new Map(unresolvedMerges.map(merge=>[JSON.stringify(merge),merge])).values()]}:{}),paperIds:[...factById.keys()].sort(),paperFingerprints:Object.fromEntries([...factById].map(([paperId,fact])=>[paperId,fact.metadataFingerprint])),paperInputFingerprints:Object.fromEntries([...factById].map(([paperId,fact])=>[paperId,fact.inputFingerprint]))};
 }

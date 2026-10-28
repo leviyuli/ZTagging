@@ -24,6 +24,7 @@ export interface DisplayTag {
 export interface DisplayTaxonomyProposal extends Omit<TaxonomyProposal, 'tags'> {
   tags: DisplayTag[];
   decisionConflicts?: string[];
+  unresolvedMerges?: { fromId: string; toReference: string; reason: string }[];
 }
 export interface DisplayPaper {
   id: string;

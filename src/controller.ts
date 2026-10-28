@@ -17,6 +17,7 @@ type Run = {
   id:string;kind:'rebuild'|'tag';scope:string;automatic:boolean;status:'idle'|'running'|'paused';
   jobs:Job[];vocabCursor:number;vocabFinished:boolean;message:string;spentUSD:number;
   settings:ManagerSettings;vocabularyVersion:number;detailId?:string;proposalFingerprint?:string;
+  consolidation?:{inputFingerprint:string;value:unknown;failed?:boolean};
 };
 type History = {
   id:string;date:string;label:string;patches:TagPatch[];beforeOwnership:Ownership;afterOwnership:Ownership;
@@ -82,6 +83,7 @@ export function validState(value:unknown):value is AppState {
   if(v.settings.coreConceptLimit!==undefined&&(!Number.isInteger(v.settings.coreConceptLimit)||v.settings.coreConceptLimit<1||v.settings.coreConceptLimit>500))return false;
   if(!Object.values(v.facts).every(f=>object(f)&&typeof f.paperId==='string'&&typeof f.metadataFingerprint==='string'&&typeof f.inputFingerprint==='string'&&typeof f.provider==='string'&&typeof f.model==='string'&&f.extractionVersion===1&&typeof f.summary==='string'&&Array.isArray(f.concepts)&&f.concepts.every(c=>object(c)&&typeof c.name==='string'&&Array.isArray(c.evidence))))return false;
   if(v.taxonomyProposal!==null&&(!object(v.taxonomyProposal)||typeof v.taxonomyProposal.id!=='string'||!Array.isArray(v.taxonomyProposal.tags)||!Array.isArray(v.taxonomyProposal.issues)||!Array.isArray(v.taxonomyProposal.merges)||!object(v.taxonomyProposal.support)||!Array.isArray(v.taxonomyProposal.excluded)||!Array.isArray(v.taxonomyProposal.paperIds)))return false;
+  if(v.taxonomyProposal?.unresolvedMerges!==undefined&&(!Array.isArray(v.taxonomyProposal.unresolvedMerges)||!v.taxonomyProposal.unresolvedMerges.every(m=>object(m)&&typeof m.fromId==='string'&&typeof m.toReference==='string'&&typeof m.reason==='string')))return false;
   if(!v.taxonomyArchives.every(a=>object(a)&&typeof a.id==='string'&&Array.isArray(a.tags)&&object(a.redirects)&&Number.isInteger(a.version)))return false;
   return true;
 }
@@ -179,6 +181,7 @@ export class AppController implements ManagerAPI {
       case 'preview-detail': {const tag=this.state.tags.find(t=>t.id===payload.tagId&&t.custom);if(!tag)throw new Error('Choose a user-created detail tag.');if(tag.matchingMode==='manual')throw new Error('Enable suggestion matching for this detail before previewing.');await this.start('tag',payload.scope??'library',false,undefined,tag.id);break;}
       case 'save-taxonomy-proposal': {const proposal=this.requireProposal(payload.id);if(!Array.isArray(payload.tags))throw new Error('Proposal tags are missing.');const normalized:TagDefinition[]=payload.tags.map((tag:any)=>this.normalizedDefinition(tag));if(proposal.merges.some(m=>!normalized.some(t=>t.id===m.toId)))throw new Error('This concept is a merge target. Reassign its incoming merges before excluding it, or rebuild the proposal.');proposal.tags=normalized;const stale=proposal.issues.filter(issue=>issue.startsWith('Source PDF'));proposal.issues=[...stale,...validateTaxonomy(normalized,proposal.coreLimit)];this.refreshProposalSupport(proposal);if(Array.isArray(payload.excluded))proposal.excluded=payload.excluded.filter((e:any)=>typeof e.name==='string'&&typeof e.reason==='string');await this.save();break;}
       case 'approve-taxonomy': await this.approveTaxonomy(payload.id,payload.preserveDecisions===true);break;
+      case 'discard-invalid-merges': await this.discardInvalidMerges(payload.id);break;
       case 'discard-taxonomy': this.requireProposal(payload.id);this.state.taxonomyProposal=null;await this.save();break;
       case 'restore-taxonomy': {const archived=this.state.taxonomyArchives.find(a=>a.id===payload.id);if(!archived)throw new Error('The previous taxonomy is unavailable.');const tags=copy(archived.tags);this.state.taxonomyProposal={id:uid('taxonomy-restore'),createdAt:new Date().toISOString(),inputFingerprint:fingerprint(tags),baseVersion:this.state.vocabularyVersion,tags,support:{},merges:[],excluded:[],issues:validateTaxonomy(tags,this.state.settings.coreConceptLimit??60),paperIds:[],coreLimit:this.state.settings.coreConceptLimit??60};await this.save();break;}
       case 'resume': {
@@ -196,6 +199,7 @@ export class AppController implements ManagerAPI {
           if(detail)this.state.run.proposalFingerprint=this.definitionFingerprint(detail);
           if(this.state.run.scope==='pilot'&&this.state.run.kind==='tag'){this.state.pilotIds=[];this.state.pilotExpected=this.state.run.jobs.length;this.state.pilotReviewed=false;}
         }
+        if(this.state.run.kind==='rebuild')for(const job of this.state.run.jobs)if(!this.state.facts[job.paperId])job.status='pending';
         this.state.run.status='running';this.state.run.message='Resuming…';await this.save();this.launch();break;
       }
       case 'save-tag': this.saveTag(payload.tag);await this.save();break;
@@ -289,6 +293,7 @@ export class AppController implements ManagerAPI {
   private async importProposal(value:unknown) {
     const document=value as any,proposal=document.proposal as TaxonomyProposal;
     if(document.schemaVersion!==2||!proposal||!Array.isArray(proposal.tags)||!proposal.support||!Array.isArray(proposal.merges)||!Array.isArray(proposal.paperIds)||!Array.isArray(proposal.excluded)||!Array.isArray(proposal.issues)||!proposal.issues.every(issue=>typeof issue==='string')||!Array.isArray(document.facts)||!proposal.paperFingerprints)throw new Error('A consolidated proposal needs its validated facts, source fingerprints, coverage, and review issues.');
+    if(proposal.unresolvedMerges!==undefined&&(!Array.isArray(proposal.unresolvedMerges)||proposal.unresolvedMerges.some(m=>!m||typeof m.fromId!=='string'||typeof m.toReference!=='string'||typeof m.reason!=='string')))throw new Error('Invalid unresolved merge review records.');
     if(proposal.baseVersion!==this.state.vocabularyVersion||document.sourceVocabularyFingerprint!==fingerprint(this.state.tags))throw new Error('This proposal was prepared for a different vocabulary. Rebuild it against the current library.');
     const tags=proposal.tags.map(t=>this.normalizedDefinition(t)),facts=new Map<string,PaperFacts>();
     if(new Set(proposal.paperIds).size!==proposal.paperIds.length)throw new Error('Duplicate source paper IDs in the proposal.');
@@ -330,6 +335,30 @@ export class AppController implements ManagerAPI {
     if(!proposal||proposal.id!==id)throw new Error('The taxonomy proposal changed. Refresh before continuing.');
     return proposal;
   }
+  private consolidationDefinitions():TagDefinition[] {
+    const protectedIds=new Set(this.state.taxonomyArchives.flatMap(archive=>archive.tags.filter(tag=>!tag.custom&&tag.status==='approved').map(tag=>tag.id)));
+    const trustedNames=new Map<string,string[]>();
+    for(const archive of this.state.taxonomyArchives)for(const tag of archive.tags)if(tag.status==='approved')trustedNames.set(tag.id,[...(trustedNames.get(tag.id)??[]),...equivalentTagNames(tag)]);
+    for(const assignments of Object.values(this.state.ownership))for(const [id,assignment] of Object.entries(assignments)){protectedIds.add(id);trustedNames.set(id,[...(trustedNames.get(id)??[]),assignment.name]);}
+    for(const [key,decision] of Object.entries(this.state.decisions))if(decision.locked||decision.rejected)protectedIds.add(key.slice(key.lastIndexOf('|')+1));
+    // Previously approved identities and remembered choices remain authoritative even while edited.
+    return this.state.tags.map(tag=>!tag.custom&&tag.status!=='approved'&&protectedIds.has(tag.id)?{...tag,status:'approved',aliases:[...new Set(trustedNames.get(tag.id)??[])]}:tag);
+  }
+  private async discardInvalidMerges(id:string) {
+    const proposal=this.requireProposal(id);if(!proposal.unresolvedMerges?.length)return;
+    const facts=proposal.paperIds.map(paperId=>this.state.facts[paperId]);
+    if(facts.some(fact=>!fact))throw new Error('Source analysis changed. Rebuild the proposal before resolving its merges.');
+    // Reconstruct from the current review, retaining user edits and valid mappings. Re-running
+    // exact-name identity resolution after explicit discard never guesses a mistyped identifier.
+    const raw={tags:proposal.tags.filter(tag=>!tag.custom).map(tag=>{
+      const labels=new Set(equivalentTagNames(tag).map(canonicalTagKey));
+      return {...copy(tag),key:tag.id,parentKeys:tag.broaderIds,relatedKeys:tag.relatedIds??[],support:facts.flatMap(fact=>{const conceptNames=fact.concepts.filter(concept=>labels.has(canonicalTagKey(concept.name))).map(concept=>concept.name);return conceptNames.length?[{paperId:fact.paperId,conceptNames}]:[];})};
+    }),merges:proposal.merges.map(merge=>({fromId:merge.fromId,toKey:merge.toId})),excluded:proposal.excluded};
+    const next=createTaxonomyProposal(raw,facts,this.consolidationDefinitions(),{limit:proposal.coreLimit,baseVersion:proposal.baseVersion,createdAt:proposal.createdAt});
+    next.id=proposal.id;next.inputFingerprint=proposal.inputFingerprint;next.issues=[...new Set([...proposal.issues,...next.issues])];
+    this.warn(`Discarded ${proposal.unresolvedMerges.length} invalid AI merge suggestion(s) after review. No native tag names were changed.`);
+    this.state.taxonomyProposal=next;await this.save();
+  }
   private taxonomyConflicts(proposal:TaxonomyProposal):string[] {
     const conflicts:string[]=[];
     for(const merge of proposal.merges)for(const paperId of Object.keys(this.state.papers)) {
@@ -340,6 +369,7 @@ export class AppController implements ManagerAPI {
   }
   private async approveTaxonomy(id:string,preserveDecisions:boolean) {
     const proposal=this.requireProposal(id);
+    if(proposal.unresolvedMerges?.length)throw new Error('Review and explicitly discard the invalid merge suggestions before approving this taxonomy.');
     if(proposal.baseVersion!==this.state.vocabularyVersion)throw new Error('The active core vocabulary changed. Rebuild this stale proposal.');
     for(const [paperId,expected] of Object.entries(proposal.paperFingerprints??{})) {
       const original=this.state.papers[paperId];if(!original)throw new Error('A source paper is unavailable. Rebuild the taxonomy proposal.');
@@ -458,14 +488,19 @@ export class AppController implements ManagerAPI {
     if(paidProvider(s.provider)&&(s.inputPricePerMillion<=0||s.outputPricePerMillion<=0))throw new Error('Enter the current input and output token prices for this API model before starting a budgeted run.');
   }
   private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string) {
+    const replacePausedRebuild=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&this.state.run.status==='paused';
+    if(replacePausedRebuild&&this.worker)await this.worker;
     if(this.worker||this.state.run?.status==='running')throw new Error('Pause or finish the current run first.');
-    if(this.state.run?.status==='paused')throw new Error('Resume or cancel the paused run before starting another analysis.');
+    if(this.state.run?.status==='paused'&&!replacePausedRebuild)throw new Error('Resume or cancel the paused run before starting another analysis.');
     this.checkConnectionSettings();
     if(kind==='tag'&&!this.state.tags.some(t=>t.status==='approved'))throw new Error('Approve a vocabulary or a custom tag before assigning tags.');
     const papers=provided??await this.scan(scope);
     if(!papers.length)throw new Error('No eligible papers were found in this scope.');
     for(const p of papers)if(!this.state.papers[p.id])this.remember(p);
+    const checkpoint=kind==='rebuild'&&this.state.run?.kind==='rebuild'?this.state.run.consolidation:undefined;
+    if(kind==='rebuild')this.state.taxonomyProposal=null;
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reviewing paper metadata for vocabulary discovery…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
+    if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}
     if(scope==='pilot'&&kind==='tag'&&!detailId){this.state.pilotIds=[];this.state.pilotExpected=papers.length;this.state.pilotReviewed=false;}
     await this.save();this.launch();
@@ -508,20 +543,26 @@ export class AppController implements ManagerAPI {
       }
       if(run.kind==='rebuild') {
         const facts=run.jobs.map(j=>this.state.facts[j.paperId]).filter(Boolean);
-        const existing=this.state.tags;
+        const existing=this.consolidationDefinitions();
         const inputFingerprint=fingerprint({facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
         const alreadyApproved=this.state.approvedTaxonomyInput===inputFingerprint;
         if(!alreadyApproved&&this.state.taxonomyProposal?.inputFingerprint!==inputFingerprint) {
           if(run.status!=='running'||this.shuttingDown)return;
           run.message=`Consolidating ${facts.length} papers into one vocabulary of up to ${run.settings.coreConceptLimit??60} core concepts…`;await this.save();
-          const response=await this.request(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60),run);
+          let checkpoint=run.consolidation;
+          if(!checkpoint||checkpoint.inputFingerprint!==inputFingerprint||checkpoint.failed){
+            const response=await this.request(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60),run);
+            checkpoint={inputFingerprint,value:response.value};run.consolidation=checkpoint;await this.save();
+          }
           if(run.status!=='running'||run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('The core vocabulary changed during consolidation. Resume to refresh the proposal.');
-          const proposal=createTaxonomyProposal(response.value,facts,existing,{limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
+          let proposal:TaxonomyProposal;
+          try{proposal=createTaxonomyProposal(checkpoint.value,facts,existing,{limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});}
+          catch(error){checkpoint.failed=true;throw error;}
           proposal.inputFingerprint=inputFingerprint;this.state.taxonomyProposal=proposal;
           // Publish the complete staged proposal atomically, never an individual extraction batch.
           run.vocabCursor=facts.length;await this.save();
         }
-        run.vocabFinished=true;run.message=alreadyApproved?'The unchanged papers and approved taxonomy were reused. No new proposal or native changes were needed.':'One consolidated proposal is ready. Review its coverage, aliases, and hierarchy before publishing.';
+        run.vocabFinished=true;run.message=alreadyApproved?'The unchanged papers and approved taxonomy were reused. No new proposal or native changes were needed.':this.state.taxonomyProposal?.unresolvedMerges?.length?'The vocabulary proposal is ready. Review its invalid merge suggestions before approval.':'One consolidated proposal is ready. Review its coverage, aliases, and hierarchy before publishing.';
       } else run.message='Suggestions ready for review.';
       this.state.neighbors=buildSimilarityNetwork(Object.values(this.state.papers),10);run.status='idle';await this.save();
     } catch(error) {

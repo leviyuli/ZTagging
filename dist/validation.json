@@ -1,9 +1,9 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "target": "Zotero 10.0.6 on Windows",
   "automatedTests": {
-    "passed": 298,
+    "passed": 312,
     "failed": 0
   },
   "nativeSmoke": {
@@ -278,14 +278,22 @@
   },
   "nativeBundleMatchesInstaller": true,
   "managerUI": {
-    "xmlRegressionTests": 9,
+    "xmlRegressionTests": 11,
     "nativeManagerOpened": true,
     "screenshotInspection": "Unavailable: Windows Computer Use native helper pipe was not present."
   },
   "rightItemAndInformationPaneSection": false,
   "workingLibraryModified": false,
   "liveAI": "No live provider request or account authentication performed for this release. Provider tests use synthetic credentials/responses; private pilot review uses saved metadata only.",
-  "sha256": "d6762111625010da9e09e379d9a61b377ede698295b58682a204d211b28e0688",
-  "sourceSha256": "ebd3a3332426d9984179a80edb78192df28222866cc25abf93d2579f3832f22c",
-  "repository": "https://github.com/leviyuli/ZTagging"
+  "sha256": "1a0a37eb92849baf528f2d16852652aeb8acac8560a3c8d6e665d0a4166c3240",
+  "sourceSha256": "7ca71254e5d9d451d5fc36f5bb29b7fd654bea20afcb6753a0a5ca9947a8ba37",
+  "repository": "https://github.com/leviyuli/ZTagging",
+  "mergeRecovery": {
+    "unacceptedDraftsReplaceable": true,
+    "approvedMergeReferencesExact": true,
+    "invalidApprovedMappingsWithheldUntilReviewed": true,
+    "consolidationCheckpointResumable": true,
+    "completedPaperFactsReused": true,
+    "nativeTagsChangedDuringRebuild": false
+  }
 }

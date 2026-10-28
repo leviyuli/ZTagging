@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Smart Tags for Zotero",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "An approved tag vocabulary, evidence-backed suggestions, custom topics, and reversible cleanup.",
   "author": "Smart Tags contributors",
   "applications": {

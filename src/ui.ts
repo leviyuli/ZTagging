@@ -447,10 +447,24 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const coreTags = proposal.tags.filter(tag => !tag.custom);
     const limit = currentState().settings.coreConceptLimit ?? proposal.coreLimit ?? 60;
     const conflicts = proposal.decisionConflicts || [];
+    const unresolvedMerges = proposal.unresolvedMerges || [];
     const acknowledgementKey = `${proposal.id}:${conflicts.join('\n')}`;
     const body = h('div', '', h('div', 'proposal-metrics', badge(`${coreTags.length} / ${limit} core concepts`, coreTags.length > limit ? 'removal' : 'draft'), badge(`${proposal.paperIds.length} papers reviewed`), badge(`${proposal.merges.length} merges`), badge(`${proposal.excluded.length} excluded`), badge(`${proposal.issues.length} issues`, proposal.issues.length ? 'removal' : 'approved')),
       h('p', 'card-description', 'This proposal is staged. Edit definitions and relationships, inspect representative evidence, then approve the whole vocabulary. Native paper tags and your user details are preserved.'));
     if (proposal.issues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Resolve before approval'), h('ul', 'detail-list', ...proposal.issues.map(issue => h('li', '', issue)))));
+    if (unresolvedMerges.length) {
+      const sourceNames = new Map(currentState().tags.map(tag => [tag.id, tag.name]));
+      const warning = h('div', 'notice warning section-gap',
+        h('strong', '', `${unresolvedMerges.length} invalid merge ${unresolvedMerges.length === 1 ? 'suggestion needs' : 'suggestions need'} review`),
+        h('p', '', 'These merge instructions could not be validated. No invalid merge will be applied. Discard them to retain the proposed concepts and review the remaining valid merges.'),
+        h('ul', 'detail-list', ...unresolvedMerges.map(merge => {
+          const source = sourceNames.get(merge.fromId);
+          return h('li', '', `${source ? `${source} (${merge.fromId})` : merge.fromId || '(missing source)'} → ${merge.toReference || '(missing target)'}: ${merge.reason}`);
+        })),
+        button('Discard invalid merge suggestions', () => run('discard-invalid-merges', { id: proposal.id }, 'Invalid merge suggestions discarded. Review the remaining proposal before approval.'), 'quiet'));
+      warning.setAttribute('role', 'alert');
+      body.append(warning);
+    }
     if (conflicts.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Existing decisions need to be preserved'), h('ul', 'detail-list', ...conflicts.map(conflict => h('li', '', conflict))), h('div', 'section-gap', checkbox('taxonomy-preserve-decisions', proposalDecisionAck === acknowledgementKey, 'Preserve rejected and locked decisions when merging', checked => { proposalDecisionAck = checked ? acknowledgementKey : ''; render(); })), h('p', '', 'Approval carries the restrictive decisions into the merged concept.')));
     const concepts = h('details', 'proposal-details section-gap', h('summary', '', `Review ${coreTags.length} proposed concepts`));
     const rows = h('div', 'tag-list section-gap');
@@ -473,7 +487,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     concepts.append(rows); body.append(concepts);
     if (proposal.merges.length || proposal.excluded.length) body.append(h('details', 'proposal-details section-gap', h('summary', '', 'Merges & excluded candidates'), h('ul', 'detail-list', ...proposal.merges.map(merge => h('li', '', `${names.get(merge.fromId) || tagName(merge.fromId)} → ${names.get(merge.toId) || tagName(merge.toId)}`)), ...proposal.excluded.map(item => h('li', '', `${item.name}: ${item.reason}`)))));
-    return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
+    return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !!unresolvedMerges.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
   }
 
   function suggestionCard(suggestion: DisplaySuggestion) {

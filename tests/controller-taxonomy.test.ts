@@ -175,3 +175,57 @@ test('PDF replacement invalidates proposal approval even when metadata is unchan
   await assert.rejects(h.controller.invoke('approve-taxonomy',{id:h.state.taxonomyProposal!.id}),/PDF evidence changed/);
   assert.equal(h.state.taxonomyReady,false);assert.equal(h.host.writes.length,0);
 });
+
+test('unaccepted drafts and a prior unapproved review are replaced without carrying model merge IDs forward',async()=>{
+  const h=harness(50);h.state.tags.push(...Array.from({length:106},(_,i)=>tag(`draft-${i}`,`Unaccepted topic ${i}`)));
+  h.ai.handler=call=>{if(call.kind==='facts')return factsResponse(call.data);const raw=taxonomyResponse(call.data);raw.merges=[{fromId:'tag-714a5d4e61ef0e6a',toKey:'fc'}] as any;return raw;};
+  await run(h,'rebuild','pilot');assert.equal(h.state.run?.status,'idle');assert.deepEqual(h.state.taxonomyProposal?.unresolvedMerges??[],[]);
+  const extractionCount=h.ai.calls.filter(call=>call.kind==='facts').length,requestCount=h.ai.calls.length;
+  const review=h.state.taxonomyProposal!;review.tags[0].description='Unaccepted previous review edit';
+  await run(h,'rebuild','pilot');assert.equal(h.state.run?.status,'idle');assert.notEqual(h.state.taxonomyProposal!.tags[0].description,'Unaccepted previous review edit');
+  assert.equal(h.ai.calls.filter(call=>call.kind==='facts').length,extractionCount);assert.equal(h.ai.calls.length,requestCount);
+  const input=h.ai.calls.find(call=>call.kind==='taxonomy')!.data;assert.deepEqual(input.mergeSourceIds,[]);assert.ok(input.draftCandidates.every((candidate:any)=>!('id' in candidate)));
+  assert.equal(h.state.tags.length,107);assert.equal(h.host.writes.length,0);
+});
+
+test('a completed consolidation checkpoint resumes after interruption without a second provider request',async()=>{
+  const h=harness(3);await run(h);assert.ok(h.state.run?.consolidation);
+  const restored=copy(h.state);restored.taxonomyProposal=null;restored.run!.status='paused';restored.run!.vocabFinished=false;
+  const ai=new AI();ai.handler=()=>{throw new Error('Cached consolidation must not call a provider');};
+  const controller=new AppController(restored,{host:h.host,ai,persist:async()=>{}});
+  await controller.invoke('resume');await controller.waitForIdle();
+  assert.equal(restored.run?.status,'idle');assert.ok(restored.taxonomyProposal);assert.equal(ai.calls.length,0);assert.equal(h.host.writes.length,0);
+});
+
+test('invalid approved-identity merges stay blocked through edits until explicitly discarded without AI calls',async()=>{
+  const h=harness(2);h.state.tags.push(tag('approved-fc','FC',{status:'approved',fullName:'Fuel cell'}));
+  h.state.decisions['1:P1|approved-fc']={rejected:true};
+  h.ai.handler=call=>{if(call.kind==='facts')return factsResponse(call.data);const raw=taxonomyResponse(call.data);raw.merges=[{fromId:'approved-fc',toKey:'missing-target'}] as any;return raw;};
+  await run(h);const proposal=h.state.taxonomyProposal!,calls=h.ai.calls.length;
+  assert.equal(h.state.run?.status,'idle');assert.equal(proposal.unresolvedMerges?.length,1);
+  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/invalid merge/);
+  proposal.tags.find(t=>t.name==='EIS')!.description='A manually reviewed EIS definition.';
+  await h.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags:proposal.tags});
+  await assert.rejects(h.controller.invoke('approve-taxonomy',{id:proposal.id}),/invalid merge/);
+  await h.controller.invoke('discard-invalid-merges',{id:proposal.id});
+  const resolved=h.state.taxonomyProposal!;assert.deepEqual(resolved.unresolvedMerges??[],[]);assert.deepEqual(resolved.issues,[]);
+  assert.equal(resolved.tags.find(t=>t.name==='FC')!.id,'approved-fc');assert.equal(resolved.tags.find(t=>t.name==='EIS')!.description,'A manually reviewed EIS definition.');
+  assert.equal(h.state.decisions['1:P1|approved-fc'].rejected,true);assert.equal(h.ai.calls.length,calls);assert.equal(h.host.writes.length,0);
+  await h.controller.invoke('approve-taxonomy',{id:resolved.id});assert.equal(h.state.decisions['1:P1|approved-fc'].rejected,true);assert.equal(h.host.writes.length,0);
+});
+
+test('remembered choices protect edited draft identities from replacement-only merge handling',async()=>{
+  const h=harness();h.state.tags.push(tag('remembered-fc','FC',{fullName:'Fuel cell',aliases:['An unapproved hypothesis']}));
+  h.state.decisions['1:P1|remembered-fc']={locked:true};
+  await run(h);const input=h.ai.calls.find(call=>call.kind==='taxonomy')!.data;
+  assert.ok(input.mergeSourceIds.includes('remembered-fc'));assert.ok(!input.existingVocabulary.find((t:any)=>t.id==='remembered-fc').aliases.includes('An unapproved hypothesis'));
+  assert.equal(h.state.decisions['1:P1|remembered-fc'].locked,true);assert.equal(h.host.writes.length,0);
+});
+
+test('a new rebuild can replace a paused unaccepted rebuild while reusing its completed analysis',async()=>{
+  const h=harness(3);await run(h);const calls=h.ai.calls.length;
+  h.state.taxonomyProposal!.tags[0].description='Previous unaccepted draft';
+  await h.controller.invoke('pause');assert.equal(h.state.run?.status,'paused');
+  await run(h);assert.equal(h.state.run?.status,'idle');assert.equal(h.ai.calls.length,calls);
+  assert.notEqual(h.state.taxonomyProposal!.tags[0].description,'Previous unaccepted draft');assert.equal(h.host.writes.length,0);
+});

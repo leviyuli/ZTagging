@@ -96,17 +96,52 @@ test('the core cap counts both parents and leaves, never silently truncates, and
   assert.throws(()=>createTaxonomyProposal(raw,facts,[],{limit:0}),/between 1 and 500/);
 });
 
-test('AI cannot bypass the core cap by creating a custom tag or merging an existing DIY definition',()=>{
+test('AI cannot bypass the core cap by creating a custom tag and DIY merge attempts stay quarantined',()=>{
   const facts=[fact()],diy=definition('diy','Detail',{custom:true});
   assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X',{custom:true})]},facts,[]),/cannot create DIY/);
-  assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X')],merges:[{fromId:'diy',toKey:'x'}]},facts,[diy]),/cannot be merged/);
+  const proposal=createTaxonomyProposal({tags:[rawTag('x','X','X')],merges:[{fromId:'diy',toKey:'x'}]},facts,[diy]);
+  assert.ok(proposal.unresolvedMerges?.[0].reason.includes('cannot be merged'));
+  assert.deepEqual(proposal.merges,[]);assert.equal(proposal.tags.find(tag=>tag.id==='diy')!.custom,true);assert.equal(diy.name,'Detail');
 });
 
-test('unsupported IDs, unknown fact concepts, and conflicting merges are rejected',()=>{
-  const facts=[fact()],old=[definition('old','Old')];
+test('unsupported evidence IDs and fact concepts are rejected while conflicting merge mappings are withheld',()=>{
+  const facts=[fact()],old=[definition('old','Old',{status:'approved'})];
   assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X',{supportPaperIds:['invented']})]},facts,[]),/Unknown supporting paper/);
   assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X',{support:[link('p1','Invented concept')]})]},facts,[]),/Unknown or ungrounded supporting concept/);
-  assert.throws(()=>createTaxonomyProposal({tags:[rawTag('a','A'),rawTag('b','B')],merges:[{fromId:'old',toKey:'a'},{fromId:'old',toKey:'b'}]},facts,old),/conflicting merge/);
+  const proposal=createTaxonomyProposal({tags:[rawTag('a','A'),rawTag('b','B')],merges:[{fromId:'old',toKey:'a'},{fromId:'old',toKey:'b'}]},facts,old);
+  assert.equal(proposal.unresolvedMerges?.length,2);assert.ok(proposal.unresolvedMerges!.every(merge=>merge.reason.includes('Conflicting targets')));assert.deepEqual(proposal.merges,[]);
+});
+
+test('an invented old merge ID is quarantined without discarding supported tags or valid exact-ID mappings',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],old=[definition('old-fc','Legacy fuel cell',{status:'approved',aliases:['Fuel cell']})];
+  const before=JSON.stringify(old);
+  const proposal=createTaxonomyProposal({tags:[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})],merges:[{fromId:'tag-714a5d4e61ef0e6a',toKey:'fc'},{fromId:'old-fc',toKey:'fc'}]},facts,old);
+  assert.equal(proposal.tags[0].id,'old-fc');assert.deepEqual(proposal.support['old-fc'].paperIds,['p']);assert.deepEqual(proposal.issues,[]);
+  assert.deepEqual(proposal.unresolvedMerges,[{fromId:'tag-714a5d4e61ef0e6a',toReference:'fc',reason:'Unknown old concept ID: tag-714a5d4e61ef0e6a.'}]);
+  assert.ok(proposal.tags[0].aliases.includes('Legacy fuel cell'));assert.equal(JSON.stringify(old),before);
+});
+
+test('one invalid target quarantines every mapping for that known source and prevents identity fallback',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],old=[definition('old-fc','Fuel cell',{status:'approved',aliases:['Legacy FC']})];
+  const proposal=createTaxonomyProposal({tags:[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})],merges:[{fromId:'old-fc',toKey:'fc'},{fromId:'old-fc',toKey:'missing'}]},facts,old);
+  assert.equal(proposal.unresolvedMerges?.length,2);assert.deepEqual(proposal.merges,[]);assert.notEqual(proposal.tags[0].id,'old-fc');
+  assert.ok(!proposal.tags[0].aliases.includes('Legacy FC'));assert.ok(proposal.unresolvedMerges!.some(merge=>merge.reason.includes('Unknown proposed merge target')));
+  assert.equal(proposal.excluded.find(item=>item.name==='Fuel cell')?.name,'Fuel cell');
+});
+
+test('quarantined known identities cannot be reclaimed through generated IDs or first-target wins',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],raw={tags:[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})]};
+  const generated=createTaxonomyProposal(raw,facts,[]).tags[0].id,old=[definition(generated,'FC',{fullName:'Fuel cell',status:'approved'})];
+  const proposal=createTaxonomyProposal({...raw,merges:[{fromId:generated,toKey:'missing'},{fromId:generated,toKey:'fc'}]},facts,old);
+  assert.notEqual(proposal.tags[0].id,generated);assert.deepEqual(proposal.merges,[]);assert.equal(proposal.unresolvedMerges?.length,2);
+  const resolved=createTaxonomyProposal(raw,facts,old);assert.equal(resolved.tags[0].id,generated,'Discarding malformed instructions before reparsing restores safe exact identity matching');
+});
+
+test('malformed merge containers remain schema failures and duplicate valid mappings are idempotent',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],old=[definition('old-fc','Fuel cell',{status:'approved'})],tags=[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})];
+  assert.throws(()=>createTaxonomyProposal({tags,merges:{}},facts,old),/merges must be an array/);
+  const proposal=createTaxonomyProposal({tags,merges:[{fromId:'old-fc',toKey:'fc'},{fromId:'old-fc',toKey:'fc'}]},facts,old);
+  assert.equal(proposal.tags[0].id,'old-fc');assert.equal(proposal.unresolvedMerges,undefined);
 });
 
 test('a paper with unrelated valid facts cannot inflate a tag support count',()=>{
@@ -142,10 +177,38 @@ test('manual/imported graph validation rejects cycles, dangling references and p
 });
 
 test('consolidation prompts contain the complete alias/hierarchy input and explicit global/support constraints',()=>{
-  const defs=[definition('fc','FC',{fullName:'Fuel cell',aliases:['Fuel cells'],broaderIds:['parent'],relatedIds:['related']})];
+  const defs=[definition('fc','FC',{fullName:'Fuel cell',aliases:['Fuel cells'],broaderIds:['parent'],relatedIds:['related'],status:'approved'})];
   const prompt=buildConsolidationPrompt([fact()],defs,35);
   assert.ok(prompt.includes('35 CORE concepts TOTAL'));assert.ok(prompt.includes('conceptNames'));assert.ok(prompt.includes('same concept'));
   assert.ok(prompt.includes('Fuel cells'));assert.ok(prompt.includes('"broaderIds":["parent"]'));assert.ok(prompt.includes('"relatedIds":["related"]'));
+  const input=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);assert.deepEqual(input.mergeSourceIds,['fc']);assert.ok(prompt.includes('copied literally from mergeSourceIds'));
+  const withDIY=JSON.parse(buildConsolidationPrompt([fact()],[...defs,definition('detail','RCL',{custom:true})]).split('INPUT_DATA_JSON:\n')[1]);assert.deepEqual(withDIY.mergeSourceIds,['fc']);
+});
+
+test('unaccepted drafts are replaceable prompt candidates without authoritative IDs',()=>{
+  const draft=definition('unaccepted-draft-id','Draft FC',{fullName:'Fuel cell',aliases:['Wrong old alias']}),detail=definition('detail','RCL',{custom:true});
+  const prompt=buildConsolidationPrompt([fact()],[draft,detail]),input=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);
+  assert.deepEqual(input.mergeSourceIds,[]);assert.deepEqual(input.existingVocabulary.map((tag:TagDefinition)=>tag.id),['detail']);
+  assert.deepEqual(input.draftCandidates,[{name:'Draft FC',fullName:'Fuel cell',description:draft.description,facet:'system',aliases:['Wrong old alias']}]);
+  assert.ok(!prompt.includes('unaccepted-draft-id'));assert.ok(prompt.includes('return merges:[]'));assert.ok(prompt.includes('overwrite, rename, or omit them freely'));
+});
+
+test('rebuilding only unaccepted core drafts ignores non-applicable merge bookkeeping',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],old=[definition('old-draft','Fuel cell')],tags=[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})];
+  const proposal=createTaxonomyProposal({tags,merges:[{fromId:'tag-714a5d4e61ef0e6a',toKey:'fc'},{fromId:'old-draft',toKey:'missing'}]},facts,old);
+  assert.equal(proposal.unresolvedMerges,undefined);assert.deepEqual(proposal.issues,[]);assert.equal(proposal.tags[0].id,'old-draft');
+  assert.deepEqual(proposal.support['old-draft'].paperIds,['p']);
+  assert.equal(createTaxonomyProposal({tags,merges:{}},facts,old).unresolvedMerges,undefined);
+});
+
+test('mixed vocabularies ignore draft-source model merges without inheriting their names',()=>{
+  const facts=[fact('p','Fuel cell','A fuel cell is characterized.')],old=[definition('approved-fc','Fuel cell',{status:'approved'}),definition('unaccepted-layer','Gas diffusion layer',{aliases:['GDL']})];
+  const tags=[rawTag('fc','FC','Fuel cell',{support:[link('p','Fuel cell')]})];
+  const proposal=createTaxonomyProposal({tags,merges:[{fromId:'unaccepted-layer',toKey:'fc'}]},facts,old);
+  assert.equal(proposal.tags[0].id,'approved-fc');assert.equal(proposal.unresolvedMerges,undefined);assert.deepEqual(proposal.issues,[]);
+  assert.ok(!proposal.tags[0].aliases.includes('Gas diffusion layer'));assert.ok(!proposal.tags[0].aliases.includes('GDL'));
+  const unknown=createTaxonomyProposal({tags,merges:[{fromId:'unknown-approved-or-draft',toKey:'fc'}]},facts,old);
+  assert.equal(unknown.unresolvedMerges?.length,1,'Unknown identity references still require review when approved concepts exist');
 });
 
 test('small consolidation input retains every concept while omitting repeated quotes and provenance',()=>{

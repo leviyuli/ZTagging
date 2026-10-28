@@ -62,6 +62,7 @@ async function harness(data=snapshot(),options:any={}) {
   const api={snapshot:async()=>structuredClone(data),subscribe:()=>()=>{},invoke:async(action:string,payload:any)=>{
     actions.push({action,payload:structuredClone(payload)});
     if(action==='save-taxonomy-proposal'&&data.taxonomyProposal){data.taxonomyProposal.tags=payload.tags;if(payload.excluded)data.taxonomyProposal.excluded=payload.excluded;}
+    if(action==='discard-invalid-merges'&&data.taxonomyProposal)data.taxonomyProposal.unresolvedMerges=[];
     if(action==='save-settings')data.settings=payload.settings;
     if(action==='save-api-key'&&payload.provider==='deepseek')data.connection.deepseekKeyStored=true;
     if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);return created.id;}
@@ -104,6 +105,32 @@ test('editing a staged definition does not write the active vocabulary or paper 
   h.change('tag-full-name','Fuel-cell systems');await h.click('Save definition');
   assert.equal(h.actions[0].action,'save-taxonomy-proposal');assert.equal(h.actions[0].payload.tags[0].fullName,'Fuel-cell systems');
   assert.equal(data.tags[0].fullName,'Fuel cell');assert.equal(h.actions.some(entry=>entry.action==='apply-suggestions'),false);
+});
+
+test('invalid merge references remain visible and block approval until explicitly discarded',async t=>{
+  const data=snapshot();data.taxonomyProposal={id:'proposal',createdAt:'now',inputFingerprint:'x',baseVersion:2,coreLimit:60,tags:[tag('staged','FC',{status:'draft'})],support:{},merges:[],excluded:[],issues:[],paperIds:[],unresolvedMerges:[{fromId:'tag-714a5d4e61ef0e6a',toReference:'fuel-cell',reason:'Unknown source concept.'},{fromId:'fc',toReference:'missing-target',reason:'Unknown target concept.'}]};
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Approve global vocabulary').disabled,true);
+  assert.match(h.app.textContent,/2 invalid merge suggestions need review/);
+  assert.match(h.app.textContent,/tag-714a5d4e61ef0e6a → fuel-cell: Unknown source concept\./);
+  assert.match(h.app.textContent,/FC \(fc\) → missing-target: Unknown target concept\./);
+  assert.match(h.app.textContent,/No invalid merge will be applied/);
+  assert.equal(h.actions.length,0,'Displaying malformed AI output must not retry a provider request');
+  await h.click('Discard invalid merge suggestions');
+  assert.deepEqual(h.actions,[{action:'discard-invalid-merges',payload:{id:'proposal'}}]);
+  assert.equal(h.button('Approve global vocabulary').disabled,false);
+  assert.equal(h.button('Discard invalid merge suggestions'),undefined);
+});
+
+test('editing another staged field cannot implicitly dismiss invalid merge review',async t=>{
+  const data=snapshot();const unresolved=[{fromId:'missing-source',toReference:'fuel-cell',reason:'Unknown source concept.'}];
+  data.taxonomyProposal={id:'proposal',createdAt:'now',inputFingerprint:'x',baseVersion:2,coreLimit:60,tags:[tag('staged','FC',{status:'draft'})],support:{},merges:[],excluded:[],issues:[],paperIds:[],unresolvedMerges:unresolved};
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  await h.click('Edit staged definition');h.change('tag-description','A revised definition of fuel-cell systems.');await h.click('Save definition');
+  assert.deepEqual(data.taxonomyProposal.unresolvedMerges,unresolved);
+  assert.equal(h.button('Approve global vocabulary').disabled,true);
+  assert.ok(h.button('Discard invalid merge suggestions'));
+  assert.equal(h.actions.length,1);assert.equal(h.actions[0].action,'save-taxonomy-proposal');
 });
 
 test('excluding a staged core removes dangling core edges while preserving user definitions',async t=>{
