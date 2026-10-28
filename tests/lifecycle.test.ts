@@ -72,8 +72,9 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   const Zotero: any = {
     initializationPromise: Promise.resolve(),
     getMainWindows: () => [win], getMainWindow: () => win,
+    getActiveZoteroPane: () => null,
     Libraries: { userLibraryID: 1 },
-    Items: { getAsync: async (id: number) => id === regular.id ? regular : null },
+    Items: { getAsync: async (id: number) => id === regular.id ? regular : null, getAll: async () => [regular] },
     ftl: {
       addResourceIds: (ids: string[]) => ids.forEach(id => locale.add(id)),
       removeResourceIds: (ids: string[]) => ids.forEach(id => locale.delete(id)),
@@ -189,14 +190,14 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   const native = nativeHarness(await normalBundle);
   await native.app.startup(startup);
   assert.deepEqual([...native.menus.keys()], ['smart-tags-tools', 'smart-tags-items', 'smart-tags-collections']);
-  assert.equal(native.sections.size, 1);
+  assert.equal(native.sections.size, 0, "right item and information panes stay unchanged");
   assert.equal(native.observers.size, 1);
   assert.equal(native.locale.has('smart-tags.ftl'), true);
   assert.ok(native.Zotero.SmartTags.controller);
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
   const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, 1);
+  assert.equal(state.schemaVersion, 2);
   assert.equal(state.settings.autoAssign, false);
   assert.equal(state.run, null);
   assert.ok(native.writes.every(write => write.tmpPath === `${write.path}.tmp`));
@@ -213,7 +214,7 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.errors.length, 0);
 });
 
-test('native collection menus use Zotero 10 plural context and item sections exclude group or child items', async () => {
+test('native collection menus use Zotero 10 plural context without registering item-pane sections', async () => {
   const native = nativeHarness(await normalBundle);
   await native.app.startup(startup);
   try {
@@ -229,13 +230,7 @@ test('native collection menus use Zotero 10 plural context and item sections exc
     context.collectionTreeRows[0].ref.libraryID = 2;
     menu.onShowing(null, context);
     assert.equal(visible, false); assert.equal(enabled, false);
-    const section = native.sections.get('smart-tags-suggestions');
-    section.onItemChange({ item: native.regular, setEnabled: (value: boolean) => { enabled = value; } });
-    assert.equal(enabled, true);
-    section.onItemChange({ item: { ...native.regular, libraryID: 2 }, setEnabled: (value: boolean) => { enabled = value; } });
-    assert.equal(enabled, false);
-    section.onItemChange({ item: { isRegularItem: () => false }, setEnabled: (value: boolean) => { enabled = value; } });
-    assert.equal(enabled, false);
+    assert.equal(native.sections.size, 0, "no item-pane section is registered");
   } finally { await native.app.shutdown(); }
 });
 

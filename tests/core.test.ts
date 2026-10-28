@@ -325,3 +325,42 @@ test("analysis prompts keep source text as data, use approved IDs only, and incl
   assert.ok(buildAnalysisPrompt(p, [approved], { includePDF: true }).includes("PDF supporting content"));
   assert.ok(buildVocabularyPrompt([p], [approved]).includes("broaderNames"));
 });
+
+test('specific supported siblings suppress a redundant core parent without materializing ancestry',()=>{
+  const p=paper();
+  const defs=[definition({id:'fc',name:'FC',facet:'system',custom:false}),definition({id:'pem',name:'PEMFC',facet:'system',custom:false,broaderIds:['fc']}),definition({id:'aem',name:'AEMFC',facet:'system',custom:false,broaderIds:['fc']})];
+  const raw={...analysis(),suggestions:defs.map(tag=>analysis(tag.id).suggestions[0])};
+  const result=validateSuggestions(p,defs,raw,{vocabularyVersion:1});
+  assert.deepEqual(result.suggestions.map(s=>s.tagId),['pem','aem']);
+  const broad=validateSuggestions(p,defs,analysis('fc'),{vocabularyVersion:1});assert.deepEqual(broad.suggestions.map(s=>s.tagId),['fc']);
+});
+
+test('an uncertain child does not erase a well-supported parent and related concepts do not suppress it',()=>{
+  const p=paper(),defs=[definition({id:'fc',name:'FC',custom:false}),definition({id:'child',name:'PEMFC',custom:false,broaderIds:['fc']}),definition({id:'related',name:'MEA',custom:false,relatedIds:['fc']})];
+  const raw={...analysis(),suggestions:[analysis('fc').suggestions[0],analysis('child',{confidence:'low',match:'uncertain'}).suggestions[0],analysis('related').suggestions[0]]};
+  assert.ok(validateSuggestions(p,defs,raw,{vocabularyVersion:1}).suggestions.some(s=>s.tagId==='fc'));
+});
+
+test('DIY suggestion matching requires review even for a high-confidence substantive result',()=>{
+  const p=paper(),defs=[definition({matchingMode:'suggest'})];
+  const suggestion=validateSuggestions(p,defs,analysis(),{vocabularyVersion:1}).suggestions[0];
+  assert.equal(suggestion.autoEligible,false);assert.equal(isAutoAssignable({...suggestion,autoEligible:true},p,defs,{vocabularyVersion:1,pilotApproved:true}),false);
+});
+
+test('manual-only definitions are absent from assignment prompts and cannot become model suggestions',()=>{
+  const p=paper(),defs=[definition({matchingMode:'manual'})];
+  assert.equal(validateSuggestions(p,defs,analysis(),{vocabularyVersion:1}).suggestions.length,0);
+  assert.ok(!buildAnalysisPrompt(p,defs).includes('"id":"rcl"'));
+});
+
+test('new DIY definitions default to suggestion matching while legacy optional modes retain compatibility',()=>{
+  const normalized=normalizeTagDefinitions({tags:[{name:'Grooved catalyst layer',description:'Catalyst layers with deliberately introduced grooves.',facet:'component',custom:true}]})[0];
+  assert.equal(normalized.matchingMode,'suggest');assert.equal(normalized.fullName,normalized.name);
+  const p=paper(),legacy=definition();assert.equal(validateSuggestions(p,[legacy],analysis(),{vocabularyVersion:1}).suggestions[0].autoEligible,true);
+});
+
+test('assignment prompts include the full canonical meaning and typed hierarchy metadata',()=>{
+  const p=paper(),tag=definition({fullName:'Catalyst-layer resistance',broaderIds:['transport'],relatedIds:['cl'],matchingMode:'suggest'});
+  const prompt=buildAnalysisPrompt(p,[tag]);
+  assert.ok(prompt.includes('"fullName":"Catalyst-layer resistance"'));assert.ok(prompt.includes('"broaderIds":["transport"]'));assert.ok(prompt.includes('"relatedIds":["cl"]'));assert.ok(prompt.includes('most specific supported core'));
+});

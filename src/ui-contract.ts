@@ -1,9 +1,11 @@
+import type { TaxonomyProposal } from './taxonomy';
 /** The manager receives display data only. Credentials never belong in a snapshot. */
 export type ManagerPage = 'overview' | 'vocabulary' | 'review' | 'library' | 'activity' | 'settings';
 export type Scope = 'pilot' | 'selected' | 'collections' | 'library';
 export interface DisplayTag {
   id: string;
   name: string;
+  fullName?: string;
   description: string;
   facet: 'system' | 'component' | 'phenomenon' | 'method';
   aliases: string[];
@@ -13,8 +15,15 @@ export interface DisplayTag {
   custom: boolean;
   status: 'draft' | 'approved';
   broaderIds: string[];
+  relatedIds?: string[];
+  matchingMode?: 'manual' | 'suggest' | 'auto';
   coverage?: number;
+  currentlyTaggedCount?: number;
   representativePaperIds?: string[];
+}
+export interface DisplayTaxonomyProposal extends Omit<TaxonomyProposal, 'tags'> {
+  tags: DisplayTag[];
+  decisionConflicts?: string[];
 }
 export interface DisplayPaper {
   id: string;
@@ -67,10 +76,15 @@ export interface ManagerSettings {
   inputPricePerMillion: number;
   outputPricePerMillion: number;
   maxOutputTokens: number;
+  coreConceptLimit?: number;
 }
 export interface ManagerSnapshot {
   vocabularyVersion: number;
   pilotReviewed: boolean;
+  taxonomyReady?: boolean;
+  taxonomyProposal?: DisplayTaxonomyProposal;
+  analyzedPaperCount?: number;
+  taxonomyArchives?: { id: string; date: string; version: number; reason: string; count: number }[];
   tags: DisplayTag[];
   papers: DisplayPaper[];
   suggestions: DisplaySuggestion[];

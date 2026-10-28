@@ -1,9 +1,9 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "target": "Zotero 10.0.6 on Windows",
   "automatedTests": {
-    "passed": 210,
+    "passed": 298,
     "failed": 0
   },
   "nativeSmoke": {
@@ -23,10 +23,6 @@
       },
       {
         "name": "menuAPI",
-        "passed": true
-      },
-      {
-        "name": "sectionAPI",
         "passed": true
       },
       {
@@ -116,48 +112,180 @@
       {
         "name": "callbackDisposed",
         "passed": true
+      },
+      {
+        "name": "v020IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v020IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v020ApprovedStartupDefaultsToTags",
+        "passed": true
+      },
+      {
+        "name": "v020NativeDescendantsAndLegacyAliases",
+        "passed": true
+      },
+      {
+        "name": "v020NativeSpecificSubtypeExcludesBroadOnly",
+        "passed": true
+      },
+      {
+        "name": "v020NativeContextDetailAll",
+        "passed": true
+      },
+      {
+        "name": "v020NativeGlobalDetail",
+        "passed": true
+      },
+      {
+        "name": "v020NativeLegacyDetailDoesNotExpandParent",
+        "passed": true
+      },
+      {
+        "name": "v020NativeLegacyDetailKeepsCompoundContext",
+        "passed": true
+      },
+      {
+        "name": "v020NativeContextCompoundAny",
+        "passed": true
+      },
+      {
+        "name": "v020NativeScientificCaseCo",
+        "passed": true
+      },
+      {
+        "name": "v020NativeScientificCaseCO",
+        "passed": true
+      },
+      {
+        "name": "v020NativeInvalidConceptMatchesNone",
+        "passed": true
+      },
+      {
+        "name": "v020NativeCountsDeduplicateAndIncludeUnindexedPapers",
+        "passed": true
+      },
+      {
+        "name": "v020NativeSavedSearchFreezesHierarchy",
+        "passed": true
+      },
+      {
+        "name": "v020NativePDFTextExtractedAndIndexed",
+        "passed": true
+      },
+      {
+        "name": "v020NativeChildEvidenceFixtures",
+        "passed": true
+      },
+      {
+        "name": "v020BaselineTitleSearch",
+        "passed": true
+      },
+      {
+        "name": "v020BaselinePDFSearch",
+        "passed": true
+      },
+      {
+        "name": "v020BaselineNoteSearch",
+        "passed": true
+      },
+      {
+        "name": "v020BaselineAnnotationSearch",
+        "passed": true
+      },
+      {
+        "name": "v020BaselineQuotedSearch",
+        "passed": true
+      },
+      {
+        "name": "v020BaselineMultiwordSearch",
+        "passed": true
+      },
+      {
+        "name": "v020NativeAdapterAvailable",
+        "passed": true
+      },
+      {
+        "name": "v020TagModeTitleSearch",
+        "passed": true
+      },
+      {
+        "name": "v020TagModePDFSearch",
+        "passed": true
+      },
+      {
+        "name": "v020TagModeNoteSearch",
+        "passed": true
+      },
+      {
+        "name": "v020TagModeAnnotationSearch",
+        "passed": true
+      },
+      {
+        "name": "v020TagModeQuotedSearch",
+        "passed": true
+      },
+      {
+        "name": "v020TagModeMultiwordSearch",
+        "passed": true
+      },
+      {
+        "name": "v020NativeEmptyQuickSearch",
+        "passed": true
+      },
+      {
+        "name": "v020NativeIncomingPaperRefreshesExistingView",
+        "passed": true
+      },
+      {
+        "name": "v020NativeTagRemovalRefreshesExistingView",
+        "passed": true
+      },
+      {
+        "name": "v020NativeColumnsPreserved",
+        "passed": true
+      },
+      {
+        "name": "v020NativeIndependentWindows",
+        "passed": true
+      },
+      {
+        "name": "v020NativeDestroyRestoresCollectionsAndFilters",
+        "passed": true
+      },
+      {
+        "name": "v020NativeOtherWindowRemainsFiltered",
+        "passed": true
+      },
+      {
+        "name": "v020NativeOtherWindowColumnsRestored",
+        "passed": true
+      },
+      {
+        "name": "v020CollectionsChoiceSurvivesTaxonomyUpdate",
+        "passed": true
+      },
+      {
+        "name": "v020MountedNavigatorDefaultsToApprovedTags",
+        "passed": true
       }
-    ]
+    ],
+    "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
-  "managerUI": [
-    "Overview",
-    "Settings",
-    "DeepSeek provider picker and masked key field"
-  ],
-  "liveAI": "Not run. DeepSeek HTTP responses and API keys in automated/native tests are synthetic. Configure your own selected provider and use Test connection for live validation.",
-  "workingLibraryModified": false,
-  "sha256": "629fff712dbb4ed8d8785f24e8e85e361df551d77734ca95aafc81efd2858fd0",
   "nativeBundleMatchesInstaller": true,
-  "managerReadyInMatchedBundle": true,
-  "repository": "https://github.com/leviyuli/ZTagging",
-  "publicationChanges": "Version 0.1.3 adds a dedicated DeepSeek API connection, separate encrypted credential slot, model discovery, JSON adapter, budget/cache/queue isolation, and billing identity in queue snapshots.",
-  "dropdownValidation": {
-    "automatedRegressions": 15,
-    "nativePointerSelection": [
-      "settings-provider"
-    ],
-    "nativePopupRendering": [
-      "settings-provider"
-    ],
-    "conditionalPickers": "Model discovery and JSON inference use mocked DeepSeek HTTP replies; no live key was used."
+  "managerUI": {
+    "xmlRegressionTests": 9,
+    "nativeManagerOpened": true,
+    "screenshotInspection": "Unavailable: Windows Computer Use native helper pipe was not present."
   },
-  "workspaceValidation": {
-    "reference": "https://www.notion.com/help/intro-to-workspaces",
-    "designVersion": "0.1.2",
-    "nativeThemes": [
-      "light"
-    ],
-    "productionBundleMatchesNative": true,
-    "productionStylesheetMatchesNative": true
-  },
-  "deepseekValidation": {
-    "nativeAdapterChecks": 6,
-    "providerControllerIntegrationTests": 2,
-    "controllerRegressions": 17,
-    "providerCredentialIsolation": true,
-    "quotaPausesWithoutFallback": true,
-    "truncatedAndInvalidJSONRejected": true,
-    "manualTagsAndUndoProtected": true,
-    "liveInference": false
-  }
+  "rightItemAndInformationPaneSection": false,
+  "workingLibraryModified": false,
+  "liveAI": "No live provider request or account authentication performed for this release. Provider tests use synthetic credentials/responses; private pilot review uses saved metadata only.",
+  "sha256": "d6762111625010da9e09e379d9a61b377ede698295b58682a204d211b28e0688",
+  "sourceSha256": "ebd3a3332426d9984179a80edb78192df28222866cc25abf93d2579f3832f22c",
+  "repository": "https://github.com/leviyuli/ZTagging"
 }

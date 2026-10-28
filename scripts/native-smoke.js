@@ -1,6 +1,7 @@
 /** TEST ONLY. Bundled exclusively into build/native-addon by prepare-native-smoke.mjs. */
 import { registerOAuthCallback } from '../src/platform.ts';
 import { ProviderClient } from '../src/providers.ts';
+import { runNativeV020 } from './native-v020.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -14,12 +15,12 @@ void (async () => {
     await write();
     if (Zotero.initializationPromise) await Zotero.initializationPromise;
     if (Zotero.uiReadyPromise) await Zotero.uiReadyPromise;
+    await Zotero.Libraries.get(Zotero.Libraries.userLibraryID).waitForDataLoad('item');
     // All native item/search writes below are gated on this exact isolated data directory.
     check('isolatedDataDirectory', normalized(Zotero.DataDirectory.dir) === normalized(config.data), Zotero.DataDirectory.dir);
     check('isolatedProfile', normalized(Services.dirsvc.get('ProfD', Ci.nsIFile).path) === normalized(config.profile));
     check('extensionStartup', !!Zotero.SmartTags?.controller, Zotero.SmartTags?.version);
     check('menuAPI', typeof Zotero.MenuManager?.registerMenu === 'function');
-    check('sectionAPI', typeof Zotero.ItemPaneManager?.registerSection === 'function');
     check('sourceGlobals', typeof fetch === 'function' && !!crypto?.subtle && typeof TextEncoder === 'function' && typeof TextDecoder === 'function' && typeof AbortController === 'function' && typeof setTimeout === 'function');
     const app = Zotero.SmartTags.controller;
     check('automaticAssignmentInitiallyOff', app.state.settings.autoAssign === false);
@@ -81,7 +82,7 @@ void (async () => {
       item.setField('abstractNote', abstracts[i]);
       item.setField('publicationTitle', 'Synthetic Smart Tags Test Journal');
       item.addTag('Existing manual choice', 0);
-      if (i === 0) item.addTag('catalyst layer resistance', 1);
+      if (i === 0) item.addTag('electrolyzer transport', 1);
       await item.saveTx();
       items.push(item);
     }
@@ -131,6 +132,7 @@ void (async () => {
       } finally { clearTimeout(timeout); }
     } finally { callback?.dispose(); }
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
+    report.v020=await runNativeV020(app,check,config);
     report.syntheticItemIDs = items.map(item => item.id);
     if (config.openManager) await Zotero.SmartTags.openManager();
     report.status = 'passed';

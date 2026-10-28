@@ -1,5 +1,8 @@
 import type { DisplayCleanup, DisplayPaper, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
 import { createDropdown, cleanupDropdowns } from './dropdown';
+import { compileConceptFilter, descendantIds, equivalentTagNames } from './concept-filter';
+import type { ConceptFilter } from './concept-filter';
+import { canonicalTagKey } from './core';
 
 type Child = Node | string | null | undefined | false;
 type ModalState = { kind: 'apply' | 'cleanup'; ids: string[] } | { kind: 'search' } | null;
@@ -22,14 +25,16 @@ const iconPaths = {
   activity: ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6', 'M12 7v5l3 2'],
   settings: ['M4 4v16M12 4v16M20 4v16', 'M1 8h6M9 16h6M17 10h6'],
 } as const;
+export interface ManagerUIOptions { page?: ManagerPage; createDetail?: boolean; detailContextId?: string; tagId?: string }
 
 /** Mount a credential-free manager. All data access and writes go through the host. */
-export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Promise<void>; destroy: () => void } {
+export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOptions = {}): { refresh: () => Promise<void>; destroy: () => void; navigate: (options: ManagerUIOptions) => void } {
   const doc = win.document;
   const app = doc.getElementById('app');
   if (!app) throw new Error('Smart Tags manager is missing its app container.');
   let state: ManagerSnapshot | null = null;
-  let page: ManagerPage = 'overview';
+  let page: ManagerPage = options.page || 'overview';
+  let pendingNavigation: ManagerUIOptions | null = options;
   let scope: Scope = 'pilot';
   let busy = false;
   let signingIn = false;
@@ -41,6 +46,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   let toastTimer = 0;
   let vocabQuery = '';
   let vocabStatus = 'all';
+  let vocabularyPage = 0;
   let reviewFilter = 'pending';
   let reviewPage = 0;
   let libraryPage = 0;
@@ -48,6 +54,13 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   let paperQuery = '';
   let selectedPaper = '';
   let editorTag: DisplayTag | null = null;
+  let editorProposalId = '';
+  let proposalDecisionAck = '';
+  let detailScope: Scope = 'selected';
+  const relationQueries = new Map<string, string>();
+  const openRelationshipPickers = new Set<string>();
+  const expandedConcepts = new Set<string>();
+  let conceptQuery = '';
   let settingsDraft: ManagerSettings | null = null;
   let settingsDirty = false;
   const apiKeyDrafts: Record<'api' | 'deepseek', string> = { api: '', deepseek: '' };
@@ -55,11 +68,11 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   let modal: ModalState = null;
   const selectedSuggestions = new Set<string>();
   const selectedCleanup = new Set<string>();
-  const combination = new Set<string>();
+  let conceptFilter: ConceptFilter = { mode: 'all', selections: [] };
   let paperMap = new Map<string, DisplayPaper>();
   let tagMap = new Map<string, DisplayTag>();
   let suggestionMap = new Map<string, DisplaySuggestion>();
-  let paperTagNames = new Map<string, Set<string>>();
+  let papersByNativeTag = new Map<string, Set<string>>();
   const searchCache = new Map<string, { title: string; abstract?: string; summary?: string; keywords?: string[]; text: string }>();
   const PAGE_SIZE = 50;
 
@@ -187,9 +200,15 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
         paperMap = new Map(state.papers.map(paper => [paper.id, paper]));
         tagMap = new Map(state.tags.map(tag => [tag.id, tag]));
         suggestionMap = new Map(state.suggestions.map(suggestion => [suggestion.id, suggestion]));
-        paperTagNames = new Map(state.papers.map(paper => [paper.id, new Set(paper.tags || [])]));
+        papersByNativeTag = new Map();
+        for (const paper of state.papers) for (const name of paper.tags || []) {
+          const key = canonicalTagKey(name);
+          const items = papersByNativeTag.get(key) || new Set<string>();
+          items.add(paper.id); papersByNativeTag.set(key, items);
+        }
         for (const id of searchCache.keys()) if (!paperMap.has(id)) searchCache.delete(id);
         if (!settingsDirty) settingsDraft = { ...state.settings };
+        if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
       } while (refreshAgain && !disposed);
       render();
     } catch (error) { diagnostic(`snapshot failed: ${error instanceof Error ? error.message : String(error)}`); showError(error); }
@@ -202,6 +221,21 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   function paperById(id: string) { return paperMap.get(id); }
   function tagById(id: string) { return tagMap.get(id); }
   function tagName(id: string) { return tagById(id)?.name || id; }
+  function conceptLabel(tag: DisplayTag) { return tag.fullName && tag.fullName !== tag.name ? `${tag.name} · ${tag.fullName}` : tag.name; }
+  function conceptText(tag: DisplayTag) { return `${tag.name} ${tag.fullName || ''} ${tag.description} ${tag.aliases.join(' ')}`.toLocaleLowerCase(); }
+  function currentlyTaggedCount(tag: DisplayTag, definitions: DisplayTag[] = currentState().tags) {
+    if (tag.currentlyTaggedCount !== undefined) return tag.currentlyTaggedCount;
+    const ids = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (concept: DisplayTag) => {
+      if (visited.has(concept.id)) return;
+      visited.add(concept.id);
+      for (const name of equivalentTagNames(concept)) for (const id of papersByNativeTag.get(canonicalTagKey(name)) || []) ids.add(id);
+      for (const child of definitions) if (!concept.custom && !child.custom && child.broaderIds.includes(concept.id)) visit(child);
+    };
+    visit(tag);
+    return ids.size;
+  }
   function paperTitle(id: string) { return paperById(id)?.title || id; }
   function openPaper(id: string) { return run('show-paper', { id }); }
   function paperButton(id: string) { return button(paperTitle(id), () => openPaper(id), 'paper-title-button'); }
@@ -250,7 +284,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   function renderOverview() {
     const s = currentState();
     const stats = h('div', 'stats');
-    for (const [count, label] of [[approvedTags().length, 'approved tags'], [s.papers.length, 'papers analyzed'], [s.suggestions.filter(item => item.status === 'pending' && !item.applied).length, 'suggestions to review'], [s.tags.filter(tag => tag.custom).length, 'custom definitions']] as [number, string][]) {
+    for (const [count, label] of [[approvedTags().filter(tag => !tag.custom).length, 'approved core concepts'], [s.analyzedPaperCount ?? s.papers.length, 'papers analyzed'], [s.suggestions.filter(item => item.status === 'pending' && !item.applied).length, 'suggestions to review'], [s.tags.filter(tag => tag.custom).length, 'user details']] as [number, string][]) {
       stats.append(h('div', 'stat', h('strong', '', count.toLocaleString()), h('span', '', label)));
     }
     const steps = h('ol', 'step-list');
@@ -264,64 +298,123 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     return h('div', '', stats, h('div', 'grid', card('Start an analysis', 'A small pilot is a useful first step.', runControls(), undefined, 'overview-primary'), card('How Smart Tags works', '', steps, undefined, 'overview-guide')), h('div', 'section-gap', card('Pilot review', 'Your decisions guide future assignments.', pilot)), h('div', 'notice section-gap', 'Your existing collections and Zotero columns stay as they are. Smart Tags organizes content through native tags and optional saved searches.'));
   }
 
-  function newTag(custom = false) {
-    editorTag = { id: '', name: custom ? 'RCL' : '', description: custom ? 'Catalyst-layer resistance in water electrolysis or fuel cells.' : '', facet: 'phenomenon', aliases: [], inclusions: [], exclusions: [], examples: [], custom, status: 'draft', broaderIds: [] };
-    render();
+  function newTag(custom = false, contextId?: string, shouldRender = true) {
+    editorProposalId = '';
+    relationQueries.clear();
+    openRelationshipPickers.clear();
+    editorTag = { id: '', name: '', description: '', facet: 'phenomenon', aliases: [], inclusions: [], exclusions: [], examples: [], custom, status: 'draft', broaderIds: [], relatedIds: contextId ? [contextId] : [], matchingMode: custom ? 'suggest' : 'auto' };
+    if (shouldRender) render();
   }
-  function editTag(tag: DisplayTag) {
-    editorTag = { ...tag, aliases: [...tag.aliases], inclusions: [...tag.inclusions], exclusions: [...tag.exclusions], examples: [...tag.examples], broaderIds: [...tag.broaderIds] };
-    render();
+  function editTag(tag: DisplayTag, proposalId = '', shouldRender = true) {
+    editorProposalId = proposalId;
+    relationQueries.clear();
+    openRelationshipPickers.clear();
+    editorTag = { ...tag, aliases: [...tag.aliases], inclusions: [...tag.inclusions], exclusions: [...tag.exclusions], examples: [...tag.examples], broaderIds: [...tag.broaderIds], relatedIds: [...(tag.relatedIds || [])] };
+    if (shouldRender) { render(); doc.getElementById('tag-name')?.focus(); }
+  }
+  function navigate(next: ManagerUIOptions, shouldRender = true) {
+    if (disposed) return;
+    if (!state) { pendingNavigation = next; return; }
+    if (next.page) page = next.page;
+    modal = null;
+    if (next.createDetail) { page = 'vocabulary'; newTag(true, next.detailContextId, false); }
+    else if (next.tagId) { const tag = tagById(next.tagId); if (tag) { page = 'vocabulary'; editTag(tag, '', false); } }
+    if (shouldRender) render();
+  }
+  function relationshipPicker(tag: DisplayTag, key: 'broaderIds' | 'relatedIds', label: string, description: string) {
+    const choices = (editorProposalId ? currentState().taxonomyProposal?.tags || [] : currentState().tags).filter(other => other.id !== tag.id && !other.custom);
+    const query = relationQueries.get(key) || '';
+    const selected = tag[key] || [];
+    const list = h('div', 'concept-picker-list');
+    const visible = choices.filter(other => !query || conceptText(other).includes(query.toLocaleLowerCase())).sort((a, b) => Number(selected.includes(b.id)) - Number(selected.includes(a.id)) || a.name.localeCompare(b.name));
+    for (const other of visible.slice(0, 100)) list.append(checkbox(`tag-${key}-${other.id}`, selected.includes(other.id), conceptLabel(other), checked => {
+      tag[key] = checked ? [...new Set([...(tag[key] || []), other.id])] : (tag[key] || []).filter(id => id !== other.id);
+      openRelationshipPickers.add(key);
+      render();
+    }));
+    if (!visible.length) list.append(h('p', 'muted', 'No matching core concepts.'));
+    if (visible.length > 100) list.append(h('p', 'muted', 'Refine the search to see more concepts.'));
+    const picker = h('details', 'relationship-picker', h('summary', '', `${label} · ${selected.length} selected`), h('p', 'card-description', description), input(`tag-${key}-search`, query, value => { relationQueries.set(key, value); openRelationshipPickers.add(key); render(); }, 'Find a concept…', 'search'), list);
+    picker.open = openRelationshipPickers.has(key);
+    picker.addEventListener('toggle', () => { if (picker.isConnected) picker.open ? openRelationshipPickers.add(key) : openRelationshipPickers.delete(key); });
+    return picker;
+  }
+  function definitionKey(tag: DisplayTag) {
+    return JSON.stringify([tag.name, tag.fullName || '', tag.description, tag.facet, tag.aliases, tag.inclusions, tag.exclusions, tag.examples, tag.broaderIds, tag.relatedIds || [], tag.matchingMode || (tag.custom ? 'suggest' : 'auto')]);
+  }
+  function requireSavedDetail(tag: DisplayTag) {
+    const saved = tagById(tag.id);
+    if (!saved || definitionKey(tag) !== definitionKey(saved)) throw new Error('Save this definition before previewing or assigning it.');
+    return saved;
   }
   function tagEditor() {
-    if (!editorTag) return h('section', 'card editor', empty('Define a topic once', 'Select a tag to edit its meaning, or add a custom topic such as RCL.', button('Add custom tag', () => newTag(true), 'primary')));
+    if (!editorTag) return h('section', 'card editor', empty('Add your own detail', 'Define a niche topic once, then preview its matches. Only you create these details.', button('Add user detail', () => newTag(true), 'primary')));
     const tag = editorTag;
-    const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples' | 'broaderIds', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
+    const savedTag = tag.id ? tagById(tag.id) : undefined;
+    const unsavedDefinition = !savedTag || definitionKey(tag) !== definitionKey(savedTag);
+    const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
     const form = h('form', '',
       field('Tag name', input('tag-name', tag.name, value => { tag.name = value; }, 'A short, recognizable name')),
+      field('Full name', input('tag-full-name', tag.fullName || '', value => { tag.fullName = value; }, 'Expand an abbreviation when useful'), 'For example, RCL · catalyst-layer resistance.'),
       field('Definition', textarea('tag-description', tag.description, value => { tag.description = value; }, 'What must a paper discuss to receive this tag?')),
       field('Category', select('tag-facet', tag.facet, facets.map(value => [value, facetNames[value]]), value => { tag.facet = value; })),
-      checkbox('tag-custom', tag.custom, 'Custom topic · evaluated in addition to the core tags', value => { tag.custom = value; }),
+      h('p', 'card-description', tag.custom ? 'User detail · outside the global core-concept budget.' : 'Core concept · part of the global approved vocabulary.'),
+      tag.custom ? field('Matching mode', select('tag-matching-mode', tag.matchingMode || 'suggest', [['manual', 'Manual · assign only when I choose'], ['suggest', 'Suggest · send matches to Review'], ['auto', 'Automatic · apply eligible matches']], value => { tag.matchingMode = value; }), 'New user details start in suggestion mode. Automatic matching also requires the pilot review and global automatic assignment setting.') : null,
       h('div', 'divider'),
       lineField('aliases', 'Aliases', 'One alternative name per line. Acronyms still require contextual evidence.'),
       lineField('inclusions', 'Include when', 'Optional matching guidance, one rule per line.'),
       lineField('exclusions', 'Exclude when', 'Optional exclusions, one rule per line.'),
       lineField('examples', 'Example papers or passages', 'One positive example per line.'),
-      lineField('broaderIds', 'Broader concept IDs', 'Optional parent IDs from this vocabulary; one per line.'),
-      tag.id ? h('p', 'card-description', `Concept ID: ${tag.id}`) : null,
+      relationshipPicker(tag, 'broaderIds', 'Subtype of', 'Choose broader concepts only when this is a true subtype. Related topics belong below.'),
+      relationshipPicker(tag, 'relatedIds', 'Related concepts', 'Connect overlapping topics without making one a subtype of another.'),
+      tag.custom && !tag.id ? button('Use RCL example', () => { tag.name = 'RCL'; tag.fullName = 'Catalyst-layer resistance'; tag.description = 'Catalyst-layer resistance in water electrolysis or fuel cells.'; render(); }, 'quiet small') : null,
       h('div', 'actions', button('Save definition', async () => {
         if (!tag.name.trim() || !tag.description.trim()) throw new Error('Add a tag name and a definition before saving.');
-        await run('save-tag', { tag }, 'Definition saved. Review changed definitions before approving.');
-        editorTag = null;
+        if (editorProposalId) {
+          const proposal = currentState().taxonomyProposal;
+          if (!proposal || proposal.id !== editorProposalId) throw new Error('This proposal has changed. Reopen the definition from the current proposal.');
+          await run('save-taxonomy-proposal', { id: proposal.id, tags: proposal.tags.map(other => other.id === tag.id ? tag : other) }, 'Staged definition saved. Approve the complete proposal when ready.');
+          editorTag = null;
+        } else {
+          const result = await run(tag.custom && !tag.id ? 'create-detail' : 'save-tag', { tag }, tag.custom ? 'User detail saved. Preview its matches before enabling automatic matching.' : 'Definition saved. Core changes require vocabulary review.');
+          const saved = tagById(typeof result === 'string' ? result : tag.id);
+          if (tag.custom && saved) editTag(saved, '', false);
+          else editorTag = null;
+        }
+        editorProposalId = '';
         render();
       }, 'primary'), button('Cancel', () => { editorTag = null; render(); }, 'quiet')),
-      tag.id ? h('div', 'actions', button('Remove definition', async () => {
+      tag.id && tag.custom && !editorProposalId ? h('div', 'detail-assignment section-gap', field('Preview scope', select<Scope>('detail-preview-scope', detailScope, [['selected', 'Selected papers in Zotero'], ['collections', 'Selected collections'], ['library', 'Whole personal library'], ['pilot', 'Pilot · 50 papers']], value => { detailScope = value; })), h('div', 'actions', button('Preview matches', () => { requireSavedDetail(tag); return run('preview-detail', { tagId: tag.id, scope: detailScope }, 'Detail match analysis queued. Review the evidence before applying.'); }, '', !canAnalyze() || unsavedDefinition || tag.matchingMode === 'manual'), button('Assign to selected papers', () => { requireSavedDetail(tag); return run('assign-detail', { tagId: tag.id, scope: 'selected' }, 'Detail assigned to the selected papers.'); }, 'primary', unsavedDefinition)), h('p', 'card-description', tag.matchingMode === 'manual' ? 'Manual mode supports explicit assignment. Save Suggest mode to preview AI matches.' : 'Assignment uses the saved definition. Save edits before previewing or assigning.')) : null,
+      tag.id && !editorProposalId ? h('div', 'actions', button('Remove definition', async () => {
         if (!win.confirm(`Remove the definition “${tag.name}”? Existing native Zotero tags are preserved.`)) return;
         await run('delete-tag', { id: tag.id }, 'Definition removed.');
         editorTag = null;
         render();
       }, 'danger small')) : null);
     form.addEventListener('submit', event => event.preventDefault());
-    return h('section', 'card editor', h('div', 'card-header', h('h2', '', tag.id ? 'Edit definition' : 'New definition'), badge(tag.status, tag.status)), h('div', 'card-body', form));
+    return h('section', 'card editor', h('div', 'card-header', h('h2', '', editorProposalId ? 'Edit staged concept' : tag.id ? 'Edit definition' : tag.custom ? 'New user detail' : 'New core concept'), badge(editorProposalId ? 'proposal' : tag.status, tag.status)), h('div', 'card-body', form));
   }
   function renderVocabulary() {
     const s = currentState();
     const query = vocabQuery.toLocaleLowerCase();
-    const tags = s.tags.filter(tag => (vocabStatus === 'all' || tag.status === vocabStatus || (vocabStatus === 'custom' && tag.custom)) && (!query || `${tag.name} ${tag.description} ${tag.aliases.join(' ')}`.toLocaleLowerCase().includes(query)));
-    const search = input('vocabulary-search', vocabQuery, value => { vocabQuery = value; render(); }, 'Find a tag or concept…', 'search');
-    const toolbar = h('div', 'toolbar', search, select('vocabulary-status', vocabStatus, [['all', 'All definitions'], ['draft', 'Drafts'], ['approved', 'Approved'], ['custom', 'Custom topics']], value => { vocabStatus = value; render(); }, 'Vocabulary status'), button('New tag', () => newTag()), button('Custom topic', () => newTag(true), 'primary'));
-    const draftIds = s.tags.filter(tag => tag.status === 'draft').map(tag => tag.id);
+    const tags = s.tags.filter(tag => (vocabStatus === 'all' || tag.status === vocabStatus || (vocabStatus === 'custom' && tag.custom) || (vocabStatus === 'core' && !tag.custom)) && (!query || conceptText(tag).includes(query)));
+    vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil(tags.length / PAGE_SIZE) - 1));
+    const visibleTags = tags.slice(vocabularyPage * PAGE_SIZE, (vocabularyPage + 1) * PAGE_SIZE);
+    const search = input('vocabulary-search', vocabQuery, value => { vocabQuery = value; vocabularyPage = 0; render(); }, 'Find a tag or concept…', 'search');
+    const toolbar = h('div', 'toolbar', search, select('vocabulary-status', vocabStatus, [['all', 'All definitions'], ['core', 'Core concepts'], ['draft', 'Drafts'], ['approved', 'Approved'], ['custom', 'User details']], value => { vocabStatus = value; vocabularyPage = 0; render(); }, 'Vocabulary status'), button('Add core concept', () => newTag()), button('Add user detail', () => newTag(true), 'primary'));
     const list = h('div', '');
     if (!tags.length) list.append(h('div', 'card', empty('No matching definitions', s.tags.length ? 'Try another search, or add the concept you need.' : 'Run a vocabulary rebuild from Overview, or start by defining a custom topic.')));
     for (const facet of facets) {
-      const grouped = tags.filter(tag => tag.facet === facet);
+      const grouped = visibleTags.filter(tag => tag.facet === facet);
       if (!grouped.length) continue;
       list.append(h('h3', 'facet-heading', facetNames[facet]));
       const rows = h('div', 'tag-list');
       for (const tag of grouped) {
         const row = h('div', `tag-row ${editorTag?.id && editorTag.id === tag.id ? 'selected' : ''}`,
-          h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), badge(tag.status, tag.status), tag.custom ? badge('custom', 'custom') : null), button('Edit', () => editTag(tag), 'quiet small')),
+          h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), badge(tag.status, tag.status), tag.custom ? badge('user detail', 'custom') : null), button('Edit', () => editTag(tag), 'quiet small')),
+          tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null,
           h('p', '', tag.description),
-          h('div', 'tag-meta', h('span', '', `${tag.coverage ?? 0} papers`), tag.aliases.length ? h('span', '', `Aliases: ${tag.aliases.join(', ')}`) : null, tag.broaderIds.length ? h('span', '', `Broader: ${tag.broaderIds.map(tagName).join(', ')}`) : null));
+          h('div', 'tag-meta', h('span', '', `Evidence coverage: ${tag.coverage ?? '—'}`), h('span', '', `Currently tagged: ${currentlyTaggedCount(tag)}`), tag.custom ? h('span', '', `Matching: ${tag.matchingMode || 'suggest'}`) : null, tag.aliases.length ? h('span', '', `Aliases: ${tag.aliases.join(', ')}`) : null, tag.broaderIds.length ? h('span', '', `Subtype of: ${tag.broaderIds.map(tagName).join(', ')}`) : null, tag.relatedIds?.length ? h('span', '', `Related: ${tag.relatedIds.map(tagName).join(', ')}`) : null));
         if (tag.representativePaperIds?.length) {
           const details = h('details', 'section-gap', h('summary', 'muted', 'Representative papers'));
           const examples = h('ul', 'detail-list');
@@ -333,9 +426,54 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       }
       list.append(rows);
     }
-    const reviewBar = h('div', 'notice info inline between', h('div', '', h('strong', '', `${draftIds.length} draft definitions`), h('p', '', 'Approval makes these definitions available to automatic assignment. It does not change paper tags.')), button('Approve draft vocabulary', () => run('approve-vocabulary', { ids: draftIds }, 'Draft vocabulary approved.'), 'primary', !draftIds.length));
+    list.append(h('div', 'section-gap', pagination(tags.length, vocabularyPage, next => { vocabularyPage = next; })));
+    const coreCount = approvedTags().filter(tag => !tag.custom).length;
+    const reviewBar = h('div', 'notice inline between', h('div', '', h('strong', '', `${coreCount} approved core concepts · limit ${s.settings.coreConceptLimit ?? 60}`), h('p', '', 'Rebuild creates a staged global vocabulary. Approval publishes its definitions; applying paper tags remains a separate review step. User details stay under your control.')), button('Find cleanup proposals', () => run('preview-cleanup', undefined, 'Cleanup proposals refreshed.'), 'small'));
     const transfer = h('div', 'inline section-gap', button('Import definitions…', () => run('import-vocabulary', undefined, 'Definitions imported as drafts.')), button('Export definitions…', () => run('export-vocabulary')));
-    return h('div', 'stack', reviewBar, toolbar, h('div', 'split', list, tagEditor()), transfer);
+    let archives: HTMLElement | null = null;
+    if (s.taxonomyArchives?.length) {
+      const table = h('table', '', h('thead', '', h('tr', '', h('th', '', 'Version'), h('th', '', 'Date'), h('th', '', 'Definitions'), h('th', '', 'Reason'), h('th', '', 'Action'))));
+      const body = h('tbody');
+      for (const record of s.taxonomyArchives.slice(0, 30)) body.append(h('tr', '', h('td', '', String(record.version)), h('td', '', record.date), h('td', '', String(record.count)), h('td', '', record.reason), h('td', '', button('Stage previous version', () => run('restore-taxonomy', { id: record.id }, 'Previous vocabulary staged for review.'), 'small'))));
+      table.append(body);
+      archives = card('Vocabulary versions', 'Staging replaces the current proposal for review. It does not modify native paper tags.', h('div', 'table-wrap', table));
+    }
+    return h('div', 'stack', reviewBar, taxonomyProposal(), toolbar, h('div', 'split', list, tagEditor()), transfer, archives);
+  }
+  function taxonomyProposal() {
+    const proposal = currentState().taxonomyProposal;
+    if (!proposal) return null;
+    const names = new Map(proposal.tags.map(tag => [tag.id, tag.name]));
+    const coreTags = proposal.tags.filter(tag => !tag.custom);
+    const limit = currentState().settings.coreConceptLimit ?? proposal.coreLimit ?? 60;
+    const conflicts = proposal.decisionConflicts || [];
+    const acknowledgementKey = `${proposal.id}:${conflicts.join('\n')}`;
+    const body = h('div', '', h('div', 'proposal-metrics', badge(`${coreTags.length} / ${limit} core concepts`, coreTags.length > limit ? 'removal' : 'draft'), badge(`${proposal.paperIds.length} papers reviewed`), badge(`${proposal.merges.length} merges`), badge(`${proposal.excluded.length} excluded`), badge(`${proposal.issues.length} issues`, proposal.issues.length ? 'removal' : 'approved')),
+      h('p', 'card-description', 'This proposal is staged. Edit definitions and relationships, inspect representative evidence, then approve the whole vocabulary. Native paper tags and your user details are preserved.'));
+    if (proposal.issues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Resolve before approval'), h('ul', 'detail-list', ...proposal.issues.map(issue => h('li', '', issue)))));
+    if (conflicts.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Existing decisions need to be preserved'), h('ul', 'detail-list', ...conflicts.map(conflict => h('li', '', conflict))), h('div', 'section-gap', checkbox('taxonomy-preserve-decisions', proposalDecisionAck === acknowledgementKey, 'Preserve rejected and locked decisions when merging', checked => { proposalDecisionAck = checked ? acknowledgementKey : ''; render(); })), h('p', '', 'Approval carries the restrictive decisions into the merged concept.')));
+    const concepts = h('details', 'proposal-details section-gap', h('summary', '', `Review ${coreTags.length} proposed concepts`));
+    const rows = h('div', 'tag-list section-gap');
+    for (const tag of coreTags) {
+      const support = proposal.support[tag.id];
+      const rowActions = h('div', 'inline', button('Edit staged definition', () => editTag(tag, proposal.id), 'small quiet'), button('Exclude from core', () => run('save-taxonomy-proposal', {
+        id: proposal.id,
+        tags: proposal.tags.filter(other => other.id !== tag.id).map(other => other.custom ? other : { ...other, broaderIds: other.broaderIds.filter(id => id !== tag.id), relatedIds: (other.relatedIds || []).filter(id => id !== tag.id) }),
+        excluded: [...proposal.excluded, { name: conceptLabel(tag), reason: 'Excluded during vocabulary review.' }],
+      }, 'Concept excluded from the staged vocabulary.'), 'quiet small'));
+      const row = h('article', 'tag-row', h('div', 'inline between', h('div', '', h('strong', '', conceptLabel(tag)), h('span', 'muted', ` · ${facetNames[tag.facet]}`)), rowActions),
+        h('p', '', tag.description), h('div', 'tag-meta', h('span', '', `Evidence coverage: ${support?.paperIds.length ?? 0} papers`), h('span', '', `Currently tagged: ${currentlyTaggedCount(tag, proposal.tags)}`), tag.aliases.length ? h('span', '', `Aliases: ${tag.aliases.join(', ')}`) : null, tag.broaderIds.length ? h('span', '', `Subtype of: ${tag.broaderIds.map(id => names.get(id) || id).join(', ')}`) : null, tag.relatedIds?.length ? h('span', '', `Related: ${tag.relatedIds.map(id => names.get(id) || id).join(', ')}`) : null));
+      if (support?.paperIds.length || support?.evidence?.length) {
+        const details = h('details', 'section-gap', h('summary', '', 'Representative papers & evidence'));
+        details.append(h('ul', 'detail-list', ...(support.paperIds.slice(0, 5).map(id => h('li', '', paperButton(id))))));
+        for (const evidence of support.evidence?.slice(0, 3) || []) details.append(h('blockquote', 'evidence', h('cite', '', [evidence.source, evidence.paperId ? paperTitle(evidence.paperId) : ''].filter(Boolean).join(' · ')), evidence.text));
+        row.append(details);
+      }
+      rows.append(row);
+    }
+    concepts.append(rows); body.append(concepts);
+    if (proposal.merges.length || proposal.excluded.length) body.append(h('details', 'proposal-details section-gap', h('summary', '', 'Merges & excluded candidates'), h('ul', 'detail-list', ...proposal.merges.map(merge => h('li', '', `${names.get(merge.fromId) || tagName(merge.fromId)} → ${names.get(merge.toId) || tagName(merge.toId)}`)), ...proposal.excluded.map(item => h('li', '', `${item.name}: ${item.reason}`)))));
+    return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
   }
 
   function suggestionCard(suggestion: DisplaySuggestion) {
@@ -394,9 +532,28 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     return h('div', 'stack', toolbar, actions, list, pagination(suggestions.length, reviewPage, next => { reviewPage = next; }), cleanupSection());
   }
 
-  function tagMatches(paper: DisplayPaper, tagId: string) {
-    const name = tagName(tagId);
-    return paperTagNames.get(paper.id)?.has(name) || false;
+  function matchingPaperIds(filter: ConceptFilter): Set<string> {
+    const compiled = compileConceptFilter(currentState().tags, filter);
+    if (compiled.empty) return new Set();
+    if (!compiled.clauses.length) return new Set(paperMap.keys());
+    const intersect = (sets: Set<string>[]) => {
+      if (!sets.length) return new Set<string>();
+      sets.sort((a, b) => a.size - b.size);
+      return new Set([...sets[0]].filter(id => sets.every(set => set.has(id))));
+    };
+    const clauses = compiled.clauses.map(clause => intersect(clause.groups.map(group => {
+      const ids = new Set<string>();
+      for (const name of group) for (const id of papersByNativeTag.get(canonicalTagKey(name)) || []) ids.add(id);
+      return ids;
+    })));
+    return compiled.mode === 'all' ? intersect(clauses) : new Set(clauses.flatMap(ids => [...ids]));
+  }
+  function filterSelectionKey(conceptId: string, contextId?: string) { return `${conceptId}\u0000${contextId || ''}`; }
+  function isConceptSelected(conceptId: string, contextId?: string) { return conceptFilter.selections.some(selection => selection.conceptId === conceptId && selection.contextId === contextId); }
+  function toggleConcept(conceptId: string, contextId?: string) {
+    conceptFilter = { ...conceptFilter, selections: isConceptSelected(conceptId, contextId) ? conceptFilter.selections.filter(selection => selection.conceptId !== conceptId || selection.contextId !== contextId) : [...conceptFilter.selections, { conceptId, ...(contextId ? { contextId } : {}) }] };
+    libraryPage = 0;
+    render();
   }
   function searchable(paper: DisplayPaper) {
     const prior = searchCache.get(paper.id);
@@ -408,21 +565,73 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   function renderLibrary() {
     const s = currentState();
     const tags = approvedTags();
+    const coreTags = tags.filter(tag => !tag.custom);
+    const details = tags.filter(tag => tag.custom);
     const query = paperQuery.toLocaleLowerCase();
-    const selectedTagIds = [...combination];
-    const papers = s.papers.filter(paper => (!query || searchable(paper).includes(query)) && selectedTagIds.every(id => tagMatches(paper, id)));
+    const matches = matchingPaperIds(conceptFilter);
+    const papers = s.papers.filter(paper => matches.has(paper.id) && (!query || searchable(paper).includes(query)));
     libraryPage = Math.min(libraryPage, Math.max(0, Math.ceil(papers.length / PAGE_SIZE) - 1));
-    const toolbar = h('div', 'toolbar', input('paper-search', paperQuery, value => { paperQuery = value; libraryPage = 0; render(); }, 'Search analyzed titles, abstracts, and summaries…', 'search'), button('Save tag search…', () => { modal = { kind: 'search' }; searchName = [...combination].map(tagName).join(' + '); render(); }, '', !combination.size), h('span', 'search-results', `${papers.length} papers`));
-    const filters = h('div', '');
+    const toolbar = h('div', 'toolbar', input('paper-search', paperQuery, value => { paperQuery = value; libraryPage = 0; render(); }, 'Search titles, abstracts, and summaries…', 'search'), button('Save tag search…', () => { modal = { kind: 'search' }; searchName = conceptFilter.selections.map(selection => `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`).join(conceptFilter.mode === 'all' ? ' + ' : ' or '); render(); }, '', !conceptFilter.selections.length), h('span', 'search-results', `${papers.length} papers`));
+    const filters = h('div', '', h('div', 'toolbar', input('concept-search', conceptQuery, value => { conceptQuery = value; render(); }, 'Find a name, abbreviation, alias, or definition…', 'search'), select('concept-filter-mode', conceptFilter.mode, [['all', 'All · every selection'], ['any', 'Any · at least one selection']], value => { conceptFilter = { ...conceptFilter, mode: value }; libraryPage = 0; render(); }, 'Combine concept selections')));
+    const counts = new Map<string, number>();
+    const count = (conceptId: string, contextId?: string) => {
+      const key = filterSelectionKey(conceptId, contextId);
+      if (!counts.has(key)) counts.set(key, matchingPaperIds({ mode: 'all', selections: [{ conceptId, ...(contextId ? { contextId } : {}) }] }).size);
+      return counts.get(key)!;
+    };
+    const conceptQueryKey = conceptQuery.toLocaleLowerCase();
+    const visible = (tag: DisplayTag) => !conceptQueryKey || conceptText(tag).includes(conceptQueryKey);
+    const detailRow = (tag: DisplayTag, contextId?: string, location = 'global') => h('div', 'concept-tree-row detail-node', checkbox(`explore-detail-${encodeURIComponent(tag.id)}-${encodeURIComponent(contextId || 'global')}-${encodeURIComponent(location)}`, isConceptSelected(tag.id, contextId), conceptLabel(tag), () => toggleConcept(tag.id, contextId)), badge('detail', 'custom'), h('span', 'concept-count', String(count(tag.id, contextId))));
+    const children = new Map<string, DisplayTag[]>();
+    for (const tag of coreTags) for (const parent of tag.broaderIds) {
+      if (!coreTags.some(other => other.id === parent)) continue;
+      const group = children.get(parent) || []; group.push(tag); children.set(parent, group);
+    }
+    const associatedDetails = (id: string) => details.filter(tag => (tag.relatedIds || []).includes(id) || (tagById(id)?.relatedIds || []).includes(tag.id) || tag.broaderIds.includes(id));
+    const treeVisible = (tag: DisplayTag) => visible(tag) || descendantIds(tag.id, tags).some(id => { const other = tagById(id); return other ? visible(other) || associatedDetails(id).some(visible) : false; });
+    const renderNode = (tag: DisplayTag, path: Set<string>): Node => {
+      if (path.has(tag.id)) return h('span');
+      const nextPath = new Set([...path, tag.id]);
+      const subtypes = (children.get(tag.id) || []).filter(treeVisible);
+      const sharedDetails = associatedDetails(tag.id).filter(visible);
+      const row = h('div', 'concept-tree-row', checkbox(`explore-core-${[...path, tag.id].join('-')}`, isConceptSelected(tag.id), conceptLabel(tag), () => toggleConcept(tag.id)), h('span', 'concept-count', String(count(tag.id))), button('Add detail', () => { page = 'vocabulary'; newTag(true, tag.id); }, 'quiet small'));
+      row.title = tag.description;
+      if (!subtypes.length && !sharedDetails.length) return h('div', 'concept-tree-node', row);
+      const branch = h('details', 'concept-tree-branch', h('summary', '', h('span', 'branch-label', conceptLabel(tag)), h('span', 'concept-count', String(count(tag.id)))));
+      branch.open = !!conceptQueryKey || expandedConcepts.has(tag.id);
+      branch.addEventListener('toggle', () => { if (branch.isConnected) branch.open ? expandedConcepts.add(tag.id) : expandedConcepts.delete(tag.id); });
+      const nested = h('div', 'concept-tree-children', row);
+      for (const child of subtypes) nested.append(renderNode(child, nextPath));
+      if (sharedDetails.length) {
+        nested.append(h('p', 'context-caption', `User details · matched together with ${tag.name}`));
+        for (const detail of sharedDetails.slice(0, 100)) nested.append(detailRow(detail, tag.id, [...nextPath].join('/')));
+        if (sharedDetails.length > 100) nested.append(h('p', 'muted', 'Refine the concept search to see more details.'));
+      }
+      branch.append(nested);
+      return branch;
+    };
     for (const facet of facets) {
-      const grouped = tags.filter(tag => tag.facet === facet);
+      const grouped = coreTags.filter(tag => tag.facet === facet && !tag.broaderIds.some(id => coreTags.some(other => other.id === id)) && treeVisible(tag));
       if (!grouped.length) continue;
       filters.append(h('h3', 'facet-heading', facetNames[facet]));
-      const chips = h('div', 'chips');
-      for (const tag of grouped) chips.append(button(tag.name, () => { combination.has(tag.id) ? combination.delete(tag.id) : combination.add(tag.id); libraryPage = 0; render(); }, `tag-chip ${combination.has(tag.id) ? 'active' : ''}`));
-      filters.append(chips);
+      const tree = h('div', 'concept-tree');
+      for (const tag of grouped) tree.append(renderNode(tag, new Set()));
+      filters.append(tree);
     }
-    const filterCard = card('Combine tags', 'Papers must have every selected tag.', filters, button('Clear filters', () => { combination.clear(); libraryPage = 0; render(); }, 'quiet small', !combination.size));
+    const visibleDetails = details.filter(visible);
+    if (visibleDetails.length) {
+      const allDetails = h('details', 'concept-tree-branch section-gap', h('summary', '', `All user details · ${visibleDetails.length}`));
+      allDetails.open = !!conceptQueryKey || expandedConcepts.has('__user-details');
+      allDetails.addEventListener('toggle', () => { if (allDetails.isConnected) allDetails.open ? expandedConcepts.add('__user-details') : expandedConcepts.delete('__user-details'); });
+      const detailList = h('div', 'concept-tree-children');
+      for (const tag of visibleDetails.slice(0, 100)) detailList.append(detailRow(tag));
+      if (visibleDetails.length > 100) detailList.append(h('p', 'muted', 'Refine the concept search to see more details.'));
+      allDetails.append(detailList); filters.append(allDetails);
+    }
+    if (!coreTags.length && !details.length) filters.append(empty('No approved concepts yet', 'Review and approve a staged vocabulary, or create your own detail.'));
+    const selections = h('div', 'selected-concepts');
+    for (const selection of conceptFilter.selections) selections.append(h('div', 'selected-concept', h('span', '', `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`), button('Remove', () => toggleConcept(selection.conceptId, selection.contextId), 'quiet small')));
+    const filterCard = card('Browse concepts', 'A broader concept includes its subtypes. A detail chosen inside a concept requires both tags. All/Any combines these complete selections.', h('div', '', filters, selections), button('Clear filters', () => { conceptFilter = { ...conceptFilter, selections: [] }; libraryPage = 0; render(); }, 'quiet small', !conceptFilter.selections.length));
     const list = h('section', 'card');
     if (!papers.length) list.append(empty('No papers match', s.papers.length ? 'Try fewer tags or a broader search.' : 'Analyze a pilot or your library to create a local content index.'));
     for (const paper of papers.slice(libraryPage * PAGE_SIZE, (libraryPage + 1) * PAGE_SIZE)) {
@@ -522,9 +731,10 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       h('div', 'actions', button('Discover models', async () => { await saveSettings(); await run('discover-models', undefined, `${providerName} model list updated.`); }), button('Test connection', async () => { await saveSettings(); await run('test-connection', undefined, `${providerName} connection test succeeded.`); }, 'primary', !draft.model.trim())),
       h('p', 'card-description', 'Testing sends a small AI request through the selected connection.'));
     if (s.connection.credentialStorage) connection.append(h('p', 'card-description', `Credential storage: ${s.connection.credentialStorage}`));
-    const numberField = (key: 'budgetUSD' | 'inputPricePerMillion' | 'outputPricePerMillion' | 'maxOutputTokens', label: string, note: string, step: string) => {
-      const control = input(`settings-${key}`, String(draft[key]), value => { const n = Number(value); if (Number.isFinite(n)) mark(key, n); }, '', 'number');
-      control.min = key === 'maxOutputTokens' ? '1' : '0'; control.step = step;
+    const numberField = (key: 'budgetUSD' | 'inputPricePerMillion' | 'outputPricePerMillion' | 'maxOutputTokens' | 'coreConceptLimit', label: string, note: string, step: string) => {
+      const control = input(`settings-${key}`, String(draft[key] ?? 60), value => { const n = Number(value); if (Number.isFinite(n)) mark(key, n); }, '', 'number');
+      control.min = key === 'maxOutputTokens' || key === 'coreConceptLimit' ? '1' : '0'; control.step = step;
+      if (key === 'coreConceptLimit') control.max = '500';
       return field(label, control, note);
     };
     const budgets = h('div', '',
@@ -535,10 +745,12 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     const automatic = h('div', '', checkbox('settings-auto-assign', draft.autoAssign, 'Automatically assign supported tags when a new paper is added', value => mark('autoAssign', value), !s.pilotReviewed),
       h('p', 'card-description', s.pilotReviewed ? 'Only approved definitions and evidence-backed eligible matches are used. Ambiguous matches remain in Review.' : 'Complete and mark your pilot review on Overview to enable automatic assignment.'),
       h('p', 'card-description', 'Manual removals, rejected matches, and locked assignments are remembered. Existing collections and workflow labels remain under your control.'));
-    return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Automatic assignment', 'Use the approved vocabulary for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')));
+    const vocabulary = h('div', '', numberField('coreConceptLimit', 'Global core-concept limit', 'Default: 60. Rebuild proposes one compact vocabulary for the whole library. User-created details do not count toward this limit.', '1'), h('p', 'card-description', 'Changing this limit does not publish a new vocabulary or modify native paper tags. Review the next staged proposal before approving it.'));
+    return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Vocabulary', 'Control the size of the global core vocabulary.', vocabulary), card('Automatic assignment', 'Use the approved vocabulary for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')));
   }
   async function saveSettings() {
     if (!settingsDraft) return;
+    if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) throw new Error('Set the global core-concept limit to a whole number from 1 to 500.');
     if (settingsDraft.provider !== 'chatgpt' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
     const result = await run('save-settings', { settings: { ...settingsDraft } }, 'Settings saved.');
     settingsDirty = false;
@@ -580,8 +792,8 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     } else {
       title = 'Save a Zotero tag search';
       applyLabel = 'Create saved search';
-      body.append(h('p', '', 'Create a native saved search requiring all selected tags.'), h('div', 'section-gap', field('Search name', input('saved-search-name', searchName, value => { searchName = value; }))), h('div', 'chips', ...[...combination].map(id => h('span', 'tag-chip', tagName(id)))));
-      apply = async () => { if (!searchName.trim()) throw new Error('Enter a name for this saved search.'); await run('save-search', { name: searchName.trim(), tagIds: [...combination] }, 'Saved search created in Zotero.'); modal = null; render(); };
+      body.append(h('p', '', `Create a native saved search using ${conceptFilter.mode === 'all' ? 'all' : 'any'} of the selected concept clauses. Subtypes and aliases are included; each detail keeps its context requirement.`), h('div', 'section-gap', field('Search name', input('saved-search-name', searchName, value => { searchName = value; }))), h('div', 'chips', ...conceptFilter.selections.map(selection => h('span', 'tag-chip', `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`))));
+      apply = async () => { if (!searchName.trim()) throw new Error('Enter a name for this saved search.'); await run('save-search', { name: searchName.trim(), filter: { mode: conceptFilter.mode, selections: conceptFilter.selections.map(selection => ({ ...selection })) } }, 'Saved search created in Zotero.'); modal = null; render(); };
     }
     const close = () => { modal = null; render(); };
     const content = h('section', 'modal', h('div', 'card-header', h('h2', '', title), button('Close', close, 'quiet small')), body, h('div', 'card-footer', button(applyLabel, apply, 'primary'), button('Cancel', close)));
@@ -709,5 +921,5 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   };
   win.addEventListener('unload', destroy, { once: true });
   void refresh();
-  return { refresh, destroy };
+  return { refresh, destroy, navigate };
 }

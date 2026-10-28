@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AtomicStore } from '../src/store.ts';
-import { initialState, validState } from '../src/controller.ts';
+import { initialState, migrateState, validState } from '../src/controller.ts';
 
 interface State { schemaVersion: number; count: number }
 const valid = (v: unknown): v is State => !!v && typeof v === 'object' && (v as State).schemaVersion === 1 && Number.isInteger((v as State).count);
@@ -25,6 +25,15 @@ function memoryIO() {
     },
   };
 }
+
+test('transient Windows replacement locks retry the same serialized generation without losing its backup',async()=>{
+  const mem=memoryIO();mem.files.set('state.json',JSON.stringify({schemaVersion:1,count:1}));
+  const nativeWrite=mem.io.writeAtomic;let failures=2;
+  mem.io.writeAtomic=async(path,data)=>{if(path==='state.json'&&failures-->0)throw new Error('NS_ERROR_FILE_ACCESS_DENIED');await nativeWrite(path,data);};
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),valid);
+  await Promise.all([store.save({schemaVersion:1,count:2}),store.save({schemaVersion:1,count:3})]);
+  assert.equal(failures,-2);assert.equal(JSON.parse(mem.files.get('state.json')!).count,3);assert.equal(JSON.parse(mem.files.get('state.json.bak')!).count,2);
+});
 
 test('store initializes only when no state generation exists', async () => {
   const mem = memoryIO();
@@ -96,4 +105,54 @@ test('application state rejects missing manager fields and malformed recovery jo
   }
   assert.equal(validState({ ...good, pendingChange: {} }), false, 'malformed journal must not reach recovery');
   assert.equal(validState({ ...good, history: [{}] }), false, 'malformed history must not reach snapshot or undo');
+});
+
+function legacyState() {
+  const old=structuredClone(initialState()) as any;old.schemaVersion=1;old.vocabularyVersion=9;
+  for(const key of ['facts','taxonomyProposal','taxonomyArchives','taxonomyRedirects','taxonomyReady','taxonomySupport'])delete old[key];
+  delete old.settings.coreConceptLimit;
+  old.tags.push(...Array.from({length:107},(_,i)=>({id:`draft-${i}`,name:`Legacy concept ${i}`,description:'Legacy scientific concept.',facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'draft',broaderIds:[]})));
+  for(const tag of old.tags){delete tag.fullName;delete tag.relatedIds;delete tag.matchingMode;}
+  old.decisions['1:PAPER|custom-rcl']={rejected:true,locked:true};
+  old.ownership['1:PAPER']={'custom-rcl':{name:'RCL',changeId:'historic-change'}};
+  old.nativeTags['1:PAPER']=[{tag:'RCL',type:0},{tag:'Manual important',type:0}];
+  return old;
+}
+
+test('schema-one migration preserves 107 drafts, manual decisions, ownership, and native snapshots',()=>{
+  const old=legacyState(),before=JSON.stringify(old),migrated=migrateState(old);
+  assert.equal(migrated.schemaVersion,2);assert.equal(validState(migrated),true);assert.equal(migrated.tags.filter(t=>!t.custom).length,107);
+  assert.equal(migrated.taxonomyReady,false);assert.equal(migrated.taxonomyProposal,null);assert.deepEqual(migrated.facts,{});
+  assert.equal(migrated.settings.coreConceptLimit,60);assert.equal(migrated.tags[0].matchingMode,'suggest');
+  assert.deepEqual(migrated.decisions,old.decisions);assert.deepEqual(migrated.ownership,old.ownership);assert.deepEqual(migrated.nativeTags,old.nativeTags);
+  assert.equal(JSON.stringify(old),before,'Migration must not mutate the original parsed state');
+});
+
+test('the store writes an exact pre-v2 backup before persisting upgraded state',async()=>{
+  const mem=memoryIO(),original=JSON.stringify(legacyState(),null,2)+'\n';mem.files.set('state.json',original);
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState);
+  const upgraded=await store.load();assert.equal(upgraded.schemaVersion,2);assert.equal(store.migrated,true);
+  assert.equal(mem.files.get('state.json.pre-v2.json'),original);
+  assert.deepEqual(mem.writes.slice(0,2),['state.json.pre-v2.json','state.json']);
+  assert.equal(JSON.parse(mem.files.get('state.json')!).schemaVersion,2);
+});
+
+test('a later migration does not overwrite a previous exact backup',async()=>{
+  const mem=memoryIO();mem.files.set('state.json',JSON.stringify(legacyState()));mem.files.set('state.json.pre-v2.json','previous original bytes');
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState);await store.load();
+  assert.equal(mem.files.get('state.json.pre-v2.json'),'previous original bytes');assert.deepEqual(mem.writes,['state.json']);
+});
+
+test('a failed pre-v2 backup prevents migration from replacing the old current file',async()=>{
+  const mem=memoryIO(),original=JSON.stringify(legacyState());mem.files.set('state.json',original);mem.fail('state.json.pre-v2.json');
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState);
+  await assert.rejects(store.load(),/Disk write failure/);assert.equal(mem.files.get('state.json'),original);
+});
+
+test('migration of an interrupted legacy rebuild pauses it for the new global proposal pipeline',()=>{
+  for(const status of ['running','paused']){
+    const old=legacyState();old.run={id:'run',kind:'rebuild',scope:'pilot',automatic:false,status,jobs:[{id:'job',paperId:'p',status:'completed'}],vocabCursor:25,vocabFinished:false,message:'Building old batches',spentUSD:0.5,settings:structuredClone(old.settings),vocabularyVersion:9};
+    const next=migrateState(old);assert.equal(next.run?.status,'paused');assert.equal(next.run?.vocabCursor,0);assert.equal(next.run?.jobs[0].status,'pending');
+    assert.equal(next.run?.settings.coreConceptLimit,60);assert.equal(next.run?.spentUSD,0.5);
+  }
 });

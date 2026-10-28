@@ -188,6 +188,40 @@ td .muted { display:block; font-size:11px; }
 .text-link { color:var(--accent); font-size:12px; }
 .batch-count { color:var(--ink); font-weight:600; }
 .section-gap { margin-top:24px; }
+.concept-full-name { margin-bottom:5px; color:var(--ink); font-weight:500; }
+.relationship-picker { padding:11px 0; border-top:1px solid var(--line); }
+.relationship-picker > summary,.proposal-details > summary { cursor:pointer; font-size:12px; font-weight:500; }
+.relationship-picker > input { margin:10px 0; }
+.concept-picker-list { display:flex; flex-direction:column; gap:10px; max-height:220px; overflow:auto; padding:5px 2px; }
+.concept-picker-list .check-label { font-size:12px; }
+.concept-picker-list .check-label span { overflow-wrap:anywhere; }
+.proposal-card { border-color:color-mix(in srgb,var(--accent) 28%,var(--line)); }
+.proposal-card > .card-header { background:var(--accent-soft); }
+.proposal-metrics { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:11px; }
+.proposal-details > .tag-list { max-height:620px; overflow:auto; padding-right:4px; }
+.proposal-details .tag-row { padding:13px; }
+.proposal-details .tag-row > .inline { align-items:flex-start; }
+.proposal-details .tag-row strong { font-size:13px; }
+.proposal-details .tag-row .muted { font-size:11px; }
+.concept-tree { border-top:1px solid var(--line); }
+.concept-tree-node,.concept-tree-branch { border-bottom:1px solid var(--line); }
+.concept-tree-branch > summary { display:flex; align-items:center; gap:8px; padding:9px 3px; cursor:pointer; font-size:13px; font-weight:500; }
+.concept-tree-branch > summary::before { content:'›'; width:12px; color:var(--muted); font-size:16px; line-height:1; }
+.concept-tree-branch[open] > summary::before { transform:rotate(90deg); }
+.concept-tree-branch > summary::-webkit-details-marker { display:none; }
+.branch-label { flex:1; min-width:0; overflow-wrap:anywhere; }
+.concept-count { margin-left:auto; color:var(--muted); font-size:11px; font-weight:400; font-variant-numeric:tabular-nums; }
+.concept-tree-row { display:flex; align-items:center; gap:8px; min-height:38px; padding:6px 3px; }
+.concept-tree-row .check-label { flex:1; min-width:0; font-size:12px; }
+.concept-tree-row .check-label span { overflow-wrap:anywhere; }
+.concept-tree-row > button { font-size:11px; }
+.concept-tree-children { margin:0 0 9px 13px; padding-left:13px; border-left:1px solid var(--line); }
+.concept-tree-children .concept-tree-node:last-child,.concept-tree-children .concept-tree-branch:last-child { border-bottom:0; }
+.context-caption { padding:10px 3px 4px; color:var(--muted); font-size:11px; }
+.detail-node { padding-left:4px; }
+.selected-concepts { display:flex; flex-wrap:wrap; gap:7px; margin-top:18px; }
+.selected-concept { display:flex; align-items:center; gap:7px; max-width:100%; padding:3px 3px 3px 9px; border:1px solid color-mix(in srgb,var(--accent) 25%,var(--line)); border-radius:4px; background:var(--accent-soft); font-size:12px; }
+.selected-concept > span { overflow-wrap:anywhere; }
 .busy-indicator { color:var(--muted); font-size:11px; }
 
 /* These HTML popups deliberately avoid Gecko's browser-chrome select popup. */

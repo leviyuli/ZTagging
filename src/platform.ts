@@ -1,5 +1,8 @@
 import type { PaperRecord } from './core.ts';
 import { paperFingerprint } from './core.ts';
+import type { TagDefinition } from './core.ts';
+import type { ConceptFilter } from './concept-filter.ts';
+import { buildConceptSearch } from './native-filter.ts';
 
 export interface NativeTag { tag: string; type: number }
 export interface TagPatch { paperId: string; itemID: number; before: NativeTag[]; after: NativeTag[] }
@@ -11,6 +14,7 @@ export interface LibraryHost {
   apply(patches: TagPatch[], label: string): Promise<void>;
   show(itemID: number): Promise<void>;
   saveSearch(name: string, tags: string[]): Promise<void>;
+  saveConceptSearch?(name:string,filter:ConceptFilter,definitions:TagDefinition[]):Promise<void>;
 }
 
 function stripHTML(value: string): string {
@@ -35,6 +39,7 @@ export class ZoteroHost implements LibraryHost {
     return this.personal(item) ? this.record(item) : null;
   }
   async list(scope: string) {
+    await Zotero.Libraries.get?.(Zotero.Libraries.userLibraryID)?.waitForDataLoad?.('item');
     const pane = Zotero.getActiveZoteroPane();
     let items: any[];
     if (scope === 'selected') items = pane?.getSelectedItems() || [];
@@ -107,6 +112,13 @@ export class ZoteroHost implements LibraryHost {
     search.addCondition('itemType','isNot','note');
     for (const tag of tags) search.addCondition('tag','is',tag);
     await search.saveTx();
+  }
+  async saveConceptSearch(name:string,filter:ConceptFilter,definitions:TagDefinition[]) {
+    if(!name.trim()||!filter.selections.length)throw new Error('Name the search and select at least one concept.');
+    const libraryID=Zotero.Libraries.userLibraryID;
+    const names=(await Zotero.Tags.getAll(libraryID)).map((tag:any)=>tag.tag);
+    const search=buildConceptSearch(definitions,filter,libraryID,names);
+    search.name=name.trim();await search.saveTx();
   }
 }
 

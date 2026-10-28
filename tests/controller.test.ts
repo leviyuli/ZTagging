@@ -54,7 +54,7 @@ class MemoryHost implements LibraryHost {
   async saveSearch(name:string,tags:string[]) {this.searches.push({name,tags:clone(tags)});}
 }
 
-type AIInput={approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[]};
+type AIInput={approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
 type AICall={input:AIInput;settings:ProviderSettings;prompt:string};
 type AIHandler=(call:AICall,index:number)=>unknown|Promise<unknown>;
 
@@ -65,9 +65,12 @@ function normalAnalysis(call:AICall) {
     suggestions:(call.input.approvedVocabulary??[]).map(tag=>({tagId:tag.id,reason:'The paper measures catalyst-layer transport resistance in a water electrolyzer.',confidence:'high',match:'substantive',evidence:[{source:p.abstract?'abstract':p.pdf?'pdf':'title',text:quote}]}))};
 }
 
+function normalFacts(call:AICall) {const p=call.input.paper!;return {summary:'Water electrolysis is studied.',concepts:[{name:'Water electrolysis',facet:'system',evidence:[{source:p.abstract?'abstract':p.pdf?'pdf':'title',text:p.abstract||p.pdf||p.title}]}],needsPDF:false};}
+function normalTaxonomy(call:AICall) {return {tags:[{key:'water',name:'Water electrolysis',fullName:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],parentKeys:[],relatedKeys:[],support:(call.input.facts??[]).map(f=>({paperId:f.paperId,conceptNames:['Water electrolysis']}))}],merges:[],excluded:[]};}
+
 class MockAI {
   calls:AICall[]=[];
-  handler:AIHandler=(call)=>call.input.papers?{tags:[{name:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],broaderNames:[]}]}:normalAnalysis(call);
+  handler:AIHandler=(call)=>call.input.facts?normalTaxonomy(call):call.input.approvedVocabulary?normalAnalysis(call):normalFacts(call);
   async completeJson(_instructions:string,prompt:string,settings:ProviderSettings,_signal?:AbortSignal):Promise<CompletionResult> {
     const marker='INPUT_DATA_JSON:\n',index=prompt.indexOf(marker);
     if(index<0)throw new Error('Test requires the real core prompt JSON');
@@ -89,7 +92,7 @@ class MockAI {
 
 function harness(options:{papers?:PaperRecord[];nativeTags?:Record<number,NativeTag[]>;approved?:boolean;state?:AppState;host?:MemoryHost;ai?:MockAI}={}) {
   const state=options.state??initialState(),host=options.host??new MemoryHost(options.papers??[fixturePaper()],options.nativeTags),ai=options.ai??new MockAI();
-  if(!options.state){state.settings.model='test-model';state.settings.inputPricePerMillion=1;state.settings.outputPricePerMillion=1;if(options.approved!==false){state.tags[0].status='approved';state.vocabularyVersion=1;}}
+  if(!options.state){state.settings.model='test-model';state.settings.inputPricePerMillion=1;state.settings.outputPricePerMillion=1;state.tags[0].matchingMode='auto';if(options.approved!==false){state.tags[0].status='approved';state.vocabularyVersion=1;}}
   const saves:AppState[]=[];
   const env:ControllerEnvironment={host,ai,persist:async value=>{saves.push(clone(value));}};
   const controller=new AppController(state,env);
@@ -110,10 +113,12 @@ test('complete workflow scans, drafts and approves vocabulary, reviews a pilot, 
   assert.equal(h.ai.calls.length,0);
   await run(h,'rebuild');
   assert.equal(h.state.run?.status,'idle');
-  assert.ok(h.state.tags.some(t=>t.name==='Water electrolysis'&&t.status==='draft'));
-  assert.ok(h.state.tags.every(t=>t.status==='draft'));
+  assert.equal(h.state.tags.length,1,'Discovery must not append staged core labels to the active vocabulary');
+  assert.ok(h.state.taxonomyProposal!.tags.some(t=>t.name==='Water electrolysis'&&t.status==='draft'));
+  assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
   assert.equal(h.host.applied.length,0);
-  await h.controller.invoke('approve-vocabulary',{ids:h.state.tags.map(t=>t.id)});
+  await h.controller.invoke('approve-taxonomy',{id:h.state.taxonomyProposal!.id});
+  await h.controller.invoke('approve-vocabulary',{ids:['custom-rcl']});
   assert.ok(h.state.tags.every(t=>t.status==='approved'));
   await run(h,'tag','pilot');
   assert.equal(h.state.suggestions.length,4);
@@ -381,7 +386,7 @@ test('automatic assignment requires a reviewed pilot and is disabled when vocabu
   await h.controller.onItemChanged(2);await h.controller.waitForIdle();
   assert.ok((await h.host.readTags(2)).some(t=>t.tag==='RCL'));
   assert.equal(h.state.history[0].label,'Automatic tag assignments');
-  await h.controller.invoke('save-tag',{tag:{...clone(h.state.tags[0]),description:'An updated resistance definition.'}});
+  await h.controller.invoke('save-tag',{tag:{...clone(h.state.tags[0]),custom:false,description:'An updated core resistance definition.'}});
   assert.equal(h.state.settings.autoAssign,false);
   const calls=h.ai.calls.length;h.host.add(fixturePaper(3));await h.controller.onItemChanged(3);await h.controller.waitForIdle();
   assert.equal(h.ai.calls.length,calls);assert.deepEqual(await h.host.readTags(3),[]);
@@ -423,24 +428,25 @@ test('startup pauses an interrupted run and resume skips its completed jobs',asy
   assert.equal(restarted.ai.calls.filter(call=>call.input.paper?.title.endsWith('1')).length,1);
 });
 
-test('vocabulary rebuild resumes from the committed discovery cursor without replaying completed batches',async()=>{
+test('global consolidation retries without replaying cached facts or publishing partial vocabulary batches',async()=>{
   const h=harness({papers:Array.from({length:26},(_,i)=>fixturePaper(i+1))});
   const batchSizes:number[]=[];let failed=false;
   h.ai.handler=call=>{
-    if(!call.input.papers)return normalAnalysis(call);
-    batchSizes.push(call.input.papers.length);
-    if(batchSizes.length===2&&!failed){failed=true;throw new Error('Vocabulary quota interruption');}
-    return {tags:[{name:'Water electrolysis',description:'Electrochemical splitting of water.',facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],broaderNames:[]}]};
+    if(!call.input.facts)return normalFacts(call);
+    batchSizes.push(call.input.facts.length);
+    if(!failed){failed=true;throw new Error('Vocabulary quota interruption');}
+    return normalTaxonomy(call);
   };
   await run(h,'rebuild');
-  assert.equal(h.state.run?.status,'paused');assert.equal(h.state.run?.vocabCursor,25);
+  assert.equal(h.state.run?.status,'paused');assert.equal(h.state.run?.vocabCursor,0);
   assert.equal(h.ai.calls.filter(call=>call.input.paper).length,26);
-  assert.ok(h.state.tags.some(tag=>tag.name==='Water electrolysis'));
+  assert.ok(!h.state.tags.some(tag=>tag.name==='Water electrolysis'));assert.equal(h.state.taxonomyProposal,null);
   await h.controller.invoke('resume');await h.controller.waitForIdle();
   assert.equal(h.state.run?.status,'idle');
-  assert.deepEqual(batchSizes,[25,1,1]);
+  assert.deepEqual(batchSizes,[26,26]);
   assert.equal(h.ai.calls.filter(call=>call.input.paper).length,26);
-  assert.equal(h.state.tags.filter(tag=>tag.name==='Water electrolysis').length,1);
+  assert.equal(h.state.tags.filter(tag=>tag.name==='Water electrolysis').length,0);
+  assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>tag.name==='Water electrolysis').length,1);
 });
 
 test('a high-confidence incidental match remains in review during automatic assignment',async()=>{
@@ -486,16 +492,16 @@ test('concurrent automatic and manual commits preserve ownership for both papers
   }
 });
 
-test('renaming an owned tag retains its alias and requires reviewed cleanup before ownership moves',async()=>{
+test('renaming an owned tag recognizes its existing alias without duplicating it before reviewed cleanup',async()=>{
   const h=harness();await run(h);await acceptAll(h);await applyAccepted(h);
   const stableId=h.state.tags[0].id,newName='Catalyst-layer resistance';
   await h.controller.invoke('save-tag',{tag:{...clone(h.state.tags[0]),name:newName}});
   const renamed=h.state.tags.find(tag=>tag.id===stableId)!;
   assert.ok(renamed.aliases.includes('RCL'));
-  assert.equal(renamed.status,'draft');
+  assert.equal(renamed.status,'approved');
   await h.controller.invoke('approve-vocabulary',{ids:[stableId]});
   await run(h);await acceptAll(h);
-  await assert.rejects(applyAccepted(h),/cleanup/i);
+  await applyAccepted(h);
   assert.deepEqual(await h.host.readTags(1),[{tag:'RCL',type:0}]);
   assert.equal(h.state.ownership['1:KEY1'][stableId].name,'RCL');
   await h.controller.invoke('preview-cleanup');

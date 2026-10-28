@@ -1,0 +1,43 @@
+/* Plugin-owned content only. Native React roots and pane width remain intact. */
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #zotero-toolbar-collection-tree,
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #zotero-collections-tree-container,
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #zotero-collections-tree-shim,
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #zotero-tags-splitter,
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #zotero-tag-selector-container { display: none !important; }
+#smart-tags-navigator { color: var(--fill-primary, CanvasText); font: 12px/1.45 system-ui, sans-serif; min-height: 0; display: flex; flex-direction: column; }
+#zotero-collections-pane[data-smart-tags-mode="tags"] > #smart-tags-navigator { flex: 1; overflow: hidden; }
+#smart-tags-navigator *, #smart-tags-navigator *::before, #smart-tags-navigator *::after { box-sizing: border-box; }
+#smart-tags-navigator [hidden] { display: none !important; }
+#smart-tags-navigator button { font: inherit; color: inherit; border: 0; border-radius: 5px; background: transparent; cursor: pointer; min-height: 26px; padding: 3px 7px; text-align: left; }
+#smart-tags-navigator button:hover { background: var(--material-button-hover, color-mix(in srgb, CanvasText 8%, transparent)); }
+#smart-tags-navigator button:focus-visible, #smart-tags-navigator input:focus-visible { outline: 2px solid var(--color-accent, #3373c4); outline-offset: -2px; }
+#smart-tags-navigator button:disabled { cursor: default; opacity: .4; }
+.smart-tags-tabs { display: flex; gap: 3px; padding: 7px 8px; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); flex: 0 0 auto; }
+#smart-tags-navigator .smart-tags-tabs button { text-align: center; flex: 1; }
+#smart-tags-navigator .is-active { background: color-mix(in srgb, CanvasText 9%, transparent); font-weight: 600; }
+.smart-tags-status { padding: 8px 10px; font-size: 11px; color: var(--color-orange, #a46420); }
+.smart-tags-content { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 8px 6px 0; }
+.smart-tags-search { width: 100%; margin: 0 0 7px; padding: 6px 8px; border-radius: 5px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); color: inherit; background: color-mix(in srgb, Canvas 85%, transparent); font: inherit; }
+.smart-tags-tools { display: flex; align-items: center; gap: 2px; margin-bottom: 7px; }
+.smart-tags-combine-label { padding: 0 5px; opacity: .6; font-size: 11px; }
+.smart-tags-result-count { margin-left: auto; padding-right: 5px; font-size: 11px; opacity: .6; white-space: nowrap; }
+.smart-tags-filter-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 3px 8px; }
+#smart-tags-navigator .smart-tags-filter-chip { font-size: 10px; min-height: 23px; padding: 2px 6px; background: color-mix(in srgb, #4c83c6 16%, transparent); }
+#smart-tags-navigator .smart-tags-clear { font-size: 10px; text-decoration: underline; min-height: 23px; }
+.smart-tags-tree { overflow-y: auto; overflow-x: hidden; min-height: 80px; flex: 1; padding-bottom: 12px; }
+.smart-tags-category { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; opacity: .6; font-weight: 600; margin: 12px 7px 4px; }
+#smart-tags-navigator .smart-tags-detail-heading { display: block; width: calc(100% - 8px); padding-left: 0; margin-left: 5px; min-height: 23px; }
+.smart-tags-concept-row { display: flex; align-items: center; padding-left: calc(var(--smart-tags-depth, 0) * 13px); min-height: 27px; }
+#smart-tags-navigator .smart-tags-expander { flex: 0 0 19px; width: 19px; padding: 1px; text-align: center; opacity: .65; font-size: 16px; }
+#smart-tags-navigator .smart-tags-concept-select { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; padding: 3px 6px 3px 2px; }
+#smart-tags-navigator .smart-tags-concept-select.is-selected { background: color-mix(in srgb, #4c83c6 16%, transparent); }
+.smart-tags-check { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; flex: 0 0 12px; border: 1px solid color-mix(in srgb, CanvasText 32%, transparent); border-radius: 3px; font-size: 10px; }
+.is-selected > .smart-tags-check { background: var(--color-accent, #3373c4); color: white; border-color: var(--color-accent, #3373c4); }
+.smart-tags-concept-name { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; min-width: 0; }
+.smart-tags-count { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 10px; opacity: .5; padding-left: 4px; }
+.smart-tags-location { font-size: 10px; opacity: .5; padding: 0 8px 7px 22px; overflow-wrap: anywhere; }
+.smart-tags-empty { padding: 8px; opacity: .65; font-size: 11px; }
+.smart-tags-actions { border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); padding: 7px 2px; display: flex; flex-direction: column; flex: 0 0 auto; }
+#smart-tags-navigator .smart-tags-actions button { font-size: 11px; }
+.smart-tags-detail-title { margin: 6px 7px 2px; font-size: 10px; font-weight: 600; opacity: .65; }
+#smart-tags-navigator .smart-tags-manage { opacity: .6; margin-top: 4px; }

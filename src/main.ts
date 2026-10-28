@@ -1,19 +1,13 @@
-import { AppController, initialState, validState } from './controller.ts';
+import { AppController, initialState, validState, migrateState } from './controller.ts';
 import type { AppState } from './controller.ts';
 import { ZoteroHost, SecureCredentials, registerOAuthCallback, chooseJSONFile } from './platform.ts';
 import { ProviderClient } from './providers.ts';
 import { AtomicStore } from './store.ts';
 import { mountManager } from './ui.ts';
+import type { ManagerUIOptions } from './ui.ts';
+import { mountNavigator } from './navigator.ts';
 
 type StartupData = { id: string; version: string; rootURI: string };
-type SectionProps = {
-  body: HTMLElement;
-  doc?: Document;
-  item?: any;
-  refresh?: () => Promise<void>;
-  setEnabled?: (enabled: boolean) => void;
-  setSectionSummary?: (summary: string) => void;
-};
 
 const HTML = 'http://www.w3.org/1999/xhtml';
 const LOCALE = 'smart-tags.ftl';
@@ -27,13 +21,13 @@ let managerWindow: Window | null = null;
 let managerUI: ReturnType<typeof mountManager> | null = null;
 let managerReadinessCleanup: (() => void) | null = null;
 let notifierID: string | number | null = null;
-let sectionID: string | null = null;
 let startupData: StartupData | null = null;
-let unsubscribe: (() => void) | null = null;
 let stopping = false;
 const menuIDs: string[] = [];
 const mainWindows = new Set<any>();
-const sectionRefreshers = new Map<HTMLElement, () => Promise<void>>();
+const navigators = new Map<any,ReturnType<typeof mountNavigator>>();
+const navigatorTimers = new Map<any,ReturnType<typeof setTimeout>>();
+let libraryCache:Promise<{papers:import('./core.ts').PaperRecord[];nativeTags:Record<string,import('./platform.ts').NativeTag[]>}>|null=null;
 const itemTimers = new Map<number, { timer: ReturnType<typeof setTimeout>; attachment: boolean }>();
 
 function logError(error: unknown) {
@@ -54,13 +48,6 @@ function personal(item: any) {
 
 function mainWindowList(): any[] {
   return typeof Zotero.getMainWindows === 'function' ? Zotero.getMainWindows() : [Zotero.getMainWindow()].filter(Boolean);
-}
-
-function refreshSections() {
-  for (const [body, refresh] of sectionRefreshers) {
-    if (!body.isConnected) { sectionRefreshers.delete(body); continue; }
-    void Promise.resolve().then(refresh).catch(logError);
-  }
 }
 
 async function importVocabulary() {
@@ -120,87 +107,6 @@ function registerMenus(data: StartupData) {
   }]);
 }
 
-function renderSection(props: SectionProps) {
-  const { body, item } = props;
-  const app = controller;
-  const doc = body.ownerDocument;
-  const element = <K extends keyof HTMLElementTagNameMap>(name: K, text?: string): HTMLElementTagNameMap[K] => {
-    const node = doc.createElementNS(HTML, name) as HTMLElementTagNameMap[K];
-    if (text !== undefined) node.textContent = text;
-    return node;
-  };
-  body.replaceChildren();
-  body.style.cssText = 'display:block;padding:10px 12px;font:12px/1.5 system-ui,sans-serif;';
-  if (!app || !personal(item)) {
-    props.setEnabled?.(false);
-    return;
-  }
-  const paperId = `${item.libraryID}:${item.key}`;
-  const suggestions = app.state.suggestions.filter(suggestion => suggestion.paperId === paperId && suggestion.status !== 'rejected');
-  const pending = suggestions.filter(suggestion => !suggestion.applied);
-  props.setSectionSummary?.(`${pending.length} suggestions`);
-  const managerButton = element('button', 'Open Smart Tags');
-  managerButton.type = 'button';
-  managerButton.style.cssText = 'margin:2px 0 12px;padding:5px 9px;cursor:pointer;';
-  managerButton.addEventListener('click', () => { void openManager().catch(actionError); });
-  body.append(managerButton);
-  if (!suggestions.length) {
-    const help = element('p', 'Analyze this paper against your approved vocabulary to see evidence-backed tag suggestions.');
-    help.style.cssText = 'margin:0;color:var(--fill-secondary,#6b7280);';
-    body.append(help);
-    return;
-  }
-  for (const suggestion of suggestions.slice(0, 8)) {
-    const tag = app.state.tags.find(definition => definition.id === suggestion.tagId);
-    const section = element('div');
-    section.style.cssText = 'padding:10px 0;border-top:1px solid var(--material-border,#d7dce3);';
-    const name = element('strong', `${suggestion.operation === 'remove' ? 'Remove: ' : ''}${tag?.name || suggestion.tagId}`);
-    section.append(name, element('span', ` · ${suggestion.applied ? 'applied' : suggestion.status === 'accepted' ? 'accepted' : suggestion.confidence + ' confidence'}`));
-    const reason = element('p', suggestion.reason);
-    reason.style.cssText = 'margin:5px 0;';
-    section.append(reason);
-    for (const evidence of suggestion.evidence.slice(0, 2)) {
-      const quote = element('blockquote', evidence.text);
-      quote.style.cssText = 'margin:6px 0;padding:5px 8px;border-left:2px solid #8ea3c4;color:var(--fill-secondary,#6b7280);overflow-wrap:anywhere;';
-      quote.title = `Evidence: ${evidence.source}`;
-      section.append(quote);
-    }
-    if (!suggestion.applied) {
-      const actions = element('div');
-      actions.style.cssText = 'display:flex;gap:7px;margin-top:7px;';
-      for (const [label, action] of [['Accept', 'accept-suggestion'], ['Reject', 'reject-suggestion']]) {
-        if (label === 'Accept' && suggestion.status === 'accepted') continue;
-        const button = element('button', label);
-        button.type = 'button';
-        button.style.cssText = 'padding:3px 8px;cursor:pointer;';
-        button.addEventListener('click', () => {
-          button.disabled = true;
-          void app.invoke(action, { id: suggestion.id }).catch(actionError).finally(() => { if (button.isConnected) button.disabled = false; });
-        });
-        actions.append(button);
-      }
-      section.append(actions);
-    }
-    body.append(section);
-  }
-  if (suggestions.length > 8) body.append(element('p', `Open Smart Tags to see all ${suggestions.length} suggestions and apply reviewed changes.`));
-  else if (pending.some(suggestion => suggestion.status === 'accepted')) body.append(element('p', 'Apply accepted changes from Review in Smart Tags.'));
-}
-
-function registerSection(data: StartupData) {
-  const registered = Zotero.ItemPaneManager.registerSection({
-    paneID: 'smart-tags-suggestions', pluginID: data.id,
-    header: { l10nID: 'smart-tags-section', icon: data.rootURI + 'content/icon.svg' },
-    sidenav: { l10nID: 'smart-tags-section', icon: data.rootURI + 'content/icon.svg' },
-    onInit: (props: SectionProps) => { if (props.refresh) sectionRefreshers.set(props.body, props.refresh); },
-    onDestroy: (props: SectionProps) => { sectionRefreshers.delete(props.body); },
-    onItemChange: (props: SectionProps) => { props.setEnabled?.(personal(props.item)); },
-    onRender: renderSection,
-  });
-  if (!registered) throw new Error('Could not register the Smart Tags item-pane section.');
-  sectionID = registered;
-}
-
 function scheduleItem(itemID: number, attachment: boolean) {
   if (stopping || !controller || !host || host.mutating.has(itemID)) return;
   const prior = itemTimers.get(itemID);
@@ -219,6 +125,7 @@ function scheduleItem(itemID: number, attachment: boolean) {
 }
 
 async function notifyItems(event: string, type: string, ids: (number | string)[]) {
+  libraryCache=null;
   if (stopping || !controller || !host) return;
   if (!['add', 'modify', 'remove', 'delete', 'trash', 'refresh'].includes(event)) return;
   const itemIDs = new Set<number>();
@@ -250,7 +157,7 @@ export async function startup(data: StartupData) {
     read: path => IOUtils.readUTF8(path),
     exists: path => IOUtils.exists(path),
     writeAtomic: (path, text) => IOUtils.writeUTF8(path, text, { tmpPath: `${path}.tmp` }),
-  }, PathUtils.join(directory, 'state.json'), initialState, validState);
+  }, PathUtils.join(directory, 'state.json'), initialState, validState, migrateState);
   const loaded = await store.load();
   if (store.recovered) loaded.warnings.push('Smart Tags restored its previous valid state from the local backup.');
   credentials = new SecureCredentials();
@@ -275,25 +182,24 @@ export async function startup(data: StartupData) {
   controller = new AppController(loaded, {
     host, ai, persist: state => stateStore.save(state), importFile: importVocabulary, exportFile: exportVocabulary,
     credentialStatus: () => secure.sessionOnly ? 'Session only · OS credential encryption unavailable' : 'Encrypted with the operating-system keystore',
+    librarySnapshot:()=>libraryCache??=(async()=>{const papers=await host!.list('library');const nativeTags:Record<string,import('./platform.ts').NativeTag[]>={};for(const paper of papers)nativeTags[paper.id]=await host!.readTags(paper.itemID);return {papers,nativeTags};})(),
   });
   try {
     await controller.initialize();
     Zotero.ftl.addResourceIds([LOCALE]);
     for (const win of mainWindowList()) onMainWindowLoad(win);
     registerMenus(data);
-    registerSection(data);
-    unsubscribe = controller.subscribe(refreshSections);
     notifierID = Zotero.Notifier.registerObserver({ notify: notifyItems }, ['item', 'item-tag'], 'smart-tags', 50);
-    Zotero.SmartTags = { openManager, controller, version: data.version, stateDirectory: directory };
+    Zotero.SmartTags = { openManager, controller, getNavigator:(win:any)=>navigators.get(win), version: data.version, stateDirectory: directory };
   } catch (error) {
     await shutdown().catch(logError);
     throw error;
   }
 }
 
-export async function openManager(): Promise<Window | null> {
+export async function openManager(options:ManagerUIOptions={}): Promise<Window | null> {
   if (!controller || stopping) throw new Error('Smart Tags is not ready yet.');
-  if (managerWindow && !managerWindow.closed) { managerWindow.focus(); return managerWindow; }
+  if (managerWindow && !managerWindow.closed) { managerUI?.navigate?.(options);managerWindow.focus(); return managerWindow; }
   const main = Zotero.getMainWindow();
   if (!main) throw new Error('Open Zotero’s library window before opening Smart Tags.');
   let initialWindow: Window | null = null;
@@ -353,7 +259,7 @@ export async function openManager(): Promise<Window | null> {
       cleanupReadiness();
       app.setAttribute('data-smart-tags-state', 'mounting');
       diagnostic('mount begin');
-      managerUI = mountManager(target, controller);
+      managerUI = mountManager(target, controller,options);
       diagnostic('mount attached; awaiting local snapshot');
     } catch (error) {
       if (!foundApp && !finalWindow) { diagnostic('initial window unavailable; waiting for final document loader'); return; }
@@ -409,12 +315,22 @@ export function onMainWindowLoad(win: any) {
     if (win.MozXULElement?.insertFTLIfNeeded) win.MozXULElement.insertFTLIfNeeded(LOCALE);
     else if (win.document?.l10n) win.document.l10n.addResourceIds([LOCALE]);
   } catch (error) { logError(error); }
+  const mount=(attempt=0)=>{
+    navigatorTimers.delete(win);if(!controller||stopping||!mainWindows.has(win)||win.closed)return;
+    if(win.document?.getElementById?.('zotero-collections-pane')&&(!win.ZoteroPane?.itemsView||!win.ZoteroPane?.collectionsView)&&attempt<200){navigatorTimers.set(win,setTimeout(()=>mount(attempt+1),100));return;}
+    try {navigators.set(win,mountNavigator(win,controller,{
+    openManager:()=>{void openManager({page:'library'}).catch(actionError);},
+    onCreateDetail:contextId=>{void openManager({page:'vocabulary',createDetail:true,detailContextId:contextId}).catch(actionError);},
+    onEditTag:tagId=>{void openManager({page:'vocabulary',tagId}).catch(actionError);},
+    }));}catch(error){logError(error);}
+  };mount();
 }
 
 export function onMainWindowUnload(win: any) {
   if (!win) return;
   mainWindows.delete(win);
-  for (const body of sectionRefreshers.keys()) if (body.ownerDocument.defaultView === win) sectionRefreshers.delete(body);
+  if(navigatorTimers.has(win)){clearTimeout(navigatorTimers.get(win)!);navigatorTimers.delete(win);}
+  const navigator=navigators.get(win);navigators.delete(win);if(navigator)void navigator.destroy().catch(logError);
   try {
     for (const link of win.document?.querySelectorAll(`link[rel="localization"][href="${LOCALE}"]`) || []) link.remove();
     win.document?.l10n?.removeResourceIds([LOCALE]);
@@ -423,16 +339,15 @@ export function onMainWindowUnload(win: any) {
 
 export async function shutdown() {
   stopping = true;
+  for(const timer of navigatorTimers.values())clearTimeout(timer);navigatorTimers.clear();
   for (const { timer } of itemTimers.values()) clearTimeout(timer);
   itemTimers.clear();
   if (notifierID !== null) { try { Zotero.Notifier.unregisterObserver(notifierID); } catch (error) { logError(error); } notifierID = null; }
-  unsubscribe?.(); unsubscribe = null;
   managerReadinessCleanup?.(); managerReadinessCleanup = null;
   managerUI?.destroy(); managerUI = null;
   if (managerWindow && !managerWindow.closed) managerWindow.close();
   managerWindow = null;
-  if (sectionID) { try { Zotero.ItemPaneManager.unregisterSection(sectionID); } catch (error) { logError(error); } sectionID = null; }
-  sectionRefreshers.clear();
+  await Promise.allSettled([...navigators.values()].map(navigator=>navigator.destroy()));navigators.clear();libraryCache=null;
   for (const id of menuIDs.splice(0)) { try { Zotero.MenuManager.unregisterMenu(id); } catch (error) { logError(error); } }
   for (const win of [...mainWindows]) onMainWindowUnload(win);
   try { Zotero.ftl.removeResourceIds([LOCALE]); } catch (error) { logError(error); }
