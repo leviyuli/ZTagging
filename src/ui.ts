@@ -50,7 +50,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   let editorTag: DisplayTag | null = null;
   let settingsDraft: ManagerSettings | null = null;
   let settingsDirty = false;
-  let apiKeyDraft = '';
+  const apiKeyDrafts: Record<'api' | 'deepseek', string> = { api: '', deepseek: '' };
   let searchName = '';
   let modal: ModalState = null;
   const selectedSuggestions = new Set<string>();
@@ -217,7 +217,12 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
   }
   function canAnalyze() {
     const s = currentState();
-    return !!s.settings.model && (s.settings.provider === 'api' ? s.connection.apiKeyStored : s.connection.chatgptSignedIn);
+    return !!s.settings.model && connectionReady(s);
+  }
+  function connectionReady(snapshot: ManagerSnapshot) {
+    if (snapshot.settings.provider === 'api') return snapshot.connection.apiKeyStored;
+    if (snapshot.settings.provider === 'deepseek') return snapshot.connection.deepseekKeyStored === true;
+    return snapshot.connection.chatgptSignedIn;
   }
   function runControls() {
     const s = currentState();
@@ -250,7 +255,7 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     }
     const steps = h('ol', 'step-list');
     [
-      ['Connect an AI model', 'Use your eligible ChatGPT plan or a separately billed OpenAI API key.'],
+      ['Connect an AI model', 'Use your eligible ChatGPT plan or a separately billed OpenAI or DeepSeek API key.'],
       ['Build a vocabulary', 'Start with 50 papers. Review names, definitions, aliases, and coverage.'],
       ['Review paper suggestions', 'Inspect evidence, accept useful tags, and reject unwanted matches.'],
       ['Enable routine assignment', 'Approve the pilot first. New papers can then use the same vocabulary.'],
@@ -440,9 +445,10 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     const s = currentState();
     const q = s.queue;
     const number = (value?: number) => value === undefined ? '—' : `$${value.toFixed(4)}`;
+    const runProvider = q.provider || s.settings.provider;
     const progress = h('div', '', h('div', 'inline between', badge(q.status, q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} completed · ${q.failed} need attention · ${q.total} total`)), q.message ? h('p', 'card-description', q.message) : null,
       h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
-      h('p', 'card-description', s.settings.provider === 'api' ? `Recorded API cost: ${number(q.spentUSD)} · metadata-only estimate (lower bound): ${number(q.estimatedUSD)}. PDF follow-ups and vocabulary synthesis can add requests; each request is checked against the remaining budget.` : 'This connection uses your ChatGPT plan allowance. A plan limit pauses work; it does not switch to paid API usage.'));
+      h('p', 'card-description', runProvider !== 'chatgpt' ? `Estimated API cost: ${number(q.spentUSD)} · metadata-only estimate (lower bound): ${number(q.estimatedUSD)}. PDF follow-ups and vocabulary synthesis can add requests; each request is checked against the remaining budget.` : `${(q.spentUSD ?? 0) > 0 ? `Estimated API cost before switching: ${number(q.spentUSD)}. ` : ''}This run uses your ChatGPT plan allowance. A plan limit pauses work; it does not switch to paid API usage.`));
     const jobs = h('div', '');
     if (!q.jobs?.length) jobs.append(empty('No queued work', 'Start an analysis from Overview. Completed results are cached for later runs.'));
     else {
@@ -471,8 +477,18 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     const draft = settingsDraft || { ...s.settings };
     settingsDraft = draft;
     const mark = <K extends keyof ManagerSettings>(key: K, value: ManagerSettings[K]) => { draft[key] = value; settingsDirty = true; };
+    const providerName = draft.provider === 'deepseek' ? 'DeepSeek' : draft.provider === 'api' ? 'OpenAI' : 'ChatGPT';
+    const availableModels = draft.provider === s.settings.provider ? s.models : [];
     const connection = h('div', '',
-      field('AI connection', select('settings-provider', draft.provider, [['chatgpt', 'ChatGPT plan · Continue with ChatGPT'], ['api', 'OpenAI API key · separately billed']], value => { mark('provider', value); render(); }), 'Connection changes take effect when you save settings. There is no automatic paid fallback.'));
+      field('AI connection', select('settings-provider', draft.provider, [['chatgpt', 'ChatGPT plan · Continue with ChatGPT'], ['api', 'OpenAI API key · separately billed'], ['deepseek', 'DeepSeek API key · separately billed']], value => {
+        if (value === draft.provider) return;
+        mark('provider', value);
+        mark('model', '');
+        mark('inputPricePerMillion', 0);
+        mark('outputPricePerMillion', 0);
+        render();
+      }), 'Connection changes take effect when you save settings. There is no automatic paid fallback.'));
+    connection.append(h('p', 'card-description', `Analysis sends selected paper metadata and, when needed, PDF text to ${providerName}.`));
     if (draft.provider === 'chatgpt') {
       connection.append(h('div', 'notice', h('strong', '', s.connection.chatgptSignedIn ? s.connection.accountLabel || 'ChatGPT account connected' : 'Use an eligible ChatGPT plan'), h('p', '', 'Sign-in requests permission to use your plan for AI analysis. Availability and limits depend on your account.')),
         h('div', 'actions', button('Continue with ChatGPT', async () => {
@@ -483,25 +499,27 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
         }, 'primary'), button('Sign out', () => run('sign-out', undefined, 'ChatGPT account disconnected.'), '', !s.connection.chatgptSignedIn)));
       if (s.connection.accounts && s.connection.accounts.length > 1) connection.append(h('div', 'section-gap', field('ChatGPT account', select('settings-chatgpt-account', s.connection.selectedAccountId || s.connection.accounts[0].id, s.connection.accounts.map(account => [account.id, account.label]), value => { void run('select-account', { id: value }, 'ChatGPT account selected.').catch(showError); }))));
     } else {
-      const secret = input('settings-api-key', apiKeyDraft, value => { apiKeyDraft = value; }, s.connection.apiKeyStored ? 'A key is saved. Enter a new key to replace it.' : 'Paste your OpenAI API key', 'password');
+      const keyProvider = draft.provider;
+      const hasKey = keyProvider === 'deepseek' ? s.connection.deepseekKeyStored === true : s.connection.apiKeyStored;
+      const secret = input(keyProvider === 'deepseek' ? 'settings-deepseek-key' : 'settings-api-key', apiKeyDrafts[keyProvider], value => { apiKeyDrafts[keyProvider] = value; }, hasKey ? `A ${providerName} key is saved. Enter a new key to replace it.` : `Paste your ${providerName} API key`, 'password');
       secret.autocomplete = 'off';
       secret.setAttribute('spellcheck', 'false');
-      connection.append(field('API key', secret, 'Saved credentials are encrypted. Keys never appear in library exports or manager snapshots.'), h('div', 'actions', button('Save API key', async () => {
-        const key = apiKeyDraft.trim();
-        if (!key) throw new Error('Enter an API key first.');
-        await run('save-api-key', { key }, 'API key saved.');
-        apiKeyDraft = '';
+      connection.append(field(`${providerName} API key`, secret, 'Each provider’s key is saved separately and encrypted. Keys never appear in library exports or manager snapshots.'), h('div', 'actions', button(`Save ${providerName} key`, async () => {
+        const key = apiKeyDrafts[keyProvider].trim();
+        if (!key) throw new Error(`Enter a ${providerName} API key first.`);
+        await run('save-api-key', { key, provider: keyProvider }, `${providerName} API key saved.`);
+        apiKeyDrafts[keyProvider] = '';
         render();
-      }, 'primary'), button('Remove key', () => run('remove-api-key', undefined, 'Saved API key removed.'), 'danger', !s.connection.apiKeyStored)));
+      }, 'primary'), button(`Remove ${providerName} key`, () => run('remove-api-key', { provider: keyProvider }, `Saved ${providerName} API key removed.`), 'danger', !hasKey)));
     }
-    const modelInput = input('settings-model', draft.model, value => { mark('model', value); render(); }, 'Choose a model available to this connection');
+    const modelInput = input('settings-model', draft.model, value => { mark('model', value); render(); }, `Enter a model ID available through ${providerName}`);
     connection.append(h('div', 'divider'), field('Model', modelInput, 'Enter a model ID or choose from discovered models below.'));
-    if (s.models.length) connection.append(field('Discovered models', select('settings-discovered-model', s.models.includes(draft.model) ? draft.model : '', [
-      ...(!s.models.includes(draft.model) ? [['', 'Choose a discovered model'] as [string, string]] : []),
-      ...s.models.map(model => [model, model] as [string, string]),
+    if (availableModels.length) connection.append(field('Discovered models', select('settings-discovered-model', availableModels.includes(draft.model) ? draft.model : '', [
+      ...(!availableModels.includes(draft.model) ? [['', 'Choose a discovered model'] as [string, string]] : []),
+      ...availableModels.map(model => [model, model] as [string, string]),
     ], value => { if (value) { mark('model', value); render(); } })));
     connection.append(
-      h('div', 'actions', button('Discover models', async () => { await saveSettings(); await run('discover-models', undefined, 'Available model list updated.'); }), button('Test connection', async () => { await saveSettings(); await run('test-connection', undefined, 'Connection test succeeded.'); }, 'primary', !draft.model.trim())),
+      h('div', 'actions', button('Discover models', async () => { await saveSettings(); await run('discover-models', undefined, `${providerName} model list updated.`); }), button('Test connection', async () => { await saveSettings(); await run('test-connection', undefined, `${providerName} connection test succeeded.`); }, 'primary', !draft.model.trim())),
       h('p', 'card-description', 'Testing sends a small AI request through the selected connection.'));
     if (s.connection.credentialStorage) connection.append(h('p', 'card-description', `Credential storage: ${s.connection.credentialStorage}`));
     const numberField = (key: 'budgetUSD' | 'inputPricePerMillion' | 'outputPricePerMillion' | 'maxOutputTokens', label: string, note: string, step: string) => {
@@ -510,18 +528,18 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       return field(label, control, note);
     };
     const budgets = h('div', '',
-      h('div', 'notice', 'Budget controls apply to API-key usage. Set the published model rates before analysis; estimates use those rates. Model discovery is available while rates are unset.'),
+      h('div', 'notice', 'Budget controls apply to the selected API provider. Set its published model rates before analysis; cost estimates use those rates. Model discovery is available while rates are unset.'),
       h('div', 'section-gap', numberField('budgetUSD', 'Per-run API budget · USD', 'The queue pauses before dispatching requests that would exceed its remaining estimate.', '0.01')),
       h('div', 'field-grid', numberField('inputPricePerMillion', 'Input · USD / million tokens', 'Use the standard input rate.', '0.001'), numberField('outputPricePerMillion', 'Output · USD / million tokens', 'Use the standard output rate.', '0.001')),
       h('div', 'section-gap', numberField('maxOutputTokens', 'API output-token limit', 'This request limit is used for API-key requests.', '1')));
     const automatic = h('div', '', checkbox('settings-auto-assign', draft.autoAssign, 'Automatically assign supported tags when a new paper is added', value => mark('autoAssign', value), !s.pilotReviewed),
       h('p', 'card-description', s.pilotReviewed ? 'Only approved definitions and evidence-backed eligible matches are used. Ambiguous matches remain in Review.' : 'Complete and mark your pilot review on Overview to enable automatic assignment.'),
       h('p', 'card-description', 'Manual removals, rejected matches, and locked assignments are remembered. Existing collections and workflow labels remain under your control.'));
-    return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card('API budget', 'Model rates are configurable rather than assumed.', budgets)), card('Automatic assignment', 'Use the approved vocabulary for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')));
+    return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Automatic assignment', 'Use the approved vocabulary for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')));
   }
   async function saveSettings() {
     if (!settingsDraft) return;
-    if (settingsDraft.provider === 'api' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
+    if (settingsDraft.provider !== 'chatgpt' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
     const result = await run('save-settings', { settings: { ...settingsDraft } }, 'Settings saved.');
     settingsDirty = false;
     settingsDraft = { ...currentState().settings };
@@ -612,8 +630,9 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
       if (page === target) navButton.setAttribute('aria-current', 'page');
       (target === 'activity' || target === 'settings' ? utilities : navigation).append(navButton);
     }
-    const connected = s.settings.provider === 'api' ? s.connection.apiKeyStored : s.connection.chatgptSignedIn;
-    sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workspace'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected' : 'Connection needed'), h('p', '', `Vocabulary v${s.vocabularyVersion} · Stored locally`)));
+    const connected = connectionReady(s);
+    const connectionLabel = s.settings.provider === 'deepseek' ? 'DeepSeek API connected' : s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected';
+    sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workspace'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', `Vocabulary v${s.vocabularyVersion} · Stored locally`)));
     const home = button('Personal library', () => nav('overview'), 'breadcrumb-home');
     home.id = 'workspace-home';
     home.disabled = false;
@@ -684,7 +703,8 @@ export function mountManager(win: Window, api: ManagerAPI): { refresh: () => Pro
     unsubscribe();
     if (signingIn) void api.invoke('cancel-sign-in').catch(() => {});
     if (toastTimer) win.clearTimeout(toastTimer);
-    apiKeyDraft = '';
+    apiKeyDrafts.api = '';
+    apiKeyDrafts.deepseek = '';
     settingsDraft = null;
   };
   win.addEventListener('unload', destroy, { once: true });

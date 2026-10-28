@@ -60,7 +60,7 @@ export interface DisplayJob {
   error?: string;
 }
 export interface ManagerSettings {
-  provider: 'api' | 'chatgpt';
+  provider: 'api' | 'chatgpt' | 'deepseek';
   model: string;
   autoAssign: boolean;
   budgetUSD: number;
@@ -78,6 +78,7 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    provider?: ManagerSettings['provider'];
     status: 'idle' | 'running' | 'paused';
     total: number;
     completed: number;
@@ -91,6 +92,7 @@ export interface ManagerSnapshot {
   models: string[];
   connection: {
     apiKeyStored: boolean;
+    deepseekKeyStored?: boolean;
     chatgptSignedIn: boolean;
     accountLabel?: string;
     verified?: boolean;

@@ -1,5 +1,6 @@
 /** TEST ONLY. Bundled exclusively into build/native-addon by prepare-native-smoke.mjs. */
 import { registerOAuthCallback } from '../src/platform.ts';
+import { ProviderClient } from '../src/providers.ts';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -24,6 +25,50 @@ void (async () => {
     check('automaticAssignmentInitiallyOff', app.state.settings.autoAssign === false);
     const snapshot = await app.snapshot();
     check('managerSnapshot', Array.isArray(snapshot.tags) && Array.isArray(snapshot.papers) && !!snapshot.connection);
+    // Exercise the DeepSeek adapter in Gecko with synthetic credentials and HTTP replies.
+    // This transport never makes an external request or persists a credential.
+    const testCredentials = new Map();
+    const testMetadata = new Map();
+    const deepseekRequests = [];
+    const NativeResponse = Zotero.getMainWindow().Response;
+    let deepseekQuota = false;
+    let deepseekAuthCorrect = true;
+    let deepseekBodyCorrect = false;
+    const deepseek = new ProviderClient({
+      crypto,
+      credentials: { load: async key => testCredentials.get(key) ?? null, save: async (key, value) => { testCredentials.set(key, value); }, remove: async key => { testCredentials.delete(key); } },
+      metadata: { get: async key => testMetadata.get(key) ?? null, set: async (key, value) => { testMetadata.set(key, value); } },
+      openExternal: () => { throw new Error('Synthetic DeepSeek test must not open a browser.'); },
+      registerCallback: async () => { throw new Error('Synthetic DeepSeek test must not open OAuth.'); },
+      fetch: async (url, init = {}) => {
+        const target = String(url);
+        deepseekRequests.push(target);
+        deepseekAuthCorrect = deepseekAuthCorrect && init.headers.Authorization === 'Bearer native-deepseek-synthetic';
+        if (target === 'https://api.deepseek.com/models') return new NativeResponse(JSON.stringify({ object: 'list', data: [{ id: 'native-deepseek-test', object: 'model', owned_by: 'deepseek' }] }), { headers: { 'Content-Type': 'application/json' } });
+        if (target !== 'https://api.deepseek.com/chat/completions') throw new Error('Synthetic DeepSeek test received an unexpected endpoint.');
+        const body = JSON.parse(init.body);
+        deepseekBodyCorrect = body.response_format?.type === 'json_object' && body.thinking?.type === 'disabled' && body.stream === false && body.model === 'native-deepseek-test';
+        if (deepseekQuota) return new NativeResponse(JSON.stringify({ error: { message: 'Synthetic insufficient balance', code: 'insufficient_balance' } }), { status: 402, headers: { 'Content-Type': 'application/json' } });
+        return new NativeResponse(JSON.stringify({ object: 'chat.completion', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: '{"ok":true}' } }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }), { headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+    try {
+      await deepseek.setApiKey('native-openai-synthetic');
+      await deepseek.setApiKey('native-deepseek-synthetic', 'deepseek');
+      await deepseek.removeApiKey('api');
+      check('deepseekCredentialIsolation', await deepseek.hasApiKey('deepseek') && !await deepseek.hasApiKey('api'));
+      const discovered = await deepseek.listModels('deepseek');
+      check('deepseekModelDiscovery', discovered.length === 1 && discovered[0].id === 'native-deepseek-test');
+      const deepseekSettings = { mode: 'deepseek', model: 'native-deepseek-test', maxOutputTokens: 512, inputCostPerMillion: 1, outputCostPerMillion: 4 };
+      const completed = await deepseek.completeJson('Return JSON {"ok":true}.', 'Synthetic connection test.', deepseekSettings);
+      check('deepseekJSONResult', completed.value?.ok === true && deepseekBodyCorrect);
+      check('deepseekUsageCost', completed.usageKnown && completed.usage.inputTokens === 10 && completed.usage.outputTokens === 5 && Math.abs(completed.estimatedCostUSD - 0.00003) < 1e-12);
+      deepseekQuota = true;
+      let quotaPaused = false;
+      try { await deepseek.completeJson('Return JSON {"ok":true}.', 'Synthetic quota test.', deepseekSettings); } catch (error) { quotaPaused = error.category === 'quota' && error.status === 402; }
+      check('deepseekQuotaClassification', quotaPaused);
+      check('deepseekNoProviderFallback', deepseekAuthCorrect && deepseekRequests.length === 3 && deepseekRequests.every(url => url.startsWith('https://api.deepseek.com/')));
+    } finally { await deepseek.dispose(); }
     const abstracts = [
       'We measure catalyst-layer resistance in PEM water electrolysis and separate protonic transport losses within the catalyst layer.',
       'This unrelated mechanical study measures the resistance of a battery casing to external pressure.'

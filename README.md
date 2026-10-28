@@ -5,9 +5,9 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It bui
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.1.2.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.1.2.xpi).
+2. Select [`smart-tags-0.1.3.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.1.3.xpi).
 3. Open **Tools → Smart Tags…**. The right-hand item pane also has a Smart Tags section.
-4. In **Settings**, configure one connection, discover/select a text-capable model, and click **Test connection**.
+4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Start with **Pilot · 50 papers** on Overview and click **Rebuild vocabulary**. Review the draft definitions under Vocabulary, edit them as needed, and approve your choices.
 6. Run **Suggest paper tags** for the pilot. Review supporting passages, accept/reject suggestions, and apply the displayed changes. Vocabulary approval and paper-tag application are separate actions.
 7. Mark the completed tagging pilot reviewed. You can then enable automatic assignment for incoming papers. Rebuilding or editing the active vocabulary resets this gate.
@@ -16,13 +16,17 @@ The classifier usually proposes up to five core tags plus matching custom tags; 
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-Version 0.1.2 introduces a workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces): grouped navigation, breadcrumbs, a spacious page canvas, and quiet light/dark colors. The mouse- and keyboard-accessible dropdowns introduced in 0.1.1 remain in place, including the discovered-model picker and manual model entry.
+Version 0.1.3 adds a dedicated DeepSeek API connection. It retains the workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), with grouped navigation, breadcrumbs, a spacious page canvas, quiet light/dark colors, and mouse- and keyboard-accessible dropdowns.
 
 ## AI connections and cost
 
 **ChatGPT plan:** choose “ChatGPT plan”, then **Continue with ChatGPT**. The official OAuth flow requests permission for eligible Responses requests. Availability, allowed models, and plan limits depend on your account. A successful sign-in alone does not prove inference access: use **Discover models** and **Test connection**. Supported requests consume your plan allowance. The implementation uses the public OpenAI API, not private ChatGPT endpoints.
 
 **OpenAI API key:** use your own Platform key; this is billed separately from a ChatGPT subscription. Save the key, enter the current input/output prices for your model, choose a per-run USD cap, and discover/select a model. Prices are explicit rather than hard-coded. Before each request the queue reserves a conservative estimate, including its configured output-token limit. Failed or usage-less requests retain their reservation because they may have incurred charges. This is a local run budget, not a platform-wide billing limit. Metadata estimates exclude possible PDF follow-up and vocabulary-discovery requests; the per-request budget check includes them when dispatched.
+
+**DeepSeek API key:** choose **DeepSeek API key** in Settings and save a key from the [DeepSeek platform](https://platform.deepseek.com/). This uses DeepSeek’s separately billed API. Click **Discover models**, choose an available text model, enter its current USD input/output rates and a per-run budget, then click **Test connection**. Use the published peak rates, with cache-miss input pricing, for a conservative estimate; off-peak requests and cache hits may cost less. Consult [DeepSeek’s current model prices](https://api-docs.deepseek.com/quick_start/pricing/) for rates. Keys are encrypted and stored separately from OpenAI credentials. Switching providers clears the model selection and rate fields so you can choose values for the new provider.
+
+DeepSeek uses its official Chat Completions endpoint with JSON output. Empty, truncated, or malformed responses are rejected before tag changes. All vocabulary review, evidence checks, remembered decisions, and undo protections apply to this connection too. The extension never switches between providers automatically.
 
 **Test connection** sends a small real AI request through the selected connection. A plan quota failure pauses the run. Switching to paid API usage is always an explicit choice.
 
@@ -44,7 +48,7 @@ Definitions, source metadata, selected PDF passages, proposals, decisions, queue
 
 API keys and OAuth credentials use the operating-system keystore plus a plugin-specific LoginManager realm. If encryption is unavailable, credentials remain in memory for that session. Credentials are excluded from vocabulary exports, manager snapshots, and source packages. Do not share the profile state file as a vocabulary export: it contains library metadata.
 
-Vocabulary JSON import/export is available in Vocabulary. Imported new definitions are drafts. Settings/definitions do not automatically sync across devices in this version. Model requests send the selected metadata or locally extracted PDF passages to the explicitly selected OpenAI connection.
+Vocabulary JSON import/export is available in Vocabulary. Imported new definitions are drafts. Settings/definitions do not automatically sync across devices in this version. Model requests send the selected metadata or locally extracted PDF passages to the explicitly selected OpenAI or DeepSeek connection.
 
 ## Build and validation
 
@@ -61,4 +65,4 @@ The development native smoke harness uses a separate profile **and** data direct
 
 MIT licensed. See [LICENSE](LICENSE).
 
-References: [Zotero 10 plugin APIs](https://www.zotero.org/support/dev/zotero_10_for_developers), [official ChatGPT plan integration](https://developers.openai.com/siwc/token-sharing-open-source), [integration limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [API prices](https://developers.openai.com/api/docs/pricing).
+References: [Zotero 10 plugin APIs](https://www.zotero.org/support/dev/zotero_10_for_developers), [official ChatGPT plan integration](https://developers.openai.com/siwc/token-sharing-open-source), [integration limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations), [OpenAI API prices](https://developers.openai.com/api/docs/pricing), [DeepSeek API documentation](https://api-docs.deepseek.com/), [DeepSeek JSON output](https://api-docs.deepseek.com/guides/json_mode/).

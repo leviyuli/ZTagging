@@ -1,9 +1,9 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "target": "Zotero 10.0.6 on Windows",
   "automatedTests": {
-    "passed": 132,
+    "passed": 210,
     "failed": 0
   },
   "nativeSmoke": {
@@ -39,6 +39,30 @@
       },
       {
         "name": "managerSnapshot",
+        "passed": true
+      },
+      {
+        "name": "deepseekCredentialIsolation",
+        "passed": true
+      },
+      {
+        "name": "deepseekModelDiscovery",
+        "passed": true
+      },
+      {
+        "name": "deepseekJSONResult",
+        "passed": true
+      },
+      {
+        "name": "deepseekUsageCost",
+        "passed": true
+      },
+      {
+        "name": "deepseekQuotaClassification",
+        "passed": true
+      },
+      {
+        "name": "deepseekNoProviderFallback",
         "passed": true
       },
       {
@@ -97,43 +121,43 @@
   },
   "managerUI": [
     "Overview",
-    "Vocabulary",
-    "Review",
-    "Explore library",
-    "Queue & history",
-    "Settings"
+    "Settings",
+    "DeepSeek provider picker and masked key field"
   ],
-  "liveAI": "Not run; configure your own ChatGPT sign-in or API key and use Test connection.",
+  "liveAI": "Not run. DeepSeek HTTP responses and API keys in automated/native tests are synthetic. Configure your own selected provider and use Test connection for live validation.",
   "workingLibraryModified": false,
-  "sha256": "63d3255aa260726aeff84c7a5210dac3665e8ae4af80ccbdfe0cf6bb329769e3",
+  "sha256": "629fff712dbb4ed8d8785f24e8e85e361df551d77734ca95aafc81efd2858fd0",
   "nativeBundleMatchesInstaller": true,
   "managerReadyInMatchedBundle": true,
   "repository": "https://github.com/leviyuli/ZTagging",
-  "publicationChanges": "Version 0.1.2 adds the Notion-inspired workspace layout, neutral light/dark styling, grouped navigation, breadcrumbs, and decorative SVG icons. Accessible HTML dropdowns remain in use.",
+  "publicationChanges": "Version 0.1.3 adds a dedicated DeepSeek API connection, separate encrypted credential slot, model discovery, JSON adapter, budget/cache/queue isolation, and billing identity in queue snapshots.",
   "dropdownValidation": {
     "automatedRegressions": 15,
     "nativePointerSelection": [
-      "analysis-scope"
-    ],
-    "nativeKeyboardSelection": [
-      "vocabulary-status"
+      "settings-provider"
     ],
     "nativePopupRendering": [
-      "analysis-scope",
-      "vocabulary-status"
+      "settings-provider"
     ],
-    "conditionalPickers": "Account and discovered-model pickers use the same tested control; no live sign-in or model discovery was run."
+    "conditionalPickers": "Model discovery and JSON inference use mocked DeepSeek HTTP replies; no live key was used."
   },
   "workspaceValidation": {
     "reference": "https://www.notion.com/help/intro-to-workspaces",
+    "designVersion": "0.1.2",
     "nativeThemes": [
-      "light",
-      "dark"
+      "light"
     ],
-    "nativeChecksPerTheme": 21,
-    "breadcrumbNavigation": true,
-    "navigationFocusRestoration": true,
     "productionBundleMatchesNative": true,
     "productionStylesheetMatchesNative": true
+  },
+  "deepseekValidation": {
+    "nativeAdapterChecks": 6,
+    "providerControllerIntegrationTests": 2,
+    "controllerRegressions": 17,
+    "providerCredentialIsolation": true,
+    "quotaPausesWithoutFallback": true,
+    "truncatedAndInvalidJSONRejected": true,
+    "manualTagsAndUndoProtected": true,
+    "liveInference": false
   }
 }
