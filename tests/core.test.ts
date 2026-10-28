@@ -174,6 +174,13 @@ test("scientific case disagreement is rejected rather than matching Co to CO", (
   assert.match(result.rejected[0].reason, /differently cased/);
 });
 
+test('a grounded WE full form is not rejected because its evidence begins with the ordinary pronoun We',()=>{
+  const p=paper({abstract:'We measure transport resistance in a PEM water electrolyzer.'}),tag=definition({id:'we',name:'WE',fullName:'water electrolysis',aliases:['water electrolyzer'],custom:false,matchingMode:'auto'});
+  const raw=analysis('we',{evidence:[{source:'abstract',text:p.abstract}]}),result=validateSuggestions(p,[tag],raw,{vocabularyVersion:1});
+  assert.equal(result.suggestions.length,1);assert.equal(result.rejected.length,0);
+  assert.equal(isAutoAssignable(result.suggestions[0],p,[tag],{vocabularyVersion:1,pilotApproved:true}),true);
+});
+
 test("evidence is source-specific and exact while allowing whitespace differences", () => {
   const p = paper({ abstract: "Proton transport\n  resistance is measured." });
   assert.equal(validateEvidence(p, [{ source: "abstract", text: "Proton transport resistance is measured." }]).length, 1);

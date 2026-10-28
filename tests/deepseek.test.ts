@@ -140,6 +140,27 @@ test('DeepSeek rejects empty, malformed, fenced, non-object, or missing content'
   }
 });
 
+test('DeepSeek malformed completed model content preserves only final text and completed usage metadata',async()=>{
+  const text='  {bad JSON\n  ',h=harness(()=>json(reply(text,{choices:[{finish_reason:'stop',message:{role:'assistant',content:text,reasoning_content:'Private reasoning must never enter diagnostics'}}]})));
+  await h.client.setApiKey('private-deepseek-key','deepseek');
+  await assert.rejects(()=>h.client.completeJson('JSON','paper',settings),(error:unknown)=>{
+    assert.ok(error instanceof ProviderError);assert.equal(error.category,'invalid-response');assert.equal(error.rawText,text);assert.equal(error.completion!.text,text);assert.deepEqual(error.completion!.usage,{inputTokens:100,outputTokens:50});assert.equal(error.completion!.usageKnown,true);assert.equal(error.completion!.estimatedCostUSD,0.00031);
+    assert.equal(error.completion!.requestId,'deepseek-test-request');assert.equal(JSON.stringify(error).includes('Private reasoning'),false);assert.equal(JSON.stringify(error).includes('private-deepseek-key'),false);return true;
+  });
+});
+
+test('DeepSeek truncated model text remains rejected diagnostic text without completed-inference metadata',async()=>{
+  const text='{"incomplete":',h=harness(()=>json(reply(text,{choices:[{finish_reason:'length',message:{role:'assistant',content:text,reasoning_content:'Never retain this'}}]})));await h.client.setApiKey('key','deepseek');
+  await assert.rejects(()=>h.client.completeJson('JSON','paper',settings),(error:unknown)=>{assert.ok(error instanceof ProviderError);assert.equal(error.category,'invalid-response');assert.equal(error.rawText,text);assert.equal(error.completion,undefined);assert.equal(JSON.stringify(error).includes('Never retain this'),false);return true;});
+});
+
+test('DeepSeek HTTP errors and reasoning-only messages never supply raw model diagnostics',async()=>{
+  for(const response of [()=>json({error:{message:'Unauthorized private HTTP body'}},401),()=>json(reply(null,{choices:[{finish_reason:'stop',message:{role:'assistant',content:null,reasoning_content:'Secret reasoning'}}]}))]){
+    const h=harness(response);await h.client.setApiKey('key','deepseek');
+    await assert.rejects(()=>h.client.completeJson('JSON','paper',settings),(error:unknown)=>{assert.ok(error instanceof ProviderError);assert.equal(error.rawText,undefined);assert.equal(error.completion,undefined);assert.equal(JSON.stringify(error).includes('Secret reasoning'),false);return true;});
+  }
+});
+
 test('DeepSeek rejects tool-call or reasoning-only messages and never reads reasoning_content as an answer', async () => {
   const h = harness(() => json(reply(null, { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: null, reasoning_content: '{"ok":true}' } }] })));
   await h.client.setApiKey('key', 'deepseek'); await rejectsInvalid(() => h.client.completeJson('JSON', 'paper', settings));

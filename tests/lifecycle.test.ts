@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
+import { initialState } from '../src/controller.ts';
 
 async function bundleMain(disposeGate = false, mockUI = false) {
   const result = await build({
@@ -48,6 +49,7 @@ const startup = { id: 'smart-tags@lifecycle.test', version: '0.1.0', rootURI: 'f
 function nativeHarness(code: string, options: { failingMenu?: string; disposeGate?: () => Promise<void>; manager?: any; ui?: any } = {}) {
   const files = new Map<string, string>();
   const writes: { path: string; tmpPath: string }[] = [];
+  const copies: { source: string; destination: string }[] = [];
   const menus = new Map<string, any>();
   const sections = new Map<string, any>();
   const observers = new Map<string, any>();
@@ -103,8 +105,15 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
     IOUtils: {
       makeDirectory: async () => {},
       readUTF8: async (path: string) => { if (!files.has(path)) throw new Error('Missing test file'); return files.get(path); },
+      read: async (path: string) => { if (!files.has(path)) throw new Error('Missing test file'); return new TextEncoder().encode(files.get(path)!); },
       exists: async (path: string) => files.has(path),
       writeUTF8: async (path: string, text: string, options: { tmpPath: string }) => { writes.push({ path, tmpPath: options.tmpPath }); files.set(path, text); },
+      copy: async (source: string, destination: string, options: { noOverwrite?: boolean }) => {
+        assert.equal(options.noOverwrite, true, 'Migration backups must refuse replacement');
+        if (!files.has(source)) throw new Error('Missing copy source');
+        if (files.has(destination)) throw new Error('Destination already exists');
+        copies.push({ source, destination }); files.set(destination, files.get(source)!);
+      },
     },
     PathUtils: { join: (...parts: string[]) => parts.join('/') },
     fetch: async () => { fetchCalls++; throw new Error('Unexpected API request during lifecycle test'); },
@@ -121,7 +130,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   }
   vm.runInContext(code, context);
   return {
-    app: context.SmartTags, Zotero, win, regular, files, writes, menus, sections, observers, locale, timers, errors,
+    app: context.SmartTags, Zotero, win, regular, files, writes, copies, menus, sections, observers, locale, timers, errors,
     get fetchCalls() { return fetchCalls; },
     get libraryWrites() { return libraryWrites; },
     get localizedWindows() { return localizedWindows; },
@@ -197,7 +206,8 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
   const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, 2);
+  assert.equal(state.schemaVersion, 3);
+  assert.deepEqual(state.warnings, []);
   assert.equal(state.settings.autoAssign, false);
   assert.equal(state.run, null);
   assert.ok(native.writes.every(write => write.tmpPath === `${write.path}.tmp`));
@@ -212,6 +222,49 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.locale.size, 0);
   assert.equal(native.Zotero.SmartTags, undefined);
   assert.equal(native.errors.length, 0);
+});
+
+test('native startup migrates schema 2 with an exact immutable versioned backup and historical warning records', async () => {
+  const native = nativeHarness(await normalBundle);
+  const old: any = initialState();old.schemaVersion = 2;old.vocabularyVersion = 7;
+  old.warnings = ['Missing local PDF text in an earlier run.'];old.settings.budgetUSD = 17;
+  old.metadata = { savedSetting: 'Ångström and Co/CO evidence remains unchanged.' };
+  delete old.evidenceCatalog;delete old.taxonomyEvidence;
+  const original = `${JSON.stringify(old, null, 3)}\r\n`;
+  const statePath = '/test-profile/smart-tags/state.json';
+  const occupiedBackup = `${statePath}.pre-v3.json`;
+  native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
+  native.files.set(occupiedBackup, 'An older immutable migration backup.');
+  await native.app.startup(startup);
+  try {
+    const migrated = JSON.parse(native.files.get(statePath)!);
+    assert.equal(migrated.schemaVersion, 3);assert.equal(migrated.vocabularyVersion, 7);
+    assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
+    assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v3.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v3.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
+    assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
+    assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
+    assert.equal(migrated.warnings[0].firstSeenAt, null);assert.equal(migrated.warnings[0].lastSeenAt, null);assert.equal(migrated.warnings[0].occurrenceCount, null);
+    assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
+    assert.equal(native.errors.length, 0);
+  } finally { await native.app.shutdown(); }
+});
+
+test('native backup recovery records an active warning without restoring legacy string banners', async () => {
+  const native = nativeHarness(await normalBundle);
+  const backup = initialState();backup.vocabularyVersion = 4;
+  const statePath = '/test-profile/smart-tags/state.json';
+  native.files.set(statePath, '{invalid json');native.files.set(`${statePath}.bak`, JSON.stringify(backup));
+  await native.app.startup(startup);
+  try {
+    const restored = JSON.parse(native.files.get(statePath)!);
+    assert.equal(restored.schemaVersion, 3);assert.equal(restored.vocabularyVersion, 4);
+    assert.ok(restored.warnings.some((warning: any) => warning.status === 'active' && /restored.*previous valid state/i.test(warning.message)));
+    assert.ok(restored.warnings.every((warning: unknown) => warning && typeof warning === 'object'));
+    assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
+  } finally { await native.app.shutdown(); }
 });
 
 test('native collection menus use Zotero 10 plural context without registering item-pane sections', async () => {

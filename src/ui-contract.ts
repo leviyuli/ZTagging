@@ -1,4 +1,5 @@
 import type { TaxonomyProposal } from './taxonomy';
+import type { WarningRecord } from './warnings';
 /** The manager receives display data only. Credentials never belong in a snapshot. */
 export type ManagerPage = 'overview' | 'vocabulary' | 'review' | 'library' | 'activity' | 'settings';
 export type Scope = 'pilot' | 'selected' | 'collections' | 'library';
@@ -102,6 +103,13 @@ export interface ManagerSnapshot {
     spentUSD?: number;
     estimatedUSD?: number;
     jobs?: DisplayJob[];
+    consolidation?: {
+      phase: string;
+      correctionAttempts: number;
+      issues: string[];
+      canRegenerate: boolean;
+      rawResponses?: { label: string; response: string }[];
+    };
   };
   settings: ManagerSettings;
   models: string[];
@@ -115,7 +123,7 @@ export interface ManagerSnapshot {
     accounts?: { id: string; label: string }[];
     selectedAccountId?: string;
   };
-  warnings?: string[];
+  warnings?: WarningRecord[];
 }
 export interface ManagerAPI {
   snapshot(): Promise<ManagerSnapshot>;

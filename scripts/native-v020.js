@@ -57,7 +57,7 @@ export async function runNativeV020(app, check, config) {
   await until(() => main?.ZoteroPane?.itemsView && main.ZoteroPane.collectionsView, 'main window items view');
   const oldTaxonomyReady = app.state.taxonomyReady;
   await Zotero.SmartTags.getNavigator(main)?.refresh();
-  if(oldTaxonomyReady)check('v020ApprovedStartupDefaultsToTags',Zotero.SmartTags.getNavigator(main)?.mode==='tags');
+  // Approved startup is checked by native-smoke before its first fixture write.
   await Zotero.SmartTags.getNavigator(main)?.setMode('collections');
   const oldQuickSearchMode = Zotero.Prefs.get('search.quicksearch-mode');
   app.state.taxonomyReady = false;
@@ -206,12 +206,30 @@ export async function runNativeV020(app, check, config) {
     const firstIdentity = pane.itemsView.collectionTreeRows[0].id;
     const existingWindows = new Set(Zotero.getMainWindows()); Zotero.openMainWindow();
     secondary = await until(() => Zotero.getMainWindows().find(win => !existingWindows.has(win) && win.ZoteroPane?.itemsView && win.ZoteroPane?.collectionsView), 'second main window');
+    // CollectionTree.makeVisible() restores lastViewedFolder asynchronously after the
+    // tree objects appear. Its load promise settles only after that native selection.
+    await secondary.ZoteroPane.collectionsView.waitForLoad();
+    await secondary.ZoteroPane.itemsView.waitForLoad();
+    await until(() => secondary.document.readyState === 'complete' && textbox(secondary) && secondary.ZoteroPane.tagSelector, 'second window native controls');
     await until(() => Zotero.SmartTags.getNavigator(secondary), 'second navigator mount');
     await Zotero.SmartTags.getNavigator(secondary).setMode('collections');
+    await secondary.ZoteroPane.collectionsView.selectLibrary(libraryID);
+    await secondary.ZoteroPane.onCollectionSelected();
+    await secondary.ZoteroPane.itemsView.waitForLoad();
+    secondary.ZoteroPane.tagSelector.selectedTags = new Set();secondary.ZoteroPane.tagSelector.forceUpdate();
+    await secondary.ZoteroPane.itemsView.setFilter('tags', new Set());
+    textbox(secondary).value = '';await secondary.ZoteroPane.itemsView.setFilter('search', '');
     const secondaryColumns = columns(secondary.ZoteroPane.itemsView);
     const secondAdapter = createNativeFilterAdapter(secondary); adapters.push(secondAdapter);
-    textbox(secondary).value = ''; await secondAdapter.apply(defs, filter('pemfc'));
-    check('v020NativeIndependentWindows', firstIdentity !== secondary.ZoteroPane.itemsView.collectionTreeRows[0].id && equal(await shownParents(secondary, libraryID), [pid(2), pid(3)]));
+    await secondAdapter.apply(defs, filter('pemfc'));
+    await secondary.ZoteroPane.itemsView.waitForLoad();
+    const secondaryRow = secondary.ZoteroPane.itemsView.collectionTreeRows[0];
+    const secondaryIDs = await shownParents(secondary, libraryID);
+    check('v020NativeIndependentWindows', firstIdentity !== secondaryRow.id && equal(secondaryIDs, [pid(2), pid(3)]), {
+      firstIdentity,secondIdentity:secondaryRow.id,visibleIDs:secondaryIDs,expectedIDs:[pid(2),pid(3)],
+      quickSearch:textbox(secondary).value,rowSearch:secondaryRow.searchText,rowSearchMode:secondaryRow.searchMode,
+      selectedCollections:secondary.ZoteroPane.getCollectionTreeRows().map(row=>row.id),
+    });
     await adapter.destroy();
     check('v020NativeDestroyRestoresCollectionsAndFilters', JSON.stringify(pane.getCollectionTreeRows().map(row => row.id).sort()) === JSON.stringify(originalIDs)
       && textbox(main).value === originalText && pane.tagSelector.getTagSelection().has('FC') && equal(await shownParents(main, libraryID), expectedVisible)

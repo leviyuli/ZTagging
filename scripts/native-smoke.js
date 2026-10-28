@@ -2,6 +2,7 @@
 import { registerOAuthCallback } from '../src/platform.ts';
 import { ProviderClient } from '../src/providers.ts';
 import { runNativeV020 } from './native-v020.js';
+import { runNativeV030 } from './native-v030.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -11,6 +12,11 @@ void (async () => {
   const write = () => IOUtils.writeUTF8(config.reportPath, JSON.stringify(report, null, 2), { tmpPath: config.reportPath + '.tmp' });
   const check = (name, condition, detail) => { report.checks[name] = { passed: !!condition, ...(detail === undefined ? {} : { detail }) }; if (!condition) throw new Error('Native smoke failed: ' + name); };
   const normalized = value => String(value).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const until = async (predicate, label) => {
+    const start = Date.now();
+    while (Date.now() - start < 25_000) { const value = predicate();if (value) return value;await new Promise(resolve => setTimeout(resolve, 35)); }
+    throw new Error('Native startup timeout: ' + label);
+  };
   try {
     await write();
     if (Zotero.initializationPromise) await Zotero.initializationPromise;
@@ -26,6 +32,19 @@ void (async () => {
     check('automaticAssignmentInitiallyOff', app.state.settings.autoAssign === false);
     const snapshot = await app.snapshot();
     check('managerSnapshot', Array.isArray(snapshot.tags) && Array.isArray(snapshot.papers) && !!snapshot.connection);
+    const startupWindow = Zotero.getMainWindow();
+    await until(() => startupWindow?.ZoteroPane?.itemsView && startupWindow.ZoteroPane.collectionsView, 'main window trees');
+    await startupWindow.ZoteroPane.collectionsView.waitForLoad();
+    await startupWindow.ZoteroPane.itemsView.waitForLoad();
+    const startupNavigator = await until(() => Zotero.SmartTags.getNavigator(startupWindow), 'main navigator');
+    await startupNavigator.refresh();
+    await startupWindow.ZoteroPane.itemsView.waitForLoad();
+    // Check the natural approved-taxonomy startup before any fixture writes can
+    // race a native search across a newly constructed, partially saved item.
+    if (snapshot.taxonomyReady) check('v020ApprovedStartupDefaultsToTags', startupNavigator.mode === 'tags'
+      && startupWindow.ZoteroPane.itemsView.collectionTreeRows.some(row => row.id.startsWith('smart-tags-view-')));
+    await startupNavigator.setMode('collections');
+    check('fixtureSetupUsesCollections', startupNavigator.mode === 'collections');
     // Exercise the DeepSeek adapter in Gecko with synthetic credentials and HTTP replies.
     // This transport never makes an external request or persists a credential.
     const testCredentials = new Map();
@@ -133,6 +152,7 @@ void (async () => {
     } finally { callback?.dispose(); }
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
     report.v020=await runNativeV020(app,check,config);
+    report.v030=await runNativeV030(app,check,config);
     report.syntheticItemIDs = items.map(item => item.id);
     if (config.openManager) await Zotero.SmartTags.openManager();
     report.status = 'passed';

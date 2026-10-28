@@ -348,3 +348,27 @@ test('a native view waits for initial library data and an active write transacti
   assert.equal(h.changes.length, 1);
   await adapter.destroy();
 });
+
+test('initial collection restoration and item loading finish before capturing and installing a tag view',async()=>{
+  install();const h=windowHarness('pre-startup query');let collectionsLoaded!:()=>void,itemsLoaded!:()=>void;
+  const collectionReady=new Promise<void>(resolve=>{collectionsLoaded=resolve;}),itemReady=new Promise<void>(resolve=>{itemsLoaded=resolve;}),order:string[]=[];
+  h.pane.collectionsView.waitForLoad=async()=>{order.push('collections');await collectionReady;};h.pane.itemsView.waitForLoad=async()=>{order.push('items');await itemReady;};
+  const adapter=createNativeFilterAdapter(h.win),applying=adapter.apply(definitions,{mode:'all',selections:[{conceptId:'fc'}]});await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(order,['collections']);assert.equal(h.changes.length,0);
+  // This is Zotero's late makeVisible()/onCollectionSelected() restoration.
+  h.selection.select(1);await h.pane.onCollectionSelected();collectionsLoaded();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(order,['collections','items']);assert.equal(h.changes.length,0);assert.equal(adapter.active,false);
+  itemsLoaded();await applying;assert.equal(h.changes.length,1);assert.match(h.pane.itemsView.collectionTreeRows[0].id,/^smart-tags-view-/);assert.equal(h.pane.itemsView.collectionTreeRows[0].searchText,'');
+  await adapter.restore();assert.deepEqual([...h.selection.selected],[1]);assert.deepEqual(h.pane.itemsView.collectionTreeRows.map((row:any)=>row.id),['C20']);assert.equal(h.search.searchTextbox.value,'');assert.equal(adapter.active,false);
+});
+
+test('leaving Tags or disabling during initial collection loading cancels without waiting for window readiness',async t=>{
+  for(const action of ['restore','destroy'] as const)await t.test(action,async()=>{
+    install();const h=windowHarness('native startup query');let loaded!:()=>void,entered!:()=>void;const collectionReady=new Promise<void>(resolve=>{loaded=resolve;}),waiting=new Promise<void>(resolve=>{entered=resolve;});let itemWaits=0;
+    h.pane.collectionsView.waitForLoad=()=>{entered();return collectionReady;};h.pane.itemsView.waitForLoad=async()=>{itemWaits++;};
+    const adapter=createNativeFilterAdapter(h.win),applying=adapter.apply(definitions,{mode:'all',selections:[{conceptId:'fc'}]});await waiting;
+    // Neither operation may wait for a load event that a closing window will never fire.
+    await Promise.all([applying,adapter[action]()]);assert.equal(h.changes.length,0);assert.equal(itemWaits,0);assert.equal(adapter.active,false);assert.equal(h.search.searchTextbox.value,'native startup query');
+    h.selection.select(1);await h.pane.onCollectionSelected();loaded();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(h.pane.itemsView.collectionTreeRows.map((row:any)=>row.id),['C20']);assert.equal(h.changes.length,0);await adapter.destroy();
+  });
+});

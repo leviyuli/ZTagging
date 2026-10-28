@@ -69,6 +69,7 @@ export function createNativeFilterAdapter(win: any): NativeFilterAdapter {
   let active = false;
   let destroyed = false;
   let tail: Promise<void> = Promise.resolve();
+  const readinessWaiters=new Set<()=>void>();
   let captured: {
     rows: any[]; rowIDs: string[]; focusedID?: string; tags: string[];
     search: string; searchMode: string | null;
@@ -79,6 +80,24 @@ export function createNativeFilterAdapter(win: any): NativeFilterAdapter {
     const task = tail.then(operation);
     tail = task.catch(() => {});
     return task;
+  }
+
+  function advanceGeneration():number {
+    ++generation;
+    for(const cancel of [...readinessWaiters])cancel();
+    return generation;
+  }
+
+  function waitForReady(ready:PromiseLike<unknown>|unknown,request:number):Promise<boolean> {
+    return new Promise((resolve,reject)=>{
+      const cancel=()=>{readinessWaiters.delete(cancel);resolve(false);};
+      readinessWaiters.add(cancel);
+      Promise.resolve(ready).then(()=>{readinessWaiters.delete(cancel);resolve(!destroyed&&request===generation);},error=>{
+        readinessWaiters.delete(cancel);
+        if(destroyed||request!==generation)resolve(false);else reject(error);
+      });
+      if(destroyed||request!==generation)cancel();
+    });
   }
 
   function capture() {
@@ -155,11 +174,17 @@ export function createNativeFilterAdapter(win: any): NativeFilterAdapter {
     get available() { return available; },
     get active() { return active; },
     apply(definitions, filter) {
-      const request = ++generation;
+      const request = advanceGeneration();
       return enqueue(async () => {
         if (destroyed || request !== generation) return;
         if (!available) throw new Error('This Zotero window does not provide the interfaces required for tag navigation. Collections remain available.');
         await waitForNativeLibrary();
+        if (destroyed || request !== generation) return;
+        // CollectionTree.init() exposes its React instance before makeVisible() restores
+        // the saved collection asynchronously. Its late selection would replace our row.
+        if(typeof pane.collectionsView.waitForLoad==='function'&&!await waitForReady(pane.collectionsView.waitForLoad(),request))return;
+        if (destroyed || request !== generation) return;
+        if(typeof pane.itemsView.waitForLoad==='function'&&!await waitForReady(pane.itemsView.waitForLoad(),request))return;
         if (destroyed || request !== generation) return;
         if (!active) capture();
         const text = searchTextbox(win)?.value ?? captured?.search ?? '';
@@ -196,12 +221,12 @@ export function createNativeFilterAdapter(win: any): NativeFilterAdapter {
       });
     },
     restore() {
-      ++generation;
+      advanceGeneration();
       return enqueue(async () => { if (active || captured) { active = false; await restoreCaptured(); } });
     },
     destroy() {
       destroyed = true;
-      ++generation;
+      advanceGeneration();
       return enqueue(async () => { active = false; await restoreCaptured(); });
     },
   };

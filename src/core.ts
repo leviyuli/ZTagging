@@ -131,13 +131,22 @@ function strings(value: unknown, maxCount = 30, maxLength = 500): string[] {
 
 /** Preserve chemical symbols, formulae, and short scientific acronyms when comparing names. */
 function sensitiveToken(token: string): boolean {
-  return SYMBOLS.has(token) || /^[A-Z]{2,8}$/.test(token)
+  return token==='pH' || SYMBOLS.has(token) || /^[A-Z]{2,8}$/.test(token)
     || /^(?=.*[A-Z])(?=.*[\d\u2080-\u2089])[A-Za-z\d\u2080-\u2089+−-]+$/.test(token)
     || /^(?:[A-Z][a-z]?){2,}$/.test(token);
 }
 
 export function canonicalTagKey(name: string): string {
   return clean(name, 160).split(/\s+/).map(token => sensitiveToken(token) ? token : token.toLowerCase()).join(" ");
+}
+
+/** Local identities never depend on a label, content hash, model, or taxonomy version. */
+export function allocateOpaqueId(prefix:string):string {
+  const crypto=globalThis.crypto;
+  if(typeof crypto?.randomUUID==='function')return `${prefix}-${crypto.randomUUID()}`;
+  if(typeof crypto?.getRandomValues!=='function')throw new Error('Secure local identity allocation is unavailable.');
+  const bytes=crypto.getRandomValues(new Uint8Array(16));
+  return `${prefix}-${[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('')}`;
 }
 
 function stableJSON(value: unknown, seen = new Set<object>()): string {
@@ -206,7 +215,7 @@ export function normalizeTagDefinitions(raw: unknown, existing: readonly TagDefi
       continue;
     }
     const tag: TagDefinition = {
-      id: `tag-${fingerprint(key)}`, name, fullName: clean(input.fullName, 160) || name, description, facet: input.facet as Facet,
+      id: allocateOpaqueId('tag'), name, fullName: clean(input.fullName, 160) || name, description, facet: input.facet as Facet,
       aliases: strings(input.aliases, 40, 160).filter(alias => canonicalTagKey(alias) !== key),
       inclusions: strings(input.inclusions, 20, 1000), exclusions: strings(input.exclusions, 20, 1000),
       examples: strings(input.examples, 20, 1000), custom: input.custom === true,
@@ -311,6 +320,14 @@ export function validateEvidence(paper: PaperRecord, raw: unknown): Evidence[] {
 function caseConflictingChemicalEvidence(tag: TagDefinition, evidence: readonly Evidence[]): boolean {
   const name = tag.name.trim();
   if (!sensitiveToken(name) || name.includes(" ")) return false;
+  // Technology abbreviations can share letters with ordinary prose (WE / "We").
+  // An explicit scientific full form grounds that acronym without weakening symbol casing.
+  const elementTokens=name.match(/[A-Z][a-z]?/g)??[];
+  const chemical=SYMBOLS.has(name)||(elementTokens.join('')===name&&elementTokens.every(token=>SYMBOLS.has(token)));
+  if(/^[A-Z]{2,8}$/.test(name)&&!chemical){
+    const forms=[tag.fullName??'',...tag.aliases].filter(form=>form.trim().split(/\s+/).length>=2);
+    if(forms.some(form=>evidence.some(entry=>clean(entry.text,10_000_000).toLowerCase().includes(clean(form,500).toLowerCase()))))return false;
+  }
   const tokens = evidence.flatMap(entry => entry.text.match(/[\p{L}\p{N}\u2080-\u2089]+/gu) ?? []);
   const folded = name.toLowerCase();
   const sameLetters = tokens.filter(token => token.toLowerCase() === folded);

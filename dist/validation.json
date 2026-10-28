@@ -1,13 +1,19 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.2.1",
+  "version": "0.3.0",
+  "verifiedAt": "2026-10-28T09:12:04.036Z",
   "target": "Zotero 10.0.6 on Windows",
+  "schemaVersion": 3,
+  "consolidationProtocolVersion": 2,
+  "factualExtractorVersion": 1,
   "automatedTests": {
-    "passed": 312,
+    "command": "npm run verify",
+    "passed": 424,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
+    "passed": 86,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -35,6 +41,14 @@
       },
       {
         "name": "managerSnapshot",
+        "passed": true
+      },
+      {
+        "name": "v020ApprovedStartupDefaultsToTags",
+        "passed": true
+      },
+      {
+        "name": "fixtureSetupUsesCollections",
         "passed": true
       },
       {
@@ -119,10 +133,6 @@
       },
       {
         "name": "v020IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v020ApprovedStartupDefaultsToTags",
         "passed": true
       },
       {
@@ -272,28 +282,122 @@
       {
         "name": "v020MountedNavigatorDefaultsToApprovedTags",
         "passed": true
+      },
+      {
+        "name": "v030IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v030IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v030ApplicationSchema",
+        "passed": true
+      },
+      {
+        "name": "v030InstalledZoteroTarget",
+        "passed": true
+      },
+      {
+        "name": "v030NativeMigrationExactByteBackup",
+        "passed": true
+      },
+      {
+        "name": "v030NativeLegacyWarningUnknownMetadata",
+        "passed": true
+      },
+      {
+        "name": "v030NativeMigrationReloadIdempotent",
+        "passed": true
+      },
+      {
+        "name": "v030NativeDefaultTagsSurvivesStartupRestore",
+        "passed": true
+      },
+      {
+        "name": "v030NativeStartupWindowRestoresCollections",
+        "passed": true
+      },
+      {
+        "name": "v030SyntheticUncertainMapping",
+        "passed": true
+      },
+      {
+        "name": "v030NativeUncertainProposalRendering",
+        "passed": true
+      },
+      {
+        "name": "v030NativePrivateEvidenceExportControl",
+        "passed": true
+      },
+      {
+        "name": "v030NativeScientificConfirmationAction",
+        "passed": true
+      },
+      {
+        "name": "v030NativeWarningPaperLinks",
+        "passed": true
+      },
+      {
+        "name": "v030NativeWarningDismissalPersisted",
+        "passed": true
+      },
+      {
+        "name": "v030NativeWarningReloadHistory",
+        "passed": true
+      },
+      {
+        "name": "v030NativeDismissAllPreservesRecords",
+        "passed": true
+      },
+      {
+        "name": "v030NativeNoAISideEffects",
+        "passed": true
+      },
+      {
+        "name": "v030NativeTagsUnchangedDuringReview",
+        "passed": true
       }
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
   "managerUI": {
-    "xmlRegressionTests": 11,
     "nativeManagerOpened": true,
+    "scientificConfirmationAction": true,
+    "warningDismissalAndReopen": true,
     "screenshotInspection": "Unavailable: Windows Computer Use native helper pipe was not present."
+  },
+  "migrationReplay": {
+    "status": "passed",
+    "retainedFactualRecords": 97,
+    "completedSelectedJobs": 51,
+    "extractionRequests": 0,
+    "syntheticConsolidationRequests": 1,
+    "exactByteBackup": true,
+    "quotationsAndProvenancePreserved": true,
+    "snapshotExcludesOtherCachedPapers": true,
+    "nativeTagWrites": 0,
+    "workingProfileBytesUnchanged": true
   },
   "rightItemAndInformationPaneSection": false,
   "workingLibraryModified": false,
-  "liveAI": "No live provider request or account authentication performed for this release. Provider tests use synthetic credentials/responses; private pilot review uses saved metadata only.",
-  "sha256": "1a0a37eb92849baf528f2d16852652aeb8acac8560a3c8d6e665d0a4166c3240",
-  "sourceSha256": "7ca71254e5d9d451d5fc36f5bb29b7fd654bea20afcb6753a0a5ca9947a8ba37",
-  "repository": "https://github.com/leviyuli/ZTagging",
-  "mergeRecovery": {
-    "unacceptedDraftsReplaceable": true,
-    "approvedMergeReferencesExact": true,
-    "invalidApprovedMappingsWithheldUntilReviewed": true,
-    "consolidationCheckpointResumable": true,
-    "completedPaperFactsReused": true,
-    "nativeTagsChangedDuringRebuild": false
-  }
+  "liveAI": "No live provider requests or account authentication were performed. Provider tests use synthetic credentials and responses. The private replay validates recovery and source preservation, not the scientific quality of a newly generated full vocabulary.",
+  "publicArtifactPrivateDataScan": "passed",
+  "artifacts": {
+    "installer": {
+      "file": "smart-tags-0.3.0.xpi",
+      "bytes": 285795,
+      "sha256": "7e7944bba1ea6f322c47514f8fe4012c840eab54004e9552039d2c53215d9374"
+    },
+    "source": {
+      "file": "smart-tags-0.3.0-source.zip",
+      "bytes": 279228,
+      "sha256": "436368306ac5acc064037504416701a0675e2ac50448980d52d8b67365bbe9de"
+    }
+  },
+  "sha256": "7e7944bba1ea6f322c47514f8fe4012c840eab54004e9552039d2c53215d9374",
+  "sourceSha256": "436368306ac5acc064037504416701a0675e2ac50448980d52d8b67365bbe9de",
+  "repository": "https://github.com/leviyuli/ZTagging"
 }

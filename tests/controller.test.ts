@@ -54,7 +54,7 @@ class MemoryHost implements LibraryHost {
   async saveSearch(name:string,tags:string[]) {this.searches.push({name,tags:clone(tags)});}
 }
 
-type AIInput={approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
+type AIInput={protocolVersion?:number;paperCount?:number;conceptRegistry?:{registryId:string;sources:{label:string;paperId:string}[]}[];permittedRegistry?:unknown[];approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
 type AICall={input:AIInput;settings:ProviderSettings;prompt:string};
 type AIHandler=(call:AICall,index:number)=>unknown|Promise<unknown>;
 
@@ -66,11 +66,11 @@ function normalAnalysis(call:AICall) {
 }
 
 function normalFacts(call:AICall) {const p=call.input.paper!;return {summary:'Water electrolysis is studied.',concepts:[{name:'Water electrolysis',facet:'system',evidence:[{source:p.abstract?'abstract':p.pdf?'pdf':'title',text:p.abstract||p.pdf||p.title}]}],needsPDF:false};}
-function normalTaxonomy(call:AICall) {return {tags:[{key:'water',name:'Water electrolysis',fullName:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],parentKeys:[],relatedKeys:[],support:(call.input.facts??[]).map(f=>({paperId:f.paperId,conceptNames:['Water electrolysis']}))}],merges:[],excluded:[]};}
+function normalTaxonomy(call:AICall) {return {tags:[{key:'water',name:'Water electrolysis',fullName:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],parentKeys:[],relatedKeys:[],...(call.input.protocolVersion===2?{supportRegistryIds:(call.input.conceptRegistry??[]).filter(entry=>entry.sources.some(source=>source.label==='Water electrolysis')).map(entry=>entry.registryId)}:{support:(call.input.facts??[]).map(f=>({paperId:f.paperId,conceptNames:['Water electrolysis']}))})}],merges:[],excluded:[]};}
 
 class MockAI {
   calls:AICall[]=[];
-  handler:AIHandler=(call)=>call.input.facts?normalTaxonomy(call):call.input.approvedVocabulary?normalAnalysis(call):normalFacts(call);
+  handler:AIHandler=(call)=>call.input.protocolVersion===2||call.input.facts?normalTaxonomy(call):call.input.permittedRegistry?{repairs:[]}:call.input.approvedVocabulary?normalAnalysis(call):normalFacts(call);
   async completeJson(_instructions:string,prompt:string,settings:ProviderSettings,_signal?:AbortSignal):Promise<CompletionResult> {
     const marker='INPUT_DATA_JSON:\n',index=prompt.indexOf(marker);
     if(index<0)throw new Error('Test requires the real core prompt JSON');
@@ -114,7 +114,7 @@ test('complete workflow scans, drafts and approves vocabulary, reviews a pilot, 
   await run(h,'rebuild');
   assert.equal(h.state.run?.status,'idle');
   assert.equal(h.state.tags.length,1,'Discovery must not append staged core labels to the active vocabulary');
-  assert.ok(h.state.taxonomyProposal!.tags.some(t=>t.name==='Water electrolysis'&&t.status==='draft'));
+  assert.ok(h.state.taxonomyProposal!.tags.some(t=>t.name==='WE'&&t.fullName==='water electrolysis'&&t.status==='draft'));
   assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
   assert.equal(h.host.applied.length,0);
   await h.controller.invoke('approve-taxonomy',{id:h.state.taxonomyProposal!.id});
@@ -128,7 +128,7 @@ test('complete workflow scans, drafts and approves vocabulary, reviews a pilot, 
   assert.equal(h.state.pilotReviewed,true);
   assert.equal(h.host.applied.length,1);
   assert.equal(h.state.history[0].patches.length,2);
-  assert.deepEqual((await h.host.readTags(1)).map(t=>t.tag).sort(),['Fundamental','RCL','Water electrolysis'].sort());
+  assert.deepEqual((await h.host.readTags(1)).map(t=>t.tag).sort(),['Fundamental','RCL','WE'].sort());
   assert.deepEqual(Object.keys(h.state.ownership['1:KEY1']).sort(),h.state.tags.map(t=>t.id).sort());
   await h.controller.invoke('undo',{id:h.state.history[0].id});
   assert.deepEqual(await h.host.readTags(1),[{tag:'Fundamental',type:0}]);
@@ -356,7 +356,7 @@ test('unreadable PDFs produce an evidence-gap warning and do not fabricate an as
   assert.equal(h.ai.calls.length,1);
   assert.deepEqual(h.host.pdfReads,[1]);
   assert.equal(h.state.suggestions.length,0);
-  assert.ok(h.state.warnings.some(message=>message.includes('no readable PDF')));
+  assert.ok(h.state.warnings.some(warning=>warning.status==='active'&&warning.message.includes('no readable PDF')));
   assert.equal(h.host.applied.length,0);
 });
 
@@ -432,21 +432,21 @@ test('global consolidation retries without replaying cached facts or publishing 
   const h=harness({papers:Array.from({length:26},(_,i)=>fixturePaper(i+1))});
   const batchSizes:number[]=[];let failed=false;
   h.ai.handler=call=>{
-    if(!call.input.facts)return normalFacts(call);
-    batchSizes.push(call.input.facts.length);
+    if(call.input.protocolVersion!==2&&!call.input.facts)return normalFacts(call);
+    batchSizes.push(call.input.protocolVersion===2?call.input.paperCount!:call.input.facts!.length);
     if(!failed){failed=true;throw new Error('Vocabulary quota interruption');}
     return normalTaxonomy(call);
   };
   await run(h,'rebuild');
   assert.equal(h.state.run?.status,'paused');assert.equal(h.state.run?.vocabCursor,0);
   assert.equal(h.ai.calls.filter(call=>call.input.paper).length,26);
-  assert.ok(!h.state.tags.some(tag=>tag.name==='Water electrolysis'));assert.equal(h.state.taxonomyProposal,null);
+  assert.ok(!h.state.tags.some(tag=>tag.name==='WE'));assert.equal(h.state.taxonomyProposal,null);
   await h.controller.invoke('resume');await h.controller.waitForIdle();
   assert.equal(h.state.run?.status,'idle');
   assert.deepEqual(batchSizes,[26,26]);
   assert.equal(h.ai.calls.filter(call=>call.input.paper).length,26);
-  assert.equal(h.state.tags.filter(tag=>tag.name==='Water electrolysis').length,0);
-  assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>tag.name==='Water electrolysis').length,1);
+  assert.equal(h.state.tags.filter(tag=>tag.name==='WE').length,0);
+  assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>tag.name==='WE').length,1);
 });
 
 test('a high-confidence incidental match remains in review during automatic assignment',async()=>{

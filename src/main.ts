@@ -1,4 +1,4 @@
-import { AppController, initialState, validState, migrateState } from './controller.ts';
+import { AppController, initialState, validState, validLegacyState, migrateState } from './controller.ts';
 import type { AppState } from './controller.ts';
 import { ZoteroHost, SecureCredentials, registerOAuthCallback, chooseJSONFile } from './platform.ts';
 import { ProviderClient } from './providers.ts';
@@ -6,6 +6,7 @@ import { AtomicStore } from './store.ts';
 import { mountManager } from './ui.ts';
 import type { ManagerUIOptions } from './ui.ts';
 import { mountNavigator } from './navigator.ts';
+import { upsertWarning } from './warnings.ts';
 
 type StartupData = { id: string; version: string; rootURI: string };
 
@@ -62,7 +63,7 @@ async function importVocabulary() {
 }
 
 async function exportVocabulary(value: unknown) {
-  const path = await chooseJSONFile('save');
+  const path = await chooseJSONFile('save',(value as any)?.format==='zotero-smart-tags-proposal'?'smart-tags-proposal-with-evidence.json':'smart-tags-vocabulary.json');
   if (!path) return;
   await IOUtils.writeUTF8(path, JSON.stringify(value, null, 2) + '\n', { tmpPath: `${path}.tmp` });
 }
@@ -157,9 +158,11 @@ export async function startup(data: StartupData) {
     read: path => IOUtils.readUTF8(path),
     exists: path => IOUtils.exists(path),
     writeAtomic: (path, text) => IOUtils.writeUTF8(path, text, { tmpPath: `${path}.tmp` }),
-  }, PathUtils.join(directory, 'state.json'), initialState, validState, migrateState);
+    readBytes:path=>IOUtils.read(path),
+    copyExact:async(source,destination)=>{await IOUtils.copy(source,destination,{noOverwrite:true});},
+  }, PathUtils.join(directory, 'state.json'), initialState, validState, migrateState, validLegacyState);
   const loaded = await store.load();
-  if (store.recovered) loaded.warnings.push('Smart Tags restored its previous valid state from the local backup.');
+  if (store.recovered) loaded.warnings=upsertWarning(loaded.warnings,{code:'state-recovery',message:'Smart Tags restored its previous valid state from the local backup.',context:'startup',conditionFingerprint:'state-backup-recovery'});
   credentials = new SecureCredentials();
   host = new ZoteroHost();
   const secure = credentials;

@@ -166,7 +166,7 @@ test('known DeepSeek usage replaces its reservation while missing usage preserve
   assert.equal(known.ai.calls[0].settings.mode,'deepseek');assert.ok(Math.abs(known.state.run!.spentUSD-0.00012)<1e-12);
   const unknown=harness();unknown.ai.usageKnown=false;await run(unknown);
   assert.ok(unknown.state.run!.spentUSD>known.state.run!.spentUSD);
-  assert.ok(unknown.state.warnings.some(message=>message.includes('omitted usage')));
+  assert.ok(unknown.state.warnings.some(warning=>warning.status==='active'&&warning.message.includes('omitted usage')));
   assert.ok(unknown.saved.some(state=>(state.run?.spentUSD??0)>0&&state.run?.jobs[0].status==='running'));
 });
 

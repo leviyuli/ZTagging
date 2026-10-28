@@ -139,6 +139,31 @@ test("incomplete streams and malformed JSON produce no usable result", async () 
   await assert.rejects(() => h.client.completeJson("Classify", "paper", settings), (error: any) => error.category === "invalid-response");
 });
 
+test('malformed completed model output remains an invalid response with exact bounded text and known usage',async()=>{
+  const raw='  This is not JSON.\nA completed model answer.  ',h=harness(()=>completed(raw));await h.client.setApiKey('private-api-key');
+  await assert.rejects(()=>h.client.completeJson('Classify','paper',settings),(error:unknown)=>{
+    assert.ok(error instanceof ProviderError);assert.equal(error.category,'invalid-response');assert.equal(error.rawText,raw);assert.equal(error.completion!.text,raw);
+    assert.deepEqual(error.completion!.usage,{inputTokens:10,outputTokens:5});assert.equal(error.completion!.usageKnown,true);assert.equal(error.completion!.estimatedCostUSD,0.00003);assert.equal(error.completion!.requestId,'request-test');
+    assert.equal(Object.hasOwn(error.completion!,'value'),false);assert.equal(JSON.stringify(error).includes('private-api-key'),false);return true;
+  });
+});
+
+test('malformed model output with unavailable usage never claims free API inference',async()=>{
+  const h=harness(()=>sse([{type:'response.output_text.delta',delta:'Malformed answer'},{type:'response.completed',response:{status:'completed'}}]));await h.client.setApiKey('private-key');
+  await assert.rejects(()=>h.client.completeJson('Classify','paper',settings),(error:unknown)=>{assert.ok(error instanceof ProviderError);assert.equal(error.rawText,'Malformed answer');assert.equal(error.completion!.usageKnown,false);assert.equal(error.completion!.estimatedCostUSD,null);return true;});
+});
+
+test('HTTP authentication errors never retain transport bodies as model output',async()=>{
+  const h=harness(()=>json({error:{message:'Unauthorized HTTP body must not become model evidence',code:'invalid_api_key'}},401));await h.client.setApiKey('private-api-key');
+  await assert.rejects(()=>h.client.completeJson('Classify','paper',settings),(error:unknown)=>{assert.ok(error instanceof ProviderError);assert.equal(error.category,'authentication');assert.equal(error.rawText,undefined);assert.equal(error.completion,undefined);return true;});
+});
+
+test('retained malformed model text is capped by UTF-8 bytes without attaching diagnostics to authentication errors',()=>{
+  const text='μ'.repeat(1_100_000),completion={text,usage:{inputTokens:10,outputTokens:5},usageKnown:true,estimatedCostUSD:0.00003};
+  const error=new ProviderError('Malformed','invalid-response',{rawText:text,completion});assert.equal(encoder.encode(error.rawText!).byteLength,2_000_000);assert.equal(encoder.encode(error.completion!.text).byteLength,2_000_000);assert.ok(!error.rawText!.includes('\uFFFD'));
+  const auth=new ProviderError('Unauthorized','authentication',{rawText:text,completion});assert.equal(auth.rawText,undefined);assert.equal(auth.completion,undefined);
+});
+
 test("OAuth dynamically registers, validates signature and nonce, then persists an isolated connection", async () => {
   let exchange: URLSearchParams | undefined;
   let h: ReturnType<typeof harness>;

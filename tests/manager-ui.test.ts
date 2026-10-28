@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { build } from 'esbuild';
 import type { DisplayTag, ManagerSnapshot } from '../src/ui-contract.ts';
+import type { WarningRecord } from '../src/warnings.ts';
 
 const bundle = build({entryPoints:['src/ui.ts'],bundle:true,write:false,format:'iife',globalName:'ManagerUI',platform:'browser',target:'firefox140'}).then(result=>result.outputFiles[0].text);
 const settle = () => new Promise<void>(resolve=>setImmediate(resolve));
@@ -56,6 +57,12 @@ function snapshot():ManagerSnapshot {
   return {vocabularyVersion:2,pilotReviewed:true,taxonomyReady:true,tags:[tag('fc','FC',{fullName:'Fuel cell'}),tag('pemfc','PEMFC',{fullName:'Proton exchange membrane fuel cell',broaderIds:['fc']}),tag('eis','EIS',{facet:'method',fullName:'Electrochemical impedance spectroscopy'}),tag('rcl','RCL',{facet:'phenomenon',fullName:'Catalyst-layer resistance',custom:true,relatedIds:['fc'],matchingMode:'suggest'})],
     papers:[{id:'a',title:'Context match',tags:['RCL','PEMFC']},{id:'b',title:'Detail elsewhere',tags:['RCL','Water electrolysis']},{id:'c',title:'Method only',tags:['EIS']},{id:'d',title:'Fuel cell only',tags:['PEMFC']}],suggestions:[],cleanup:[],history:[],neighbors:{},queue:{status:'idle',total:0,completed:0,failed:0},settings:{provider:'api',model:'openai-model',autoAssign:false,budgetUSD:5,inputPricePerMillion:0,outputPricePerMillion:0,maxOutputTokens:512,coreConceptLimit:60},models:['openai-model'],connection:{apiKeyStored:true,deepseekKeyStored:false,chatgptSignedIn:false}};
 }
+function warning(id:string,extra:Partial<WarningRecord>={}):WarningRecord {
+  return {id,code:'missing-pdf-evidence',message:`Evidence gap ${id}`,paperIds:['a'],runIds:['run'],context:'fact-extraction',conditionFingerprint:`condition-${id}`,firstSeenAt:'2026-10-28T00:00:00Z',lastSeenAt:'2026-10-28T00:00:00Z',occurrenceCount:1,status:'active',...extra};
+}
+function evidenceProposal():NonNullable<ManagerSnapshot['taxonomyProposal']> {
+  return {id:'proposal',createdAt:'2026-10-28',inputFingerprint:'input',baseVersion:2,coreLimit:60,tags:[tag('staged','AEMWE',{status:'draft',fullName:'Anion exchange membrane water electrolysis'})],support:{staged:{registryIds:['registry-one'],sourceIds:['fact-one'],paperIds:['a'],evidence:[{paperId:'a',source:'abstract',text:'Anion-exchange membrane water electrolyzers operate under these conditions.'}]}},merges:[],excluded:[],issues:['Confirm the scientific mapping.'],paperIds:['a'],validationIssues:[{id:'issue-one',code:'uncertain-meaning',tagId:'staged',registryId:'registry-one',message:'Confirm the scientific mapping.',severity:'confirmation',paperIds:['a'],sourceNames:['Anion-exchange membrane water electrolyzers']}],mappingConfirmations:{},evidenceSnapshot:{id:'snapshot-one',protocolVersion:2,paperIds:['a'],entries:{'registry-one':{registryId:'registry-one',key:'source-key',sourceIds:['fact-one']}},sources:{'fact-one':{factConceptId:'fact-one',paperId:'a',name:'Anion-exchange membrane water electrolyzers',facet:'system',evidence:[{source:'abstract',text:'Anion-exchange membrane water electrolyzers operate under these conditions.'}],summary:'A factual paper summary.',metadataFingerprint:'metadata',inputFingerprint:'input',provider:'deepseek',model:'deepseek-chat',extractionVersion:1}}}};
+}
 async function harness(data=snapshot(),options:any={}) {
   const dom=managerDOM();const actions:{action:string;payload:any}[]=[];
   const context=vm.createContext({Zotero:{debug(){}},console});vm.runInContext(await bundle,context);
@@ -63,6 +70,10 @@ async function harness(data=snapshot(),options:any={}) {
     actions.push({action,payload:structuredClone(payload)});
     if(action==='save-taxonomy-proposal'&&data.taxonomyProposal){data.taxonomyProposal.tags=payload.tags;if(payload.excluded)data.taxonomyProposal.excluded=payload.excluded;}
     if(action==='discard-invalid-merges'&&data.taxonomyProposal)data.taxonomyProposal.unresolvedMerges=[];
+    if(action==='dismiss-warning')for(const record of data.warnings||[])if(record.id===payload.id&&record.status==='active')record.status='dismissed';
+    if(action==='dismiss-warnings')for(const record of data.warnings||[])if(record.status==='active')record.status='dismissed';
+    if(action==='confirm-taxonomy-mapping'&&data.taxonomyProposal){data.taxonomyProposal.validationIssues=data.taxonomyProposal.validationIssues?.filter(issue=>issue.tagId!==payload.tagId||issue.severity!=='confirmation');data.taxonomyProposal.issues=[];}
+    if(action==='remove-taxonomy-support'&&data.taxonomyProposal){data.taxonomyProposal.validationIssues=data.taxonomyProposal.validationIssues?.filter(issue=>issue.registryId!==payload.registryId);data.taxonomyProposal.issues=[];}
     if(action==='save-settings')data.settings=payload.settings;
     if(action==='save-api-key'&&payload.provider==='deepseek')data.connection.deepseekKeyStored=true;
     if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);return created.id;}
@@ -186,4 +197,101 @@ test('DeepSeek uses its own masked key action and clears previous-provider model
   assert.equal(h.button('Continue with ChatGPT'),undefined);h.change('settings-deepseek-key','test-private-key');await h.click('Save DeepSeek key');
   assert.deepEqual(h.actions[0],{action:'save-api-key',payload:{key:'test-private-key',provider:'deepseek'}});
   assert.equal(h.doc.getElementById('settings-deepseek-key').value,'');assert.equal(JSON.stringify(h.data).includes('test-private-key'),false);
+});
+
+test('active warnings retain all conditions, link affected papers, and dismiss without deleting history',async t=>{
+  const data=snapshot();data.warnings=Array.from({length:27},(_,index)=>warning(`w${index}`,{paperIds:[index%2?'b':'a']}));
+  const h=await harness(data);t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/27 active warnings/);assert.match(h.app.textContent,/2 affected papers/);
+  assert.equal(h.all().filter(node=>node.classList.contains('warning-record')).length,27,'Active conditions must not be truncated at 20');
+  await h.click('Context match');assert.deepEqual(h.actions[0],{action:'show-paper',payload:{id:'a'}});
+  await h.click('Dismiss');assert.deepEqual(h.actions[1],{action:'dismiss-warning',payload:{id:'w0'}});
+  assert.equal(data.warnings.length,27);assert.equal(data.warnings[0].status,'dismissed');assert.match(h.app.textContent,/26 active warnings/);
+  await h.click('Dismiss all');assert.equal(h.actions[2].action,'dismiss-warnings');assert.equal(data.warnings.length,27);
+  assert.equal(h.all().some(node=>node.classList.contains('active-warning-summary')),false);
+  assert.equal(h.app.textContent.includes('Evidence gap w0'),false,'Dismissed records belong in history');
+  h.ui.navigate({page:'activity'});assert.match(h.app.textContent,/Warning history/);assert.match(h.app.textContent,/Evidence gap w0/);
+  h.ui.destroy();const restarted=await harness(data);t.after(()=>restarted.ui.destroy());
+  assert.equal(restarted.all().some(node=>node.classList.contains('active-warning-summary')),false);
+});
+
+test('warning history paginates resolved, dismissed and unverified legacy notices without fabricated metadata',async t=>{
+  const data=snapshot();data.warnings=Array.from({length:61},(_,index)=>warning(`h${index}`,{status:index%2?'dismissed':'resolved'}));
+  data.warnings[0]=warning('legacy',{legacy:true,status:'dismissed',message:'Historical warning from an earlier version.',paperIds:[],runIds:[],firstSeenAt:null,lastSeenAt:null,occurrenceCount:null});
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.equal(h.all().filter(node=>node.classList.contains('warning-record')).length,50);
+  assert.match(h.app.textContent,/historical · unverified/);assert.match(h.app.textContent,/Original paper associations, occurrence count, and dates are unavailable/);
+  const legacy=h.all().find(node=>node.classList.contains('warning-record')&&node.textContent.includes('Historical warning from'))!;
+  assert.equal(legacy.textContent.includes('First seen:'),false);assert.equal(legacy.textContent.includes('occurrences ·'),false);
+  assert.equal(h.button('Dismiss'),undefined);await h.click('Next');
+  assert.equal(h.all().filter(node=>node.classList.contains('warning-record')).length,11);assert.match(h.app.textContent,/Evidence gap h60/);
+});
+
+test('uncertain scientific mapping exposes source wording and immutable quotations before explicit tag-level confirmation',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Approve global vocabulary').disabled,true);assert.match(h.app.textContent,/confirmation required/);
+  assert.match(h.app.textContent,/Source wording: Anion-exchange membrane water electrolyzers/);
+  assert.match(h.app.textContent,/Anion-exchange membrane water electrolyzers operate under these conditions\./);
+  assert.match(h.app.textContent,/deepseek · deepseek-chat/);assert.equal(h.actions.length,0);
+  await h.click('Confirm scientific mapping');assert.deepEqual(h.actions,[{action:'confirm-taxonomy-mapping',payload:{id:'proposal',tagId:'staged'}}]);
+  assert.equal(h.button('Approve global vocabulary').disabled,false);
+});
+
+test('known contradictions stay blocked and offer link removal without scientific confirmation',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  data.taxonomyProposal.validationIssues!.push({id:'contradiction',code:'scientific-contradiction',severity:'error',tagId:'staged',registryId:'registry-one',message:'The source establishes a different scientific system.'});
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Approve global vocabulary').disabled,true);assert.equal(h.button('Confirm scientific mapping'),undefined);
+  assert.match(h.app.textContent,/Correct or remove the contradictory evidence/);await h.click('Remove unsupported link');
+  assert.deepEqual(h.actions[0],{action:'remove-taxonomy-support',payload:{id:'proposal',tagId:'staged',registryId:'registry-one'}});
+});
+
+test('structured validation blocks approval even when the compatibility issue list is empty',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();data.taxonomyProposal.issues=[];
+  data.taxonomyProposal.validationIssues=[{id:'unknown',code:'unknown-registry-id',severity:'error',tagId:'staged',registryId:'unknown-registry',message:'Registry ID is not permitted by this snapshot.'}];
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Approve global vocabulary').disabled,true);assert.match(h.app.textContent,/Registry ID is not permitted by this snapshot/);
+  await h.click('Remove unsupported link');assert.equal(h.actions[0].payload.registryId,'unknown-registry');
+});
+
+test('hostile unknown registry IDs render diagnostics and removal without inheriting object properties',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();data.taxonomyProposal.issues=[];
+  data.taxonomyProposal.support.staged.registryIds=['constructor','__proto__','malformed-entry','hostile-source'];
+  data.taxonomyProposal.evidenceSnapshot!.entries['malformed-entry']={registryId:'malformed-entry',key:'bad',sourceIds:null} as any;
+  data.taxonomyProposal.evidenceSnapshot!.entries['hostile-source']={registryId:'hostile-source',key:'bad-source',sourceIds:['constructor','__proto__']};
+  data.taxonomyProposal.validationIssues=[{id:'unknown-hostile',code:'unknown-registry-id',severity:'error',tagId:'staged',registryId:'constructor',message:'Registry ID constructor is not permitted by this snapshot.'}];
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.app.getAttribute('data-smart-tags-state'),'ready');assert.equal(h.button('Approve global vocabulary').disabled,true);
+  assert.match(h.app.textContent,/Registry ID constructor is not permitted/);assert.match(h.app.textContent,/__proto__/);
+  assert.equal(h.all().filter(node=>node.classList.contains('registry-evidence-entry')).length,4);
+  assert.equal(h.all().filter(node=>node.classList.contains('factual-source')).length,0);
+  await h.click('Remove unsupported link');assert.deepEqual(h.actions[0],{action:'remove-taxonomy-support',payload:{id:'proposal',tagId:'staged',registryId:'constructor'}});
+});
+
+test('malformed consolidation diagnostics remain inspectable and regenerate only after an explicit action',async t=>{
+  const data=snapshot();data.queue={status:'paused',total:51,completed:51,failed:0,consolidation:{phase:'invalid-response',correctionAttempts:1,issues:['The provider response did not contain a tags array.'],canRegenerate:true,rawResponses:[{label:'Initial provider response',response:'{"error":"incomplete consolidation"}'}]}};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/Consolidation diagnostics/);assert.match(h.app.textContent,/1 \/ 1 automatic correction dispatched/);
+  assert.match(h.app.textContent,/did not contain a tags array/);assert.equal(h.actions.length,0);
+  assert.match(h.app.textContent,/Initial provider response/);assert.match(h.app.textContent,/incomplete consolidation/);
+  await h.click('Regenerate proposal');assert.deepEqual(h.actions,[{action:'regenerate-taxonomy',payload:undefined}]);
+});
+
+test('proposal evidence export is explicit and stays separate from definition-only export',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/proposal export includes private paper source wording and quotations/);
+  assert.match(h.app.textContent,/Export definitions below contains definitions only/);assert.equal(h.actions.length,0);
+  await h.click('Export proposal with evidence…');assert.deepEqual(h.actions[0],{action:'export-taxonomy-proposal',payload:{id:'proposal'}});
+  await h.click('Export definitions…');assert.deepEqual(h.actions[1],{action:'export-vocabulary',payload:undefined});
+});
+
+test('superseded warning episodes are distinguished from user dismissal without changing legacy notices',async t=>{
+  const data=snapshot();data.warnings=[warning('old',{status:'dismissed',supersededBy:'new'}),warning('legacy',{status:'dismissed',legacy:true,paperIds:[],runIds:[],firstSeenAt:null,lastSeenAt:null,occurrenceCount:null})];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  const old=h.all().find(node=>node.classList.contains('warning-record')&&node.textContent.includes('Evidence gap old'))!;
+  assert.match(old.textContent,/Superseded/);assert.match(old.textContent,/Replaced by a changed condition/);assert.equal(old.textContent.includes('dismissed'),false);
+  const legacy=h.all().find(node=>node.classList.contains('warning-record')&&node.textContent.includes('Evidence gap legacy'))!;
+  assert.match(legacy.textContent,/historical · unverified/);assert.match(legacy.textContent,/dates are unavailable/);assert.equal(h.actions.length,0);
 });

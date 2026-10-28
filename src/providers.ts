@@ -8,12 +8,24 @@ export class ProviderError extends Error {
   code?: string;
   status?: number;
   requestId?: string;
-  constructor(message: string, category: ProviderErrorCategory, extra: { code?: string; status?: number; requestId?: string } = {}) {
+  /** Only assistant output from an invalid completed inference; never an HTTP/authentication body. */
+  rawText?:string;
+  completion?:Omit<CompletionResult,'value'>;
+  constructor(message: string, category: ProviderErrorCategory, extra: { code?: string; status?: number; requestId?: string;rawText?:string;completion?:Omit<CompletionResult,'value'> } = {}) {
     super(message);
     this.name = "ProviderError";
     this.category = category;
-    Object.assign(this, extra);
+    const {rawText,completion,...metadata}=extra;Object.assign(this, metadata);
+    if(category==='invalid-response'){
+      if(typeof rawText==='string')this.rawText=boundedModelText(rawText);
+      if(completion)this.completion={...completion,text:boundedModelText(completion.text),usage:{...completion.usage}};
+    }
   }
+}
+
+function boundedModelText(value:string):string {
+  const bytes=new TextEncoder().encode(value);
+  return bytes.byteLength<=2_000_000?value:new TextDecoder().decode(bytes.subarray(0,2_000_000),{stream:true});
 }
 
 export interface ProviderSettings {
@@ -569,10 +581,10 @@ export class ProviderClient {
     try {
       const response = await this.request(`${API}/responses`, { method: "POST", headers: { Authorization: `Bearer ${auth.token}`, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify(body) }, timer.signal, settings.timeoutMs ?? 180_000);
       const result = await readResponsesStream(response, timer.signal);
+      const estimatedCostUSD = completionCost(settings, result.usage, result.usageKnown);
       let value: unknown;
       try { value = JSON.parse(result.text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/i, "$1")); }
-      catch { throw new ProviderError("The AI response was not valid JSON. No tags were changed.", "invalid-response", { requestId: result.requestId }); }
-      const estimatedCostUSD = completionCost(settings, result.usage, result.usageKnown);
+      catch { throw new ProviderError("The AI response was not valid JSON. No tags were changed.", "invalid-response", { requestId: result.requestId,rawText:result.text,completion:{...result,estimatedCostUSD} }); }
       return { ...result, value, estimatedCostUSD };
     } catch (error) { throw networkError(error, timer.signal); }
     finally { this.activeRequests.delete(active); timer.cleanup(); }
@@ -600,18 +612,19 @@ export class ProviderClient {
         const requestId = response.headers.get("x-request-id") ?? undefined;
         const data = object(await readBoundedJSON(response, bodySignal, "DeepSeek"));
         const choice = Array.isArray(data.choices) ? object(data.choices[0]) : {};
-        if (choice.finish_reason !== "stop") throw new ProviderError(choice.finish_reason === "length" ? "DeepSeek response was truncated. Reduce the batch size or increase the output token limit." : "DeepSeek did not complete a text response. No partial result was accepted.", "invalid-response", { requestId });
         const message = object(choice.message);
+        if (choice.finish_reason !== "stop") throw new ProviderError(choice.finish_reason === "length" ? "DeepSeek response was truncated. Reduce the batch size or increase the output token limit." : "DeepSeek did not complete a text response. No partial result was accepted.", "invalid-response", { requestId,...(choice.finish_reason==='length'&&(message.role===undefined||message.role==='assistant')&&typeof message.content==='string'&&!message.refusal&&!message.function_call&&!message.tool_calls?{rawText:message.content}:{}) });
         if ((message.role !== undefined && message.role !== "assistant") || (message.tool_calls !== undefined && message.tool_calls !== null && (!Array.isArray(message.tool_calls) || message.tool_calls.length > 0)) || message.function_call || message.refusal || typeof message.content !== "string" || !message.content.trim()) throw new ProviderError("DeepSeek returned no usable JSON text response. No tags were changed.", "invalid-response", { requestId });
         // reasoning_content is intentionally never read, returned, or used as an answer.
-        const text = message.content.trim();
-        let value: unknown;
-        try { value = JSON.parse(text); }
-        catch { throw new ProviderError("DeepSeek response content was not valid JSON. No tags were changed.", "invalid-response", { requestId }); }
-        if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ProviderError("DeepSeek returned a JSON value instead of the requested object.", "invalid-response", { requestId });
+        const rawText=message.content,text = rawText.trim();
         const rawUsage = object(data.usage);
         const usageKnown = Number.isSafeInteger(rawUsage.prompt_tokens) && rawUsage.prompt_tokens >= 0 && Number.isSafeInteger(rawUsage.completion_tokens) && rawUsage.completion_tokens >= 0;
         const usage = { inputTokens: usageKnown ? rawUsage.prompt_tokens : 0, outputTokens: usageKnown ? rawUsage.completion_tokens : 0 };
+        const completion={text:rawText,usage,usageKnown,estimatedCostUSD:completionCost(settings,usage,usageKnown),requestId};
+        let value: unknown;
+        try { value = JSON.parse(text); }
+        catch { throw new ProviderError("DeepSeek response content was not valid JSON. No tags were changed.", "invalid-response", { requestId,rawText,completion }); }
+        if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ProviderError("DeepSeek returned a JSON value instead of the requested object.", "invalid-response", { requestId,rawText,completion });
         return { value, text, usage, usageKnown, estimatedCostUSD: completionCost(settings, usage, usageKnown), requestId };
       }, "DeepSeek");
     } catch (error) { throw networkError(error, timer.signal, "DeepSeek"); }

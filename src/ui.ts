@@ -3,6 +3,8 @@ import { createDropdown, cleanupDropdowns } from './dropdown';
 import { compileConceptFilter, descendantIds, equivalentTagNames } from './concept-filter';
 import type { ConceptFilter } from './concept-filter';
 import { canonicalTagKey } from './core';
+import type { WarningRecord } from './warnings';
+import { isProposalIssueBlocking } from './taxonomy';
 
 type Child = Node | string | null | undefined | false;
 type ModalState = { kind: 'apply' | 'cleanup'; ids: string[] } | { kind: 'search' } | null;
@@ -50,6 +52,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let reviewFilter = 'pending';
   let reviewPage = 0;
   let libraryPage = 0;
+  let warningHistoryPage = 0;
   let modalPage = 0;
   let paperQuery = '';
   let selectedPaper = '';
@@ -239,6 +242,47 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function paperTitle(id: string) { return paperById(id)?.title || id; }
   function openPaper(id: string) { return run('show-paper', { id }); }
   function paperButton(id: string) { return button(paperTitle(id), () => openPaper(id), 'paper-title-button'); }
+  function warningEntry(warning: WarningRecord, active: boolean) {
+    const context = typeof warning.context === 'string' ? warning.context : JSON.stringify(warning.context);
+    const status = warning.legacy ? 'historical · unverified' : warning.supersededBy ? 'Superseded' : warning.status;
+    const heading = h('div', 'inline between', h('div', 'tag-heading', badge(status, active ? 'draft' : warning.status === 'resolved' ? 'approved' : ''), h('span', 'muted', warning.code)), active ? button('Dismiss', () => run('dismiss-warning', { id: warning.id }, 'Warning dismissed. Its history is preserved.'), 'quiet small') : null);
+    const details = h('div', 'warning-record', heading, h('p', 'warning-message', warning.message));
+    if (context) details.append(h('p', 'muted', `Context: ${context}`));
+    if (warning.paperIds.length) details.append(h('div', 'warning-papers', ...warning.paperIds.map(id => paperButton(id))));
+    const metadata: string[] = [];
+    if (warning.occurrenceCount !== null) metadata.push(`${warning.occurrenceCount} ${warning.occurrenceCount === 1 ? 'occurrence' : 'occurrences'}`);
+    if (warning.firstSeenAt) metadata.push(`First seen: ${formatDate(warning.firstSeenAt)}`);
+    if (warning.lastSeenAt && warning.lastSeenAt !== warning.firstSeenAt) metadata.push(`Last seen: ${formatDate(warning.lastSeenAt)}`);
+    if (warning.legacy) metadata.push('Original paper associations, occurrence count, and dates are unavailable.');
+    else if (warning.supersededBy) metadata.push('Replaced by a changed condition.');
+    if (metadata.length) details.append(h('p', 'warning-metadata', metadata.join(' · ')));
+    return details;
+  }
+  function formatDate(value: string) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  }
+  function activeWarnings() {
+    const records = (currentState().warnings || []).filter(warning => warning.status === 'active' && !warning.legacy);
+    if (!records.length) return null;
+    const affected = new Set(records.flatMap(warning => warning.paperIds));
+    const list = h('details', 'warning-list', h('summary', '', 'Review active warnings'), ...records.map(warning => warningEntry(warning, true)));
+    list.open = true;
+    const notice = h('section', 'notice warning active-warning-summary', h('div', 'inline between', h('div', '', h('strong', '', `${records.length} active ${records.length === 1 ? 'warning' : 'warnings'}`), h('p', '', affected.size ? `${affected.size} affected ${affected.size === 1 ? 'paper' : 'papers'}. Dismissing keeps the record in Queue & history.` : 'Dismissing keeps the record in Queue & history.')), h('div', 'inline', button('Dismiss all', () => run('dismiss-warnings', undefined, 'Active warnings dismissed. Their history is preserved.'), 'quiet small'), button('Warning history', () => nav('activity'), 'quiet small'))), list);
+    notice.setAttribute('aria-label', 'Active warnings');
+    return notice;
+  }
+  function warningHistory() {
+    const records = (currentState().warnings || []).filter(warning => warning.status !== 'active' || warning.legacy);
+    warningHistoryPage = Math.min(warningHistoryPage, Math.max(0, Math.ceil(records.length / PAGE_SIZE) - 1));
+    const body = h('div', 'warning-history');
+    if (!records.length) body.append(empty('No warning history', 'Resolved and dismissed warnings are kept here.'));
+    else {
+      for (const warning of records.slice(warningHistoryPage * PAGE_SIZE, (warningHistoryPage + 1) * PAGE_SIZE)) body.append(warningEntry(warning, false));
+      body.append(h('div', 'warning-history-pagination', pagination(records.length, warningHistoryPage, next => { warningHistoryPage = next; })));
+    }
+    return card('Warning history', 'Resolved, dismissed, and imported historical notices remain available for review.', body);
+  }
   function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved'); }
   function pagination(total: number, pageIndex: number, change: (next: number) => void) {
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -448,10 +492,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const limit = currentState().settings.coreConceptLimit ?? proposal.coreLimit ?? 60;
     const conflicts = proposal.decisionConflicts || [];
     const unresolvedMerges = proposal.unresolvedMerges || [];
+    const validationIssues = proposal.validationIssues || [];
+    const blockingValidation = validationIssues.filter(issue => isProposalIssueBlocking(proposal, issue));
+    const problemCount = new Set([...proposal.issues, ...blockingValidation.map(issue => issue.message)]).size;
     const acknowledgementKey = `${proposal.id}:${conflicts.join('\n')}`;
-    const body = h('div', '', h('div', 'proposal-metrics', badge(`${coreTags.length} / ${limit} core concepts`, coreTags.length > limit ? 'removal' : 'draft'), badge(`${proposal.paperIds.length} papers reviewed`), badge(`${proposal.merges.length} merges`), badge(`${proposal.excluded.length} excluded`), badge(`${proposal.issues.length} issues`, proposal.issues.length ? 'removal' : 'approved')),
+    const body = h('div', '', h('div', 'proposal-metrics', badge(`${coreTags.length} / ${limit} core concepts`, coreTags.length > limit ? 'removal' : 'draft'), badge(`${proposal.paperIds.length} papers reviewed`), badge(`${proposal.merges.length} merges`), badge(`${proposal.excluded.length} excluded`), badge(`${problemCount} issues`, problemCount ? 'removal' : 'approved')),
       h('p', 'card-description', 'This proposal is staged. Edit definitions and relationships, inspect representative evidence, then approve the whole vocabulary. Native paper tags and your user details are preserved.'));
     if (proposal.issues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Resolve before approval'), h('ul', 'detail-list', ...proposal.issues.map(issue => h('li', '', issue)))));
+    const proposalIssues = blockingValidation.filter(issue => !issue.tagId);
+    if (proposalIssues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Proposal validation'), h('ul', 'detail-list', ...proposalIssues.map(issue => h('li', '', `${issue.code}: ${issue.message}`)))));
     if (unresolvedMerges.length) {
       const sourceNames = new Map(currentState().tags.map(tag => [tag.id, tag.name]));
       const warning = h('div', 'notice warning section-gap',
@@ -470,6 +519,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const rows = h('div', 'tag-list section-gap');
     for (const tag of coreTags) {
       const support = proposal.support[tag.id];
+      const tagIssues = validationIssues.filter(issue => issue.tagId === tag.id);
+      const uncertain = tagIssues.filter(issue => issue.severity === 'confirmation' && isProposalIssueBlocking(proposal, issue));
+      const hasContradiction = tagIssues.some(issue => issue.code === 'scientific-contradiction' && isProposalIssueBlocking(proposal, issue));
       const rowActions = h('div', 'inline', button('Edit staged definition', () => editTag(tag, proposal.id), 'small quiet'), button('Exclude from core', () => run('save-taxonomy-proposal', {
         id: proposal.id,
         tags: proposal.tags.filter(other => other.id !== tag.id).map(other => other.custom ? other : { ...other, broaderIds: other.broaderIds.filter(id => id !== tag.id), relatedIds: (other.relatedIds || []).filter(id => id !== tag.id) }),
@@ -477,6 +529,40 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }, 'Concept excluded from the staged vocabulary.'), 'quiet small'));
       const row = h('article', 'tag-row', h('div', 'inline between', h('div', '', h('strong', '', conceptLabel(tag)), h('span', 'muted', ` · ${facetNames[tag.facet]}`)), rowActions),
         h('p', '', tag.description), h('div', 'tag-meta', h('span', '', `Evidence coverage: ${support?.paperIds.length ?? 0} papers`), h('span', '', `Currently tagged: ${currentlyTaggedCount(tag, proposal.tags)}`), tag.aliases.length ? h('span', '', `Aliases: ${tag.aliases.join(', ')}`) : null, tag.broaderIds.length ? h('span', '', `Subtype of: ${tag.broaderIds.map(id => names.get(id) || id).join(', ')}`) : null, tag.relatedIds?.length ? h('span', '', `Related: ${tag.relatedIds.map(id => names.get(id) || id).join(', ')}`) : null));
+      if (tagIssues.length) {
+        const issues = h('div', 'proposal-validation section-gap');
+        for (const issue of tagIssues) {
+          const blocking = isProposalIssueBlocking(proposal, issue);
+          const item = h('div', `validation-issue ${blocking ? 'unresolved' : 'confirmed'}`, h('div', 'tag-heading', badge(blocking ? issue.severity === 'confirmation' ? 'confirmation required' : 'blocked' : 'confirmed', blocking ? 'draft' : 'approved'), h('span', 'muted', issue.code)), h('p', '', issue.message));
+          if (issue.sourceNames?.length) item.append(h('p', 'muted', `Source wording: ${issue.sourceNames.join('; ')}`));
+          if (issue.paperIds?.length) item.append(h('div', 'warning-papers', ...issue.paperIds.map(id => paperButton(id))));
+          if (blocking && issue.registryId) item.append(button('Remove unsupported link', () => run('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId: issue.registryId }, 'Evidence link removed. The candidate was revalidated.'), 'quiet small'));
+          issues.append(item);
+        }
+        if (uncertain.length) {
+          issues.append(h('p', 'card-description', hasContradiction ? 'Correct or remove the contradictory evidence before confirming uncertain mappings.' : 'Inspect the original source wording and quotations below. Confirmation applies only to this concept meaning and its current evidence snapshot.'));
+          if (!hasContradiction) issues.append(button('Confirm scientific mapping', () => run('confirm-taxonomy-mapping', { id: proposal.id, tagId: tag.id }, 'Scientific mapping confirmed for this definition and evidence snapshot.'), 'small'));
+        }
+        row.append(issues);
+      }
+      if (support?.registryIds?.length && proposal.evidenceSnapshot) {
+        const snapshot = proposal.evidenceSnapshot;
+        const registryEvidence = h('details', 'registry-evidence section-gap', h('summary', '', 'Original source wording & registry links'));
+        for (const registryId of support.registryIds) {
+          const entry = Object.hasOwn(snapshot.entries, registryId) ? snapshot.entries[registryId] : undefined;
+          const sourceIds = entry && Array.isArray(entry.sourceIds) ? entry.sourceIds : [];
+          const sources = sourceIds.map(id => Object.hasOwn(snapshot.sources, id) ? snapshot.sources[id] : undefined).filter(source => !!source);
+          const sourcePapers = new Set(sources.map(source => source.paperId));
+          const evidence = h('div', 'registry-evidence-entry', h('div', 'inline between', h('div', '', h('strong', '', [...new Set(sources.map(source => source.name))].join('; ') || registryId), h('p', 'muted', `${sourcePapers.size} source ${sourcePapers.size === 1 ? 'paper' : 'papers'} · ${registryId}`)), button('Remove evidence link', () => run('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId }, 'Evidence link removed. The candidate was revalidated.'), 'quiet small')));
+          for (const source of sources) {
+            const original = h('div', 'factual-source', h('div', 'inline', paperButton(source.paperId), h('span', 'muted', `${source.provider} · ${source.model}`)));
+            for (const quote of source.evidence) original.append(h('blockquote', 'evidence', h('cite', '', `${source.name} · ${quote.source}`), quote.text));
+            evidence.append(original);
+          }
+          registryEvidence.append(evidence);
+        }
+        row.append(registryEvidence);
+      }
       if (support?.paperIds.length || support?.evidence?.length) {
         const details = h('details', 'section-gap', h('summary', '', 'Representative papers & evidence'));
         details.append(h('ul', 'detail-list', ...(support.paperIds.slice(0, 5).map(id => h('li', '', paperButton(id))))));
@@ -487,7 +573,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     concepts.append(rows); body.append(concepts);
     if (proposal.merges.length || proposal.excluded.length) body.append(h('details', 'proposal-details section-gap', h('summary', '', 'Merges & excluded candidates'), h('ul', 'detail-list', ...proposal.merges.map(merge => h('li', '', `${names.get(merge.fromId) || tagName(merge.fromId)} → ${names.get(merge.toId) || tagName(merge.toId)}`)), ...proposal.excluded.map(item => h('li', '', `${item.name}: ${item.reason}`)))));
-    return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !!unresolvedMerges.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
+    body.append(h('div', 'section-gap', button('Export proposal with evidence…', () => run('export-taxonomy-proposal', { id: proposal.id }), 'small'), h('p', 'card-description', 'This proposal export includes private paper source wording and quotations, together with stable evidence IDs. Export definitions below contains definitions only.')));
+    return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !!blockingValidation.length || !!unresolvedMerges.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Regenerate proposal', () => regenerateTaxonomy(proposal.id), '', currentState().queue.status === 'running' || currentState().queue.consolidation?.canRegenerate !== true), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
+  }
+  async function regenerateTaxonomy(id?: string) {
+    await run('regenerate-taxonomy', id ? { id } : undefined, 'A new proposal generation was queued. Completed paper facts are preserved.');
   }
 
   function suggestionCard(suggestion: DisplaySuggestion) {
@@ -672,6 +762,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const progress = h('div', '', h('div', 'inline between', badge(q.status, q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} completed · ${q.failed} need attention · ${q.total} total`)), q.message ? h('p', 'card-description', q.message) : null,
       h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? `Estimated API cost: ${number(q.spentUSD)} · metadata-only estimate (lower bound): ${number(q.estimatedUSD)}. PDF follow-ups and vocabulary synthesis can add requests; each request is checked against the remaining budget.` : `${(q.spentUSD ?? 0) > 0 ? `Estimated API cost before switching: ${number(q.spentUSD)}. ` : ''}This run uses your ChatGPT plan allowance. A plan limit pauses work; it does not switch to paid API usage.`));
+    if (q.consolidation) {
+      const consolidation = q.consolidation;
+      const diagnostics = h('div', 'consolidation-diagnostics section-gap', h('h3', '', 'Consolidation diagnostics'), h('div', 'tag-meta', badge(consolidation.phase), h('span', '', `${consolidation.correctionAttempts} / 1 automatic correction dispatched`)), h('p', 'card-description', 'Completed paper facts are retained. Resuming this generation keeps its correction-attempt history. Regenerate sends a new consolidation request through the selected connection and replaces the unapproved proposal.'));
+      if (consolidation.issues.length) diagnostics.append(h('ul', 'detail-list', ...consolidation.issues.map(issue => h('li', '', issue))));
+      for (const response of consolidation.rawResponses || []) diagnostics.append(h('details', 'raw-response section-gap', h('summary', '', response.label), h('pre', '', response.response)));
+      if (s.taxonomyProposal) diagnostics.append(button('Review retained proposal', () => nav('vocabulary'), 'small'));
+      if (consolidation.canRegenerate) diagnostics.append(button('Regenerate proposal', () => regenerateTaxonomy(s.taxonomyProposal?.id), 'quiet small', q.status === 'running'));
+      progress.append(diagnostics);
+    }
     const jobs = h('div', '');
     if (!q.jobs?.length) jobs.append(empty('No queued work', 'Start an analysis from Overview. Completed results are cached for later runs.'));
     else {
@@ -692,7 +791,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
       table.append(tbody); history.append(h('div', 'table-wrap', table));
     }
-    return h('div', 'stack', card('Analysis queue', 'Work can pause and resume without discarding completed results.', progress), h('section', 'card', h('div', 'card-header', h('h2', '', 'Jobs')), jobs), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    return h('div', 'stack', card('Analysis queue', 'Work can pause and resume without discarding completed results.', progress), h('section', 'card', h('div', 'card-header', h('h2', '', 'Jobs')), jobs), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
   function renderSettings() {
@@ -875,7 +974,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       cancel.disabled = false;
       workspace.append(h('div', 'notice info inline between', h('span', '', 'Complete sign-in in your browser, or cancel this attempt.'), cancel));
     }
-    for (const warning of s.warnings || []) workspace.append(h('div', 'notice warning', warning));
+    const warnings = activeWarnings();
+    if (warnings) workspace.append(warnings);
     const contents = page === 'overview' ? renderOverview() : page === 'vocabulary' ? renderVocabulary() : page === 'review' ? renderReview() : page === 'library' ? renderLibrary() : page === 'activity' ? renderActivity() : renderSettings();
     workspace.append(contents);
     const shell = h('div', 'shell', sidebar, h('div', 'workspace-frame', topbar, workspace));

@@ -203,6 +203,30 @@ td .muted { display:block; font-size:11px; }
 .proposal-details .tag-row > .inline { align-items:flex-start; }
 .proposal-details .tag-row strong { font-size:13px; }
 .proposal-details .tag-row .muted { font-size:11px; }
+.warning-list { margin-top:14px; }
+.warning-list > summary,.registry-evidence > summary { cursor:pointer; font-size:12px; font-weight:500; }
+.warning-record { padding:14px 0; border-top:1px solid var(--line); }
+.warning-list > .warning-record:first-of-type { margin-top:10px; }
+.warning-record p { line-height:1.6; overflow-wrap:anywhere; }
+.warning-record .warning-message { margin:4px 0; color:var(--ink); font-size:12px; }
+.warning-record .muted,.warning-metadata { color:var(--muted); font-size:11px; }
+.warning-papers { display:flex; flex-wrap:wrap; gap:7px 14px; margin:8px 0; }
+.warning-papers .paper-title-button { font-size:12px; font-weight:400; }
+.warning-history > .warning-record:first-child { border-top:0; padding-top:0; }
+.warning-history-pagination { margin-top:12px; }
+.validation-issue { margin-bottom:10px; padding:10px 12px; border-left:2px solid var(--warn); background:var(--surface-2); }
+.validation-issue.confirmed { border-color:var(--success); }
+.validation-issue > button { margin-top:8px; }
+.registry-evidence-entry { padding:13px 0; border-bottom:1px solid var(--line); }
+.registry-evidence-entry:last-child { border-bottom:0; }
+.registry-evidence-entry strong { font-size:12px; }
+.registry-evidence-entry > .inline { align-items:flex-start; }
+.factual-source { margin-top:12px; }
+.factual-source .paper-title-button { font-size:12px; }
+.consolidation-diagnostics { padding-top:18px; border-top:1px solid var(--line); }
+.consolidation-diagnostics > button { margin-top:12px; margin-right:8px; }
+.raw-response > summary { cursor:pointer; font-size:12px; }
+.raw-response > pre { max-height:320px; margin-top:10px; padding:12px; overflow:auto; background:var(--surface-2); color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; line-height:1.6; }
 .concept-tree { border-top:1px solid var(--line); }
 .concept-tree-node,.concept-tree-branch { border-bottom:1px solid var(--line); }
 .concept-tree-branch > summary { display:flex; align-items:center; gap:8px; padding:9px 3px; cursor:pointer; font-size:13px; font-weight:500; }
