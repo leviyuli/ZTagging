@@ -65,8 +65,10 @@ function evidenceProposal():NonNullable<ManagerSnapshot['taxonomyProposal']> {
 }
 async function harness(data=snapshot(),options:any={}) {
   const dom=managerDOM();const actions:{action:string;payload:any}[]=[];
+  const subscribers=new Set<()=>void>();let snapshotCalls=0;
   const context=vm.createContext({Zotero:{debug(){}},console});vm.runInContext(await bundle,context);
-  const api={snapshot:async()=>structuredClone(data),subscribe:()=>()=>{},invoke:async(action:string,payload:any)=>{
+  const emit=()=>{for(const listener of subscribers)listener();};
+  const api={snapshot:async()=>{snapshotCalls++;if(options.onSnapshot)await options.onSnapshot(snapshotCalls,emit,data);return structuredClone(data);},subscribe:(listener:()=>void)=>{subscribers.add(listener);return()=>subscribers.delete(listener);},invoke:async(action:string,payload:any)=>{
     actions.push({action,payload:structuredClone(payload)});
     if(action==='save-taxonomy-proposal'&&data.taxonomyProposal){data.taxonomyProposal.tags=payload.tags;if(payload.excluded)data.taxonomyProposal.excluded=payload.excluded;}
     if(action==='discard-invalid-merges'&&data.taxonomyProposal)data.taxonomyProposal.unresolvedMerges=[];
@@ -77,13 +79,15 @@ async function harness(data=snapshot(),options:any={}) {
     if(action==='save-settings')data.settings=payload.settings;
     if(action==='save-api-key'&&payload.provider==='deepseek')data.connection.deepseekKeyStored=true;
     if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);return created.id;}
+    for(let i=0;i<(options.emitOnInvoke||0);i++)emit();
   }};
   const ui=context.ManagerUI.mountManager(dom.win,api,options);await settle();
   assert.equal(dom.app.getAttribute('data-smart-tags-state'),'ready',dom.app.textContent);
   async function click(label:string){const button=dom.button(label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');await settle();}
+  function expand(label:string){const details=dom.all().find(node=>node.localName==='details'&&node.children[0]?.textContent===label);assert.ok(details,`Missing details ${label}`);details.open=true;details.emit('toggle');return details;}
   function change(id:string,value:string|boolean){const control=dom.doc.getElementById(id);assert.ok(control,`Missing control ${id}`);if(typeof value==='boolean'){control.checked=value;control.emit('change');}else{control.value=value;control.emit('input');}}
   function choose(id:string,index:number){const control=dom.doc.getElementById(id);assert.ok(control);control.emit('click');const option=dom.doc.getElementById(`${id}-option-${index}`);assert.ok(option);option.emit('click');}
-  return {...dom,data,actions,ui,click,change,choose};
+  return {...dom,data,actions,ui,click,change,choose,expand,emitUpdate:async()=>{emit();await settle();},get snapshotCalls(){return snapshotCalls;}};
 }
 
 test('native entry navigation creates a user detail in context, without auto creating the RCL example',async t=>{
@@ -232,6 +236,7 @@ test('uncertain scientific mapping exposes source wording and immutable quotatio
   const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
   assert.equal(h.button('Approve global vocabulary').disabled,true);assert.match(h.app.textContent,/confirmation required/);
   assert.match(h.app.textContent,/Source wording: Anion-exchange membrane water electrolyzers/);
+  h.expand('Original source wording & registry links');
   assert.match(h.app.textContent,/Anion-exchange membrane water electrolyzers operate under these conditions\./);
   assert.match(h.app.textContent,/deepseek · deepseek-chat/);assert.equal(h.actions.length,0);
   await h.click('Confirm scientific mapping');assert.deepEqual(h.actions,[{action:'confirm-taxonomy-mapping',payload:{id:'proposal',tagId:'staged'}}]);
@@ -262,9 +267,10 @@ test('hostile unknown registry IDs render diagnostics and removal without inheri
   data.taxonomyProposal.evidenceSnapshot!.entries['hostile-source']={registryId:'hostile-source',key:'bad-source',sourceIds:['constructor','__proto__']};
   data.taxonomyProposal.validationIssues=[{id:'unknown-hostile',code:'unknown-registry-id',severity:'error',tagId:'staged',registryId:'constructor',message:'Registry ID constructor is not permitted by this snapshot.'}];
   const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  h.expand('Original source wording & registry links');
   assert.equal(h.app.getAttribute('data-smart-tags-state'),'ready');assert.equal(h.button('Approve global vocabulary').disabled,true);
   assert.match(h.app.textContent,/Registry ID constructor is not permitted/);assert.match(h.app.textContent,/__proto__/);
-  assert.equal(h.all().filter(node=>node.classList.contains('registry-evidence-entry')).length,4);
+  assert.equal(h.all().filter(node=>node.classList.contains('registry-evidence-entry')).length,5);
   assert.equal(h.all().filter(node=>node.classList.contains('factual-source')).length,0);
   await h.click('Remove unsupported link');assert.deepEqual(h.actions[0],{action:'remove-taxonomy-support',payload:{id:'proposal',tagId:'staged',registryId:'constructor'}});
 });
@@ -272,10 +278,31 @@ test('hostile unknown registry IDs render diagnostics and removal without inheri
 test('malformed consolidation diagnostics remain inspectable and regenerate only after an explicit action',async t=>{
   const data=snapshot();data.queue={status:'paused',total:51,completed:51,failed:0,consolidation:{phase:'invalid-response',correctionAttempts:1,issues:['The provider response did not contain a tags array.'],canRegenerate:true,rawResponses:[{label:'Initial provider response',response:'{"error":"incomplete consolidation"}'}]}};
   const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
-  assert.match(h.app.textContent,/Consolidation diagnostics/);assert.match(h.app.textContent,/1 \/ 1 automatic correction dispatched/);
+  assert.match(h.app.textContent,/Vocabulary analysis needs attention/);
+  assert.equal(h.app.textContent.includes('automatic correction dispatched'),false,'Technical diagnostics start collapsed and unbuilt');
+  h.expand('Technical diagnostics');assert.match(h.app.textContent,/1 \/ 1 automatic correction dispatched/);
   assert.match(h.app.textContent,/did not contain a tags array/);assert.equal(h.actions.length,0);
   assert.match(h.app.textContent,/Initial provider response/);assert.match(h.app.textContent,/incomplete consolidation/);
   await h.click('Regenerate proposal');assert.deepEqual(h.actions,[{action:'regenerate-taxonomy',payload:undefined}]);
+});
+
+test('activity sends a retained proposal to Vocabulary without repeating its validation diagnostics',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();data.queue.consolidation={phase:'needs-review',correctionAttempts:1,issues:['Repeated scientific mapping detail'],canRegenerate:true,rawResponses:[{label:'Provider response',response:'private provider output'}]};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/Vocabulary ready for review/);assert.equal(h.app.textContent.includes('Repeated scientific mapping detail'),false);
+  assert.equal(h.app.textContent.includes('automatic correction'),false);assert.equal(h.app.textContent.includes('private provider output'),false);
+  assert.equal(h.button('Regenerate proposal'),undefined);await h.click('Review vocabulary');
+  assert.ok(h.button('Confirm scientific mapping'));assert.equal(h.actions.length,0);
+});
+
+test('Vocabulary lists each per-concept diagnostic once while retaining global and legacy approval blockers',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();data.taxonomyProposal.issues.push('Legacy proposal diagnostic.');
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.equal(h.app.textContent.split('Confirm the scientific mapping.').length-1,1);
+  assert.match(h.app.textContent,/Legacy proposal diagnostic/);assert.equal(h.button('Approve global vocabulary').disabled,true);
+  data.taxonomyProposal.externalIssues=['Confirm the scientific mapping.'];await h.ui.refresh();
+  assert.equal(h.app.textContent.split('Confirm the scientific mapping.').length-1,2,'An explicit global diagnostic is retained even if a concept has the same text');
+  assert.equal(h.button('Approve global vocabulary').disabled,true);
 });
 
 test('proposal evidence export is explicit and stays separate from definition-only export',async t=>{
@@ -294,4 +321,54 @@ test('superseded warning episodes are distinguished from user dismissal without 
   assert.match(old.textContent,/Superseded/);assert.match(old.textContent,/Replaced by a changed condition/);assert.equal(old.textContent.includes('dismissed'),false);
   const legacy=h.all().find(node=>node.classList.contains('warning-record')&&node.textContent.includes('Evidence gap legacy'))!;
   assert.match(legacy.textContent,/historical · unverified/);assert.match(legacy.textContent,/dates are unavailable/);assert.equal(h.actions.length,0);
+});
+
+test('large proposal review bounds DOM work and preserves evidence pages and unfinished edits across confirmation',async t=>{
+  const data=snapshot();const proposal=evidenceProposal();data.taxonomyProposal=proposal;
+  const original=proposal.evidenceSnapshot!.sources['fact-one'];
+  const paperIds=Array.from({length:250},(_,i)=>`bulk-paper-${i}`);
+  const sources=Object.fromEntries(paperIds.map((paperId,i)=>[`bulk-fact-${i}`,{...original,factConceptId:`bulk-fact-${i}`,paperId,name:'transport resistance',evidence:[{source:'abstract',text:`Verbatim transport-resistance evidence ${i}.`},{source:'title',text:`Source title ${i}.`}]}]));
+  proposal.evidenceSnapshot={id:'bulk-snapshot',protocolVersion:2,paperIds,sources,entries:{'bulk-registry':{registryId:'bulk-registry',key:'transport resistance',sourceIds:Object.keys(sources)}}};
+  proposal.tags=Array.from({length:60},(_,i)=>tag(`bulk-${i}`,`bulk concept ${i}`,{status:'draft'}));
+  proposal.support=Object.fromEntries(proposal.tags.map(value=>[value.id,{registryIds:['bulk-registry'],sourceIds:Object.keys(sources),paperIds}]));
+  proposal.validationIssues=proposal.tags.map(value=>({id:`issue-${value.id}`,tagId:value.id,registryId:'bulk-registry',severity:'confirmation',code:'uncertain-meaning',message:`Confirm mapping for ${value.name}.`,paperIds,sourceNames:['transport resistance']}));
+  proposal.issues=proposal.validationIssues.map(value=>value.message);proposal.paperIds=paperIds;
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const rows=()=>h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row'));
+  const quotes=()=>h.all().filter(node=>node.localName==='blockquote');
+  assert.equal(rows().length,20);assert.equal(quotes().length,0,'Collapsed evidence must not create hidden quote nodes');
+  assert.ok(h.all().length<5000,'Initial render must be bounded independently of 15000 evidence links');
+  await h.click('Edit staged definition');h.change('tag-name','Unfinished local edit');
+  await h.click('Next concepts');assert.match(rows()[0].textContent,/bulk concept 20/);
+  assert.equal(h.doc.getElementById('tag-name').value,'Unfinished local edit');
+  h.expand('Original source wording & registry links');assert.equal(quotes().length,40);
+  await h.click('Next evidence');assert.equal(quotes().length,40);assert.match(h.app.textContent,/Verbatim transport-resistance evidence 20/);
+  h.doc.getElementById('proposal-concept-list').scrollTop=345;
+  await h.click('Confirm scientific mapping');
+  assert.deepEqual(h.actions.at(-1),{action:'confirm-taxonomy-mapping',payload:{id:'proposal',tagId:'bulk-20'}});
+  assert.match(rows()[0].textContent,/bulk concept 20/);assert.match(h.app.textContent,/Verbatim transport-resistance evidence 20/);
+  assert.equal(quotes().length,40);assert.equal(h.doc.getElementById('tag-name').value,'Unfinished local edit');
+  assert.equal(h.doc.getElementById('proposal-concept-list').scrollTop,345);
+  assert.equal(h.button('Approve global vocabulary').disabled,true,'Other uncertain mappings still block approval');
+  await h.click('Next concepts');await h.click('Previous concepts');
+  assert.match(h.app.textContent,/Verbatim transport-resistance evidence 20/);assert.equal(quotes().length,40);
+  assert.equal(h.doc.getElementById('proposal-concept-list').scrollTop,345);
+});
+
+test('action save notifications share one final snapshot while later external updates remain visible',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary',emitOnInvoke:5});t.after(()=>h.ui.destroy());
+  assert.equal(h.snapshotCalls,1);await h.click('Confirm scientific mapping');
+  assert.equal(h.snapshotCalls,2,'An action and its save notifications need only one final snapshot');
+  data.warnings=[warning('external')];await h.emitUpdate();
+  assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
+});
+
+test('external notification during an action snapshot is refreshed after the action settles',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary',onSnapshot:async(call:number,emit:()=>void,current:ManagerSnapshot)=>{
+    if(call===2){emit();await settle();current.warnings=[warning('concurrent')];}
+  }});t.after(()=>h.ui.destroy());
+  await h.click('Confirm scientific mapping');await settle();await settle();
+  assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap concurrent/);
 });

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- Fixed slow Vocabulary review by evaluating each confirmed mapping once per validation or render pass, preserving existing confirmation hashes.
+- Paginated proposed concepts and loaded source quotations only when expanded, with bounded evidence pages.
+- Preserved open evidence, pagination, scroll position, and unfinished edits across review actions.
+- Coalesced save notifications into one manager refresh and indexed native tags once per snapshot.
+- Replaced duplicate consolidation diagnostics in Queue & history with a short link to Vocabulary. Unparsed failures retain collapsed technical details.
+- Kept existing proposals, confirmations, extracted evidence, and native library data unchanged during upgrade.
+
 ## 0.3.0
 
 - Added opaque factual, registry, and vocabulary identities plus immutable consolidation snapshots.

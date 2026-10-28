@@ -1,19 +1,18 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.3.0",
-  "verifiedAt": "2026-10-28T09:12:04.036Z",
+  "version": "0.3.1",
+  "verifiedAt": "2026-10-28T09:45:54.266Z",
   "target": "Zotero 10.0.6 on Windows",
   "schemaVersion": 3,
   "consolidationProtocolVersion": 2,
-  "factualExtractorVersion": 1,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 424,
+    "passed": 436,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 86,
+    "passed": 96,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -358,46 +357,105 @@
       {
         "name": "v030NativeTagsUnchangedDuringReview",
         "passed": true
+      },
+      {
+        "name": "v031IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v031IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v031LargeSyntheticEvidenceShape",
+        "passed": true
+      },
+      {
+        "name": "v031LargeProposalRenderBudget",
+        "passed": true
+      },
+      {
+        "name": "v031LargeProposalBoundedInitialDOM",
+        "passed": true
+      },
+      {
+        "name": "v031LargeEvidencePageBounded",
+        "passed": true
+      },
+      {
+        "name": "v031LargeConfirmationBudget",
+        "passed": true
+      },
+      {
+        "name": "v031LargeReviewStatePreserved",
+        "passed": true
+      },
+      {
+        "name": "v031ActivityReviewIsCompact",
+        "passed": true
+      },
+      {
+        "name": "v031LargeReviewNoNativeTagWrites",
+        "passed": true
       }
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "managerUI": {
-    "nativeManagerOpened": true,
-    "scientificConfirmationAction": true,
-    "warningDismissalAndReopen": true,
-    "screenshotInspection": "Unavailable: Windows Computer Use native helper pipe was not present."
-  },
-  "migrationReplay": {
-    "status": "passed",
-    "retainedFactualRecords": 97,
-    "completedSelectedJobs": 51,
-    "extractionRequests": 0,
-    "syntheticConsolidationRequests": 1,
-    "exactByteBackup": true,
-    "quotationsAndProvenancePreserved": true,
-    "snapshotExcludesOtherCachedPapers": true,
-    "nativeTagWrites": 0,
-    "workingProfileBytesUnchanged": true
-  },
-  "rightItemAndInformationPaneSection": false,
-  "workingLibraryModified": false,
-  "liveAI": "No live provider requests or account authentication were performed. Provider tests use synthetic credentials and responses. The private replay validates recovery and source preservation, not the scientific quality of a newly generated full vocabulary.",
-  "publicArtifactPrivateDataScan": "passed",
-  "artifacts": {
-    "installer": {
-      "file": "smart-tags-0.3.0.xpi",
-      "bytes": 285795,
-      "sha256": "7e7944bba1ea6f322c47514f8fe4012c840eab54004e9552039d2c53215d9374"
+  "vocabularyPerformance": {
+    "native": {
+      "papers": 51,
+      "sources": 428,
+      "coreConcepts": 60,
+      "initialIssues": 99,
+      "snapshotBytes": 755824,
+      "initialRenderMS": 103,
+      "confirmationMS": 1721,
+      "initialQuoteNodes": 0,
+      "visibleConcepts": 20,
+      "sourcePageSize": 20,
+      "reviewStatePreserved": true
     },
-    "source": {
-      "file": "smart-tags-0.3.0-source.zip",
-      "bytes": 279228,
-      "sha256": "436368306ac5acc064037504416701a0675e2ac50448980d52d8b67365bbe9de"
+    "privateReadOnlyReplay": {
+      "sourceCount": 428,
+      "issueCount": 101,
+      "baseline": {
+        "threeIssuePassesMS": 1188.9,
+        "validationMS": 1164.1,
+        "confirmationMS": 1124,
+        "snapshotMS": 38.7
+      },
+      "patched": {
+        "threeIssuePassesMS": 26.8,
+        "validationMS": 139.5,
+        "confirmationMS": 143.4,
+        "snapshotMS": 5.7
+      },
+      "sourceEvidenceUnchanged": true,
+      "existingConfirmationsUnchanged": true,
+      "definitionsUnchanged": true,
+      "providerRequests": 0,
+      "nativeWrites": 0
     }
   },
-  "sha256": "7e7944bba1ea6f322c47514f8fe4012c840eab54004e9552039d2c53215d9374",
-  "sourceSha256": "436368306ac5acc064037504416701a0675e2ac50448980d52d8b67365bbe9de",
+  "queueReviewUI": "Reviewable proposals use a compact Vocabulary link; unparsed output retains collapsed technical diagnostics.",
+  "rightItemAndInformationPaneSection": false,
+  "workingLibraryModified": false,
+  "publicArtifactPrivateDataScan": "passed",
+  "limits": "No live provider request or account authentication was performed. Native UI checks are programmatic; screenshots were not inspected. Timing measurements are specific to this environment.",
+  "artifacts": {
+    "installer": {
+      "file": "smart-tags-0.3.1.xpi",
+      "bytes": 289047,
+      "sha256": "9e19986bb0a8534501548f3fddd33f28f9e6cb0fc7e758a72216ecabd644c6f5"
+    },
+    "source": {
+      "file": "smart-tags-0.3.1-source.zip",
+      "bytes": 289631,
+      "sha256": "7d299e1853ca4b5c2d4c411b75108d759ae257bac15c1a68457987ebafaf04e8"
+    }
+  },
+  "sha256": "9e19986bb0a8534501548f3fddd33f28f9e6cb0fc7e758a72216ecabd644c6f5",
+  "sourceSha256": "7d299e1853ca4b5c2d4c411b75108d759ae257bac15c1a68457987ebafaf04e8",
   "repository": "https://github.com/leviyuli/ZTagging"
 }

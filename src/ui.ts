@@ -4,7 +4,7 @@ import { compileConceptFilter, descendantIds, equivalentTagNames } from './conce
 import type { ConceptFilter } from './concept-filter';
 import { canonicalTagKey } from './core';
 import type { WarningRecord } from './warnings';
-import { isProposalIssueBlocking } from './taxonomy';
+import { createProposalIssueEvaluator } from './taxonomy';
 
 type Child = Node | string | null | undefined | false;
 type ModalState = { kind: 'apply' | 'cleanup'; ids: string[] } | { kind: 'search' } | null;
@@ -43,6 +43,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let disposed = false;
   let refreshing = false;
   let refreshAgain = false;
+  let refreshDeferred = false;
   let toast = '';
   let toastError = false;
   let toastTimer = 0;
@@ -59,6 +60,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let editorTag: DisplayTag | null = null;
   let editorProposalId = '';
   let proposalDecisionAck = '';
+  let proposalViewId = '';
+  let proposalPage = 0;
+  const openProposalDetails = new Set<string>();
+  const proposalEvidencePages = new Map<string, number>();
+  const proposalScrollPositions = new Map<string, number>();
   let detailScope: Scope = 'selected';
   const relationQueries = new Map<string, string>();
   const openRelationshipPickers = new Set<string>();
@@ -171,6 +177,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     try {
       const result = await api.invoke(action, payload);
       if (message) { toast = message; toastError = false; }
+      refreshDeferred = false;
       await refresh();
       return result;
     } catch (error) {
@@ -180,6 +187,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     } finally {
       busy = false;
       render();
+      if (refreshDeferred) { refreshDeferred = false;void refresh(); }
     }
   }
   async function refresh() {
@@ -284,10 +292,22 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return card('Warning history', 'Resolved, dismissed, and imported historical notices remain available for review.', body);
   }
   function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved'); }
-  function pagination(total: number, pageIndex: number, change: (next: number) => void) {
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    return h('div', 'inline between', h('span', 'muted', total ? `${pageIndex * PAGE_SIZE + 1}–${Math.min(total, (pageIndex + 1) * PAGE_SIZE)} of ${total}` : '0 results'),
-      h('div', 'inline', button('Previous', () => { change(pageIndex - 1); render(); }, 'small', pageIndex <= 0), h('span', 'muted', `${pageIndex + 1} / ${pages}`), button('Next', () => { change(pageIndex + 1); render(); }, 'small', pageIndex >= pages - 1)));
+  function pagination(total: number, pageIndex: number, change: (next: number) => void, pageSize = PAGE_SIZE, noun = '') {
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    return h('div', 'inline between', h('span', 'muted', total ? `${pageIndex * pageSize + 1}–${Math.min(total, (pageIndex + 1) * pageSize)} of ${total}` : '0 results'),
+      h('div', 'inline', button(`Previous${noun ? ` ${noun}` : ''}`, () => { change(pageIndex - 1); render(); }, 'small', pageIndex <= 0), h('span', 'muted', `${pageIndex + 1} / ${pages}`), button(`Next${noun ? ` ${noun}` : ''}`, () => { change(pageIndex + 1); render(); }, 'small', pageIndex >= pages - 1)));
+  }
+  function lazyProposalDetails(key: string, className: string, label: string, content: () => Node[]) {
+    const summary = h('summary', '', label);
+    const details = h('details', className, summary);
+    details.open = openProposalDetails.has(key);
+    if (details.open) details.append(...content());
+    details.addEventListener('toggle', () => {
+      if (!details.isConnected) return;
+      if (details.open) { openProposalDetails.add(key);if (details.children.length === 1) details.append(...content()); }
+      else { openProposalDetails.delete(key);details.replaceChildren(summary); }
+    });
+    return details;
   }
   function relevantSuggestions() { return currentState().suggestions.filter(item => reviewFilter === 'all' || (reviewFilter === 'applied' ? item.applied : item.status === reviewFilter && !item.applied)); }
   function scopeSelect() {
@@ -487,20 +507,24 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function taxonomyProposal() {
     const proposal = currentState().taxonomyProposal;
     if (!proposal) return null;
+    if (proposalViewId !== proposal.id) { proposalViewId = proposal.id;proposalPage = 0;openProposalDetails.clear();proposalEvidencePages.clear();proposalScrollPositions.clear(); }
     const names = new Map(proposal.tags.map(tag => [tag.id, tag.name]));
     const coreTags = proposal.tags.filter(tag => !tag.custom);
     const limit = currentState().settings.coreConceptLimit ?? proposal.coreLimit ?? 60;
     const conflicts = proposal.decisionConflicts || [];
     const unresolvedMerges = proposal.unresolvedMerges || [];
     const validationIssues = proposal.validationIssues || [];
-    const blockingValidation = validationIssues.filter(issue => isProposalIssueBlocking(proposal, issue));
+    const isBlocking = createProposalIssueEvaluator(proposal);
+    const blockingValidation = validationIssues.filter(isBlocking);
+    const coreIds = new Set(coreTags.map(tag => tag.id));
+    const perConceptMessages = new Set(validationIssues.filter(issue => issue.tagId && coreIds.has(issue.tagId)).map(issue => issue.message));
+    const globalMessages = new Set([...(proposal.externalIssues || []), ...validationIssues.filter(issue => !issue.tagId || !coreIds.has(issue.tagId)).map(issue => issue.message)]);
+    const headerIssues = [...new Set([...proposal.issues.filter(message => !perConceptMessages.has(message) || globalMessages.has(message)), ...blockingValidation.filter(issue => !issue.tagId || !coreIds.has(issue.tagId)).map(issue => issue.message)])];
     const problemCount = new Set([...proposal.issues, ...blockingValidation.map(issue => issue.message)]).size;
     const acknowledgementKey = `${proposal.id}:${conflicts.join('\n')}`;
     const body = h('div', '', h('div', 'proposal-metrics', badge(`${coreTags.length} / ${limit} core concepts`, coreTags.length > limit ? 'removal' : 'draft'), badge(`${proposal.paperIds.length} papers reviewed`), badge(`${proposal.merges.length} merges`), badge(`${proposal.excluded.length} excluded`), badge(`${problemCount} issues`, problemCount ? 'removal' : 'approved')),
       h('p', 'card-description', 'This proposal is staged. Edit definitions and relationships, inspect representative evidence, then approve the whole vocabulary. Native paper tags and your user details are preserved.'));
-    if (proposal.issues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Resolve before approval'), h('ul', 'detail-list', ...proposal.issues.map(issue => h('li', '', issue)))));
-    const proposalIssues = blockingValidation.filter(issue => !issue.tagId);
-    if (proposalIssues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Proposal validation'), h('ul', 'detail-list', ...proposalIssues.map(issue => h('li', '', `${issue.code}: ${issue.message}`)))));
+    if (headerIssues.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Resolve before approval'), h('ul', 'detail-list', ...headerIssues.map(issue => h('li', '', issue)))));
     if (unresolvedMerges.length) {
       const sourceNames = new Map(currentState().tags.map(tag => [tag.id, tag.name]));
       const warning = h('div', 'notice warning section-gap',
@@ -516,12 +540,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     if (conflicts.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Existing decisions need to be preserved'), h('ul', 'detail-list', ...conflicts.map(conflict => h('li', '', conflict))), h('div', 'section-gap', checkbox('taxonomy-preserve-decisions', proposalDecisionAck === acknowledgementKey, 'Preserve rejected and locked decisions when merging', checked => { proposalDecisionAck = checked ? acknowledgementKey : ''; render(); })), h('p', '', 'Approval carries the restrictive decisions into the merged concept.')));
     const concepts = h('details', 'proposal-details section-gap', h('summary', '', `Review ${coreTags.length} proposed concepts`));
+    concepts.open = true;
+    proposalPage = Math.min(proposalPage, Math.max(0, Math.ceil(coreTags.length / 20) - 1));
     const rows = h('div', 'tag-list section-gap');
-    for (const tag of coreTags) {
+    rows.id = 'proposal-concept-list';rows.setAttribute('data-view-key', `${proposal.id}:${proposalPage}`);
+    for (const tag of coreTags.slice(proposalPage * 20, (proposalPage + 1) * 20)) {
       const support = proposal.support[tag.id];
       const tagIssues = validationIssues.filter(issue => issue.tagId === tag.id);
-      const uncertain = tagIssues.filter(issue => issue.severity === 'confirmation' && isProposalIssueBlocking(proposal, issue));
-      const hasContradiction = tagIssues.some(issue => issue.code === 'scientific-contradiction' && isProposalIssueBlocking(proposal, issue));
+      const uncertain = tagIssues.filter(issue => issue.severity === 'confirmation' && isBlocking(issue));
+      const hasContradiction = tagIssues.some(issue => issue.code === 'scientific-contradiction' && isBlocking(issue));
       const rowActions = h('div', 'inline', button('Edit staged definition', () => editTag(tag, proposal.id), 'small quiet'), button('Exclude from core', () => run('save-taxonomy-proposal', {
         id: proposal.id,
         tags: proposal.tags.filter(other => other.id !== tag.id).map(other => other.custom ? other : { ...other, broaderIds: other.broaderIds.filter(id => id !== tag.id), relatedIds: (other.relatedIds || []).filter(id => id !== tag.id) }),
@@ -532,10 +559,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (tagIssues.length) {
         const issues = h('div', 'proposal-validation section-gap');
         for (const issue of tagIssues) {
-          const blocking = isProposalIssueBlocking(proposal, issue);
+          const blocking = isBlocking(issue);
           const item = h('div', `validation-issue ${blocking ? 'unresolved' : 'confirmed'}`, h('div', 'tag-heading', badge(blocking ? issue.severity === 'confirmation' ? 'confirmation required' : 'blocked' : 'confirmed', blocking ? 'draft' : 'approved'), h('span', 'muted', issue.code)), h('p', '', issue.message));
           if (issue.sourceNames?.length) item.append(h('p', 'muted', `Source wording: ${issue.sourceNames.join('; ')}`));
-          if (issue.paperIds?.length) item.append(h('div', 'warning-papers', ...issue.paperIds.map(id => paperButton(id))));
+          if (issue.paperIds?.length) item.append(h('div', 'warning-papers', ...issue.paperIds.slice(0, 5).map(id => paperButton(id)), issue.paperIds.length > 5 ? h('span', 'muted', `${issue.paperIds.length} papers; inspect source evidence below.`) : null));
           if (blocking && issue.registryId) item.append(button('Remove unsupported link', () => run('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId: issue.registryId }, 'Evidence link removed. The candidate was revalidated.'), 'quiet small'));
           issues.append(item);
         }
@@ -547,31 +574,36 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
       if (support?.registryIds?.length && proposal.evidenceSnapshot) {
         const snapshot = proposal.evidenceSnapshot;
-        const registryEvidence = h('details', 'registry-evidence section-gap', h('summary', '', 'Original source wording & registry links'));
-        for (const registryId of support.registryIds) {
+        const evidenceKey = `${proposal.id}:${tag.id}:registry`;
+        const registryEvidence = lazyProposalDetails(evidenceKey, 'registry-evidence section-gap', 'Original source wording & registry links', () => {
+        const entries = support.registryIds!.flatMap(registryId => {
           const entry = Object.hasOwn(snapshot.entries, registryId) ? snapshot.entries[registryId] : undefined;
           const sourceIds = entry && Array.isArray(entry.sourceIds) ? entry.sourceIds : [];
-          const sources = sourceIds.map(id => Object.hasOwn(snapshot.sources, id) ? snapshot.sources[id] : undefined).filter(source => !!source);
-          const sourcePapers = new Set(sources.map(source => source.paperId));
-          const evidence = h('div', 'registry-evidence-entry', h('div', 'inline between', h('div', '', h('strong', '', [...new Set(sources.map(source => source.name))].join('; ') || registryId), h('p', 'muted', `${sourcePapers.size} source ${sourcePapers.size === 1 ? 'paper' : 'papers'} · ${registryId}`)), button('Remove evidence link', () => run('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId }, 'Evidence link removed. The candidate was revalidated.'), 'quiet small')));
-          for (const source of sources) {
+          return sourceIds.length ? sourceIds.map(sourceId => ({ registryId, source: Object.hasOwn(snapshot.sources, sourceId) ? snapshot.sources[sourceId] : undefined })) : [{ registryId, source: undefined }];
+        });
+        const evidencePage = Math.min(proposalEvidencePages.get(evidenceKey) || 0, Math.max(0, Math.ceil(entries.length / 20) - 1));
+        const content: Node[] = [];
+        for (const { registryId, source } of entries.slice(evidencePage * 20, (evidencePage + 1) * 20)) {
+          const evidence = h('div', 'registry-evidence-entry', h('div', 'inline between', h('div', '', h('strong', '', source?.name || registryId), h('p', 'muted', registryId)), button('Remove evidence link', () => run('remove-taxonomy-support', { id: proposal.id, tagId: tag.id, registryId }, 'Evidence link removed. The candidate was revalidated.'), 'quiet small')));
+          if (source) {
             const original = h('div', 'factual-source', h('div', 'inline', paperButton(source.paperId), h('span', 'muted', `${source.provider} · ${source.model}`)));
             for (const quote of source.evidence) original.append(h('blockquote', 'evidence', h('cite', '', `${source.name} · ${quote.source}`), quote.text));
             evidence.append(original);
           }
-          registryEvidence.append(evidence);
+          content.push(evidence);
         }
+        content.push(pagination(entries.length, evidencePage, next => { proposalEvidencePages.set(evidenceKey, next); }, 20, 'evidence'));
+        return content;
+        });
         row.append(registryEvidence);
       }
       if (support?.paperIds.length || support?.evidence?.length) {
-        const details = h('details', 'section-gap', h('summary', '', 'Representative papers & evidence'));
-        details.append(h('ul', 'detail-list', ...(support.paperIds.slice(0, 5).map(id => h('li', '', paperButton(id))))));
-        for (const evidence of support.evidence?.slice(0, 3) || []) details.append(h('blockquote', 'evidence', h('cite', '', [evidence.source, evidence.paperId ? paperTitle(evidence.paperId) : ''].filter(Boolean).join(' · ')), evidence.text));
+        const details = lazyProposalDetails(`${proposal.id}:${tag.id}:representative`, 'section-gap', 'Representative papers & evidence', () => [h('ul', 'detail-list', ...(support.paperIds.slice(0, 5).map(id => h('li', '', paperButton(id))))), ...(support.evidence?.slice(0, 3) || []).map(evidence => h('blockquote', 'evidence', h('cite', '', [evidence.source, evidence.paperId ? paperTitle(evidence.paperId) : ''].filter(Boolean).join(' · ')), evidence.text))]);
         row.append(details);
       }
       rows.append(row);
     }
-    concepts.append(rows); body.append(concepts);
+    concepts.append(rows, pagination(coreTags.length, proposalPage, next => { proposalPage = next; }, 20, 'concepts')); body.append(concepts);
     if (proposal.merges.length || proposal.excluded.length) body.append(h('details', 'proposal-details section-gap', h('summary', '', 'Merges & excluded candidates'), h('ul', 'detail-list', ...proposal.merges.map(merge => h('li', '', `${names.get(merge.fromId) || tagName(merge.fromId)} → ${names.get(merge.toId) || tagName(merge.toId)}`)), ...proposal.excluded.map(item => h('li', '', `${item.name}: ${item.reason}`)))));
     body.append(h('div', 'section-gap', button('Export proposal with evidence…', () => run('export-taxonomy-proposal', { id: proposal.id }), 'small'), h('p', 'card-description', 'This proposal export includes private paper source wording and quotations, together with stable evidence IDs. Export definitions below contains definitions only.')));
     return card('Staged vocabulary proposal', `Based on vocabulary version ${proposal.baseVersion}. No changes are published until approval.`, body, h('div', 'inline', button('Approve global vocabulary', async () => { await run('approve-taxonomy', { id: proposal.id, preserveDecisions: proposalDecisionAck === acknowledgementKey }, 'Global vocabulary approved. Review paper assignments separately.'); editorTag = null; editorProposalId = ''; proposalDecisionAck = ''; }, 'primary', !!proposal.issues.length || !!blockingValidation.length || !!unresolvedMerges.length || !coreTags.length || coreTags.length > limit || !!conflicts.length && proposalDecisionAck !== acknowledgementKey), button('Regenerate proposal', () => regenerateTaxonomy(proposal.id), '', currentState().queue.status === 'running' || currentState().queue.consolidation?.canRegenerate !== true), button('Discard proposal', async () => { await run('discard-taxonomy', { id: proposal.id }, 'Staged proposal discarded.'); if (editorProposalId === proposal.id) { editorTag = null; editorProposalId = ''; } proposalDecisionAck = ''; }, 'quiet')), 'proposal-card');
@@ -764,11 +796,19 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('p', 'card-description', runProvider !== 'chatgpt' ? `Estimated API cost: ${number(q.spentUSD)} · metadata-only estimate (lower bound): ${number(q.estimatedUSD)}. PDF follow-ups and vocabulary synthesis can add requests; each request is checked against the remaining budget.` : `${(q.spentUSD ?? 0) > 0 ? `Estimated API cost before switching: ${number(q.spentUSD)}. ` : ''}This run uses your ChatGPT plan allowance. A plan limit pauses work; it does not switch to paid API usage.`));
     if (q.consolidation) {
       const consolidation = q.consolidation;
-      const diagnostics = h('div', 'consolidation-diagnostics section-gap', h('h3', '', 'Consolidation diagnostics'), h('div', 'tag-meta', badge(consolidation.phase), h('span', '', `${consolidation.correctionAttempts} / 1 automatic correction dispatched`)), h('p', 'card-description', 'Completed paper facts are retained. Resuming this generation keeps its correction-attempt history. Regenerate sends a new consolidation request through the selected connection and replaces the unapproved proposal.'));
-      if (consolidation.issues.length) diagnostics.append(h('ul', 'detail-list', ...consolidation.issues.map(issue => h('li', '', issue))));
-      for (const response of consolidation.rawResponses || []) diagnostics.append(h('details', 'raw-response section-gap', h('summary', '', response.label), h('pre', '', response.response)));
-      if (s.taxonomyProposal) diagnostics.append(button('Review retained proposal', () => nav('vocabulary'), 'small'));
-      if (consolidation.canRegenerate) diagnostics.append(button('Regenerate proposal', () => regenerateTaxonomy(s.taxonomyProposal?.id), 'quiet small', q.status === 'running'));
+      const reviewable = s.taxonomyProposal?.tags.some(tag => !tag.custom);
+      const diagnostics = h('div', 'consolidation-diagnostics section-gap', h('h3', '', reviewable ? 'Vocabulary ready for review' : 'Vocabulary analysis needs attention'));
+      if (reviewable) diagnostics.append(button('Review vocabulary', () => nav('vocabulary'), 'small'));
+      else {
+        diagnostics.append(h('p', 'card-description', 'No reviewable vocabulary was produced. Completed paper analysis is kept.'));
+        if (consolidation.canRegenerate) diagnostics.append(button('Regenerate proposal', () => regenerateTaxonomy(s.taxonomyProposal?.id), 'quiet small', q.status === 'running'));
+        const technical = lazyProposalDetails('activity-consolidation', 'section-gap', 'Technical diagnostics', () => [
+          h('div', 'tag-meta', badge(consolidation.phase), h('span', '', `${consolidation.correctionAttempts} / 1 automatic correction dispatched`)),
+          h('ul', 'detail-list', ...consolidation.issues.map(issue => h('li', '', issue))),
+          ...(consolidation.rawResponses || []).map(response => h('details', 'raw-response section-gap', h('summary', '', response.label), h('pre', '', response.response))),
+        ]);
+        diagnostics.append(technical);
+      }
       progress.append(diagnostics);
     }
     const jobs = h('div', '');
@@ -926,6 +966,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
 
   function renderContent() {
+    const priorProposalRows = doc.getElementById('proposal-concept-list');
+    const priorProposalKey = priorProposalRows?.getAttribute('data-view-key');
+    if (priorProposalRows && priorProposalKey) proposalScrollPositions.set(priorProposalKey, priorProposalRows.scrollTop);
     if (disposed) return;
     const focused = doc.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
     const focusId = focused?.id;
@@ -987,6 +1030,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const modalElement = renderModal();
     if (modalElement) shell.append(modalElement);
     app!.replaceChildren(shell);
+    const proposalRows = doc.getElementById('proposal-concept-list');
+    if (proposalRows) proposalRows.scrollTop = proposalScrollPositions.get(proposalRows.getAttribute('data-view-key') || '') || 0;
     app!.setAttribute('data-smart-tags-state', 'ready');
     if (focusId) {
       const restored = doc.getElementById(focusId) as HTMLInputElement | HTMLTextAreaElement | null;
@@ -1021,7 +1066,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
   }
 
-  const unsubscribe = api.subscribe(() => { void refresh(); });
+  const unsubscribe = api.subscribe(() => { if (busy) refreshDeferred = true;else void refresh(); });
   const destroy = () => {
     if (disposed) return;
     disposed = true;

@@ -1,5 +1,7 @@
 # Upgrading to Smart Tags 0.3.0
 
+**0.3.1 performance patch:** Install over 0.3.0 and reopen Smart Tags. It uses the same schema and confirmation hash format. Your pending proposal, confirmed mappings, evidence, and settings remain available; continue reviewing without rebuilding. Technical failures without a reviewable proposal remain accessible under collapsed diagnostics in Queue & history.
+
 Install the new XPI over the existing extension. Startup migrates local application state to schema 3; consolidation uses protocol 2. Migration makes no provider requests and changes no native Zotero tags, collections, item columns, or credentials.
 
 Before replacing state.json, the extension creates an exact-byte state.json.pre-v3.json backup in the profile's smart-tags directory. A different existing backup is preserved and a numbered backup is created. Backup or migration-write failures stop safely rather than loading an older valid .bak generation. Keep these private profile files out of public repositories.

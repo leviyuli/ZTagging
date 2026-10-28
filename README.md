@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It bui
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.3.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.3.0.xpi).
+2. Select [`smart-tags-0.3.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.3.1.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Start with **Pilot · 50 papers** on Overview and click **Rebuild vocabulary**. Vocabulary shows **one consolidated proposal**, with supporting-paper coverage, representative papers, aliases, hierarchy, merges, and excluded candidates. Review/edit it, then approve the taxonomy. Prior unaccepted drafts are replaceable candidates, with no authoritative merge IDs. A new rebuild replaces its previous unapproved proposal while preserving active definitions until approval.
@@ -16,7 +16,9 @@ The classifier usually proposes up to five core tags plus matching custom tags; 
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The [v0.3.0 release](https://github.com/leviyuli/ZTagging/releases/tag/v0.3.0) includes the installer, TypeScript source archive, and [validation report](dist/validation.json). Read the [changelog](CHANGELOG.md) and [migration notes](MIGRATION.md) before upgrading a paused rebuild.
+The [v0.3.1 release](https://github.com/leviyuli/ZTagging/releases/tag/v0.3.1) includes the installer, TypeScript source archive, and [validation report](dist/validation.json). Read the [changelog](CHANGELOG.md) and [migration notes](MIGRATION.md) before upgrading a paused rebuild.
+
+Version **0.3.1** fixes slow Vocabulary review. Proposed concepts have pages, and original quotations load when you expand them. Confirmations preserve your place and unfinished edits. Queue & history links directly to Vocabulary instead of repeating its full issue list. Install the patch and reopen Smart Tags to continue your current review; no rebuild or repeated confirmation is required.
 
 Version **0.3.0** adds stable evidence identities, one bounded reference-correction attempt, and actionable warning history. Version **0.2.0** adds global vocabulary consolidation and an expandable **Tags/Collections** navigator inside Zotero’s left pane. It retains the workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 

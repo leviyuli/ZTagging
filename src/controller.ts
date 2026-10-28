@@ -6,7 +6,7 @@ import { sameTags } from './platform.ts';
 import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup } from './ui-contract.ts';
 import { buildFactExtractionPrompt, normalizeFacts, buildConsolidationPrompt, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, removeProposalEvidenceLinks, isProposalIssueBlocking, buildCorrectionPrompt, applyReferenceCorrection } from './taxonomy.ts';
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
-import { equivalentTagNames, descendantIds, compileConceptFilter, matchCompiledConceptFilter } from './concept-filter.ts';
+import { equivalentTagNames, descendantIds, compileConceptFilter } from './concept-filter.ts';
 import type { ConceptFilter } from './concept-filter.ts';
 import { createEmptyEvidenceCatalog, ensureFactConceptIds, createRegistrySnapshot, validateRegistrySnapshot, validateSnapshotAgainstFacts } from './evidence.ts';
 import type { EvidenceCatalog, RegistrySnapshot } from './evidence.ts';
@@ -253,11 +253,20 @@ export class AppController implements ManagerAPI {
     const nativeTags=library?.nativeTags??this.state.nativeTags;
     const papers=library?library.papers.map(p=>({...p,summary:this.state.papers[p.id]?.summary??'',concepts:this.state.papers[p.id]?.concepts??[],pdfText:this.state.papers[p.id]?.pdfText})):Object.values(this.state.papers);
     const coverage=new Map<string,Set<string>>(this.state.tags.map(t=>[t.id,new Set<string>()]));
-    for(const tag of this.state.tags){const compiled=compileConceptFilter(this.state.tags,{mode:'all',selections:[{conceptId:tag.id}]});for(const [paperId,native] of Object.entries(nativeTags))if(matchCompiledConceptFilter(native.map(t=>t.tag),compiled))coverage.get(tag.id)?.add(paperId);}
+    const nativeEntries=Object.entries(nativeTags),nativePaperIds=nativeEntries.map(([id])=>id);
+    let papersByNativeName:Map<string,Set<string>>|undefined;
+    for(const tag of this.state.tags){
+      const compiled=compileConceptFilter(this.state.tags,{mode:'all',selections:[{conceptId:tag.id}]});
+      if(compiled.empty)continue;
+      // These counts select one global concept, so its approved descendants/aliases are
+      // one alternative-name group. Canonicalize each native assignment once per snapshot.
+      if(!papersByNativeName){papersByNativeName=new Map();for(const [paperId,native] of nativeEntries)for(const assignment of native){const key=canonicalTagKey(assignment.tag),ids=papersByNativeName.get(key)??new Set<string>();ids.add(paperId);papersByNativeName.set(key,ids);}}
+      for(const name of compiled.clauses[0]?.groups[0]??[])for(const paperId of papersByNativeName.get(canonicalTagKey(name))??[])coverage.get(tag.id)!.add(paperId);
+    }
     const tags=this.state.tags.map(tag=>{
       const matches=coverage.get(tag.id)??new Set<string>();
       const support=this.state.taxonomySupport[tag.id];
-      return {...tag,coverage:support?.paperIds.length,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...matches,...(support?.paperIds??[])])].slice(0,3)};
+      return {...tag,coverage:support?.paperIds.length,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...(matches.size?nativePaperIds.filter(id=>matches.has(id)):[]),...(support?.paperIds??[])])].slice(0,3)};
     });
     const run=this.state.run;
     return {

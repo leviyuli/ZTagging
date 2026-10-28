@@ -366,7 +366,23 @@ function mappingFingerprint(proposal:TaxonomyProposal,tagId:string):string {
   return fingerprint({snapshot:proposal.evidenceSnapshot,tagId,meaning:tag?{description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples}:null,registryIds:[...(proposal.support[tagId]?.registryIds??[])].sort()});
 }
 export function isProposalIssueBlocking(proposal:TaxonomyProposal,value:ProposalValidationIssue):boolean {
-  return value.severity==='error'||!value.tagId||proposal.mappingConfirmations?.[value.tagId]?.fingerprint!==mappingFingerprint(proposal,value.tagId);
+  return createProposalIssueEvaluator(proposal)(value);
+}
+function proposalEvaluation(proposal:TaxonomyProposal) {
+  const proofs=new Map<string,string>();
+  const proofFor=(tagId:string)=>{let proof=proofs.get(tagId);if(proof===undefined){proof=mappingFingerprint(proposal,tagId);proofs.set(tagId,proof);}return proof;};
+  const isBlocking=(value:ProposalValidationIssue):boolean=>{
+    if(value.severity==='error'||!value.tagId)return true;
+    const confirmation=proposal.mappingConfirmations?.[value.tagId];
+    // Absence already proves that a mapping is blocked; existing proofs keep their
+    // exact historical format and are computed at most once per tag in this pass.
+    return !confirmation||confirmation.fingerprint!==proofFor(value.tagId);
+  };
+  return {isBlocking,proofFor};
+}
+/** Use for one synchronous validation/render pass; create a fresh evaluator after any mutation. */
+export function createProposalIssueEvaluator(proposal:TaxonomyProposal):(value:ProposalValidationIssue)=>boolean {
+  return proposalEvaluation(proposal).isBlocking;
 }
 function hasExpandedSourceWording(tag:TagDefinition,evidence:readonly Evidence[]):boolean {
   return [tag.fullName??'',...tag.aliases].filter(value=>value.trim().split(/\s+/).length>1).some(form=>{
@@ -396,6 +412,7 @@ function semanticRelation(tag:TagDefinition,sourceName:string,sourceEvidence:rea
 /** Coverage is expanded exclusively from immutable source identities, never presentation labels. */
 export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyProposal {
   const snapshot=proposal.evidenceSnapshot;if(!snapshot)return proposal;
+  const evaluation=proposalEvaluation(proposal);
   const activeTagIds=new Set(proposal.tags.map(tag=>tag.id));
   const previous=proposal.validationIssues??[],preserved=previous.filter(value=>value.code==='malformed-support'&&(!value.tagId||activeTagIds.has(value.tagId)||!Object.hasOwn(proposal.candidateKeys??{},value.tagId))),issues:ProposalValidationIssue[]=[...preserved];
   for(const relationship of proposal.unresolvedRelationships??[])if(proposal.tags.some(tag=>tag.id===relationship.tagId))issues.push(issue('invalid-relationship',`Unknown ${relationship.kind} reference "${relationship.reference}".`,relationship.tagId));
@@ -427,7 +444,7 @@ export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyPropo
     for(const registryId of support.registryIds){
       const entry=Object.hasOwn(snapshot.entries,registryId)?snapshot.entries[registryId]:undefined;
       if(!entry){issues.push(issue('unknown-registry-id',`Unknown or stale supporting registry ID ${registryId} for ${tag.name}; it is not permitted by snapshot ${snapshot.id}.`,tag.id,registryId));continue;}
-      let accepted=!meaningIssue||!isProposalIssueBlocking(proposal,meaningIssue);
+      let accepted=!meaningIssue||!evaluation.isBlocking(meaningIssue);
       const validationFingerprint=fingerprint({snapshot:snapshot.id,entry,sources:entry.sourceIds.map(id=>snapshot.sources[id]),meaning:meaningFingerprint(tag)});
       const currentIdentity=namedIdentity??fullIdentity,identityChanged=Boolean(currentIdentity&&currentIdentity!==proposal.evidenceScientificIdentities?.[tag.id]);
       const alreadyValidated=!identityChanged&&proposal.validatedEvidenceLinks?.[tag.id]?.[registryId]===validationFingerprint;
@@ -437,7 +454,7 @@ export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyPropo
         const relation=alreadyValidated?'equivalent':semanticRelation(tag,source.name,source.evidence);
         if(relation!=='equivalent'){
           const value=issue(relation==='contradiction'?'scientific-contradiction':'uncertain-meaning',relation==='contradiction'?`Source wording "${source.name}" does not establish the meaning of ${tag.name}. Remove or correct this evidence link.`:`Confirm whether source wording "${source.name}" has the same scientific meaning as ${tag.name}.`,tag.id,registryId,{paperIds:[source.paperId],sourceNames:[source.name]});
-          issues.push(value);if(isProposalIssueBlocking(proposal,value))accepted=false;
+          issues.push(value);if(evaluation.isBlocking(value))accepted=false;
         }
       }
       if(accepted){support.sourceIds.push(...entry.sourceIds);proposal.validatedEvidenceLinks??={};(proposal.validatedEvidenceLinks[tag.id]??={})[registryId]=validationFingerprint;}
@@ -462,9 +479,9 @@ export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyPropo
     if(!tag.custom&&!support.paperIds.length&&!issues.some(value=>value.tagId===tag.id))issues.push(issue('unsupported-concept',`No grounded paper supports proposed core concept ${tag.name}.`,tag.id));
   }
   proposal.validationIssues=[...new Map(issues.map(value=>[value.id,value])).values()];
-  proposal.issues=[...new Set([...(proposal.externalIssues??[]),...proposal.validationIssues.filter(value=>isProposalIssueBlocking(proposal,value)).map(value=>value.message)])];
+  proposal.issues=[...new Set([...(proposal.externalIssues??[]),...proposal.validationIssues.filter(evaluation.isBlocking).map(value=>value.message)])];
   // A changed meaning or selected support invalidates its previous confirmation permanently.
-  for(const [tagId,confirmation] of Object.entries(proposal.mappingConfirmations??{}))if(confirmation.fingerprint!==mappingFingerprint(proposal,tagId))delete proposal.mappingConfirmations![tagId];
+  for(const [tagId,confirmation] of Object.entries(proposal.mappingConfirmations??{}))if(confirmation.fingerprint!==evaluation.proofFor(tagId))delete proposal.mappingConfirmations![tagId];
   return proposal;
 }
 export function confirmProposalMapping(proposal:TaxonomyProposal,tagId:string,confirmedAt=new Date().toISOString()):TaxonomyProposal {

@@ -109,6 +109,8 @@ export async function runNativeV030(app, check, config) {
     app.state.facts[paper.id] = facts;app.state.evidenceCatalog = catalog;app.state.taxonomyProposal = proposal;
     await app.save();
     const vocabulary = await open('vocabulary');
+    const sourceDetails = vocabulary.querySelector('.registry-evidence');sourceDetails.open = true;
+    await until(() => vocabulary.body.textContent.includes(quote), 'source evidence expanded on demand');
     check('v030NativeUncertainProposalRendering', !!button(vocabulary,'Confirm scientific mapping') && button(vocabulary,'Approve global vocabulary')?.disabled
       && vocabulary.body.textContent.includes('Source wording: catalyst-layer resistance') && vocabulary.body.textContent.includes(quote)
       && vocabulary.body.textContent.includes('native-synthetic · native-test'));
