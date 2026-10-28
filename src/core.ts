@@ -149,21 +149,21 @@ export function allocateOpaqueId(prefix:string):string {
   return `${prefix}-${[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('')}`;
 }
 
-function stableJSON(value: unknown, seen = new Set<object>()): string {
+function stableJSON(value: unknown, seen = new Set<object>(), shared?: WeakMap<object,string>): string {
   if (value === undefined) return "null";
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (seen.has(value)) throw new Error("Cannot fingerprint cyclic data");
+  const cached=shared?.get(value);
+  if(cached!==undefined)return cached;
   seen.add(value);
   const serialized = Array.isArray(value)
-    ? `[${value.map(v => stableJSON(v, seen)).join(",")}]`
-    : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJSON((value as Record<string, unknown>)[key], seen)}`).join(",")}}`;
+    ? `[${value.map(v => stableJSON(v, seen, shared)).join(",")}]`
+    : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJSON((value as Record<string, unknown>)[key], seen, shared)}`).join(",")}}`;
   seen.delete(value);
   return serialized;
 }
 
-/** Non-security, deterministic content fingerprint, available in Zotero and Node alike. */
-export function fingerprint(value: unknown): string {
-  const text = stableJSON(value);
+function fingerprintText(text:string):string {
   let a = 0x811c9dc5, b = 0x9e3779b9;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
@@ -171,6 +171,20 @@ export function fingerprint(value: unknown): string {
     b = Math.imul(b ^ code, 0x85ebca6b);
   }
   return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Non-security, deterministic content fingerprint, available in Zotero and Node alike. */
+export function fingerprint(value: unknown): string {
+  return fingerprintText(stableJSON(value));
+}
+
+/** Reuse canonical text while explicitly shared objects remain immutable.
+ * Create a new fingerprinter after any shared object changes; ordinary inputs remain fresh.
+ */
+export function createFingerprinter(sharedImmutable:readonly object[]=[]):(value:unknown)=>string {
+  const shared=new WeakMap<object,string>();
+  for(const value of sharedImmutable)if(!shared.has(value))shared.set(value,stableJSON(value,new Set(),shared));
+  return value=>fingerprintText(stableJSON(value,new Set(),shared));
 }
 
 /** Excludes assigned tags, generated summaries, and timestamps to prevent self-triggered reruns. */

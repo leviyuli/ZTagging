@@ -1,5 +1,7 @@
 # Upgrading to Smart Tags 0.3.0
 
+**0.3.2 review controls:** Install over 0.3.0 or 0.3.1 and continue the existing proposal. Confirm all mappings records eligible pending confirmations across every page; it does not approve the vocabulary or resolve blocked concepts. Edit and Remove operate on the staged concepts. Existing evidence, decisions, and native tags remain intact.
+
 **0.3.1 performance patch:** Install over 0.3.0 and reopen Smart Tags. It uses the same schema and confirmation hash format. Your pending proposal, confirmed mappings, evidence, and settings remain available; continue reviewing without rebuilding. Technical failures without a reviewable proposal remain accessible under collapsed diagnostics in Queue & history.
 
 Install the new XPI over the existing extension. Startup migrates local application state to schema 3; consolidation uses protocol 2. Migration makes no provider requests and changes no native Zotero tags, collections, item columns, or credentials.

@@ -1,18 +1,18 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.3.1",
-  "verifiedAt": "2026-10-28T09:45:54.266Z",
+  "version": "0.3.2",
+  "verifiedAt": "2026-10-28T10:16:53.224Z",
   "target": "Zotero 10.0.6 on Windows",
   "schemaVersion": 3,
   "consolidationProtocolVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 436,
+    "passed": 454,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 96,
+    "passed": 102,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -391,6 +391,30 @@
         "passed": true
       },
       {
+        "name": "v032ProposedConceptActionsVisible",
+        "passed": true
+      },
+      {
+        "name": "v032StagedEditKeepsIdentityAndConfirmation",
+        "passed": true
+      },
+      {
+        "name": "v032BulkConfirmationIncludesAllPages",
+        "passed": true
+      },
+      {
+        "name": "v032BulkConfirmationBudget",
+        "passed": true
+      },
+      {
+        "name": "v032BulkConfirmationDoesNotApprove",
+        "passed": true
+      },
+      {
+        "name": "v032RemoveOnlyChangesProposal",
+        "passed": true
+      },
+      {
         "name": "v031ActivityReviewIsCompact",
         "passed": true
       },
@@ -409,8 +433,8 @@
       "coreConcepts": 60,
       "initialIssues": 99,
       "snapshotBytes": 755824,
-      "initialRenderMS": 103,
-      "confirmationMS": 1721,
+      "initialRenderMS": 82,
+      "confirmationMS": 863,
       "initialQuoteNodes": 0,
       "visibleConcepts": 20,
       "sourcePageSize": 20,
@@ -426,10 +450,10 @@
         "snapshotMS": 38.7
       },
       "patched": {
-        "threeIssuePassesMS": 26.8,
-        "validationMS": 139.5,
-        "confirmationMS": 143.4,
-        "snapshotMS": 5.7
+        "threeIssuePassesMS": 23.9,
+        "validationMS": 146.5,
+        "confirmationMS": 137.6,
+        "snapshotMS": 5.9
       },
       "sourceEvidenceUnchanged": true,
       "existingConfirmationsUnchanged": true,
@@ -439,23 +463,43 @@
     }
   },
   "queueReviewUI": "Reviewable proposals use a compact Vocabulary link; unparsed output retains collapsed technical diagnostics.",
+  "bulkReview": {
+    "nativeMappings": 14,
+    "milliseconds": 3474,
+    "separateApproval": true,
+    "editKeepsIdentityAndConfirmation": true,
+    "removeOnlyChangesProposal": true,
+    "skipsBlockedAndAlreadyConfirmed": true,
+    "staleSelectionAtomic": true
+  },
+  "deslopCleanup": {
+    "applied": true,
+    "scope": "Focused diff review, typed provider diagnostics, flatter correction failure handling, typed warning lookup, and reusable test setup; input safeguards retained."
+  },
+  "testStructure": {
+    "skill": "codebase-design",
+    "core": "Public fingerprint interface with historical golden vectors and immutable-sharing tests.",
+    "proposal": "Batch eligibility, atomicity, and proof compatibility through the taxonomy interface.",
+    "controller": "Persistence and native side effects through invoke.",
+    "ui": "Typed harness options and accessible controls through mountManager; no imported test modules or broad shared harness."
+  },
   "rightItemAndInformationPaneSection": false,
   "workingLibraryModified": false,
   "publicArtifactPrivateDataScan": "passed",
   "limits": "No live provider request or account authentication was performed. Native UI checks are programmatic; screenshots were not inspected. Timing measurements are specific to this environment.",
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.3.1.xpi",
-      "bytes": 289047,
-      "sha256": "9e19986bb0a8534501548f3fddd33f28f9e6cb0fc7e758a72216ecabd644c6f5"
+      "file": "smart-tags-0.3.2.xpi",
+      "bytes": 291691,
+      "sha256": "78b645d98fb747e4b412c98816e2c55e6071318831c55642bfe0d936b1f7f317"
     },
     "source": {
-      "file": "smart-tags-0.3.1-source.zip",
-      "bytes": 289631,
-      "sha256": "7d299e1853ca4b5c2d4c411b75108d759ae257bac15c1a68457987ebafaf04e8"
+      "file": "smart-tags-0.3.2-source.zip",
+      "bytes": 298067,
+      "sha256": "3bafd3b0984964d45595a3245d1925ac0332c74b5f7ac71d77ecc98c5fc3dab4"
     }
   },
-  "sha256": "9e19986bb0a8534501548f3fddd33f28f9e6cb0fc7e758a72216ecabd644c6f5",
-  "sourceSha256": "7d299e1853ca4b5c2d4c411b75108d759ae257bac15c1a68457987ebafaf04e8",
+  "sha256": "78b645d98fb747e4b412c98816e2c55e6071318831c55642bfe0d936b1f7f317",
+  "sourceSha256": "3bafd3b0984964d45595a3245d1925ac0332c74b5f7ac71d77ecc98c5fc3dab4",
   "repository": "https://github.com/leviyuli/ZTagging"
 }

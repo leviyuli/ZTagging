@@ -45,9 +45,10 @@ test('snapshot representatives preserve native paper order across different alia
   const state = initialState(); state.tags = [tag('fc', 'FC', { aliases: ['fuel cell'] })];
   state.nativeTags = { first: [{ tag: 'fuel cell', type: 0 }], second: [{ tag: 'FC', type: 0 }], third: [{ tag: 'fuel cell', type: 1 }], fourth: [{ tag: 'FC', type: 0 }] };
   state.taxonomySupport.fc = { paperIds: ['support-only', 'first'] };
-  let snapshot = await harness(state).snapshot(); assert.deepEqual(snapshot.tags[0].representativePaperIds, ['first', 'second', 'third']);
+  const controller = harness(state);
+  let snapshot = await controller.snapshot(); assert.deepEqual(snapshot.tags[0].representativePaperIds, ['first', 'second', 'third']);
   delete state.nativeTags.third; delete state.nativeTags.fourth;
-  snapshot = await harness(state).snapshot(); assert.deepEqual(snapshot.tags[0].representativePaperIds, ['first', 'second', 'support-only']);
+  snapshot = await controller.snapshot(); assert.deepEqual(snapshot.tags[0].representativePaperIds, ['first', 'second', 'support-only']);
 });
 
 test('every snapshot rebuilds its local index after native tags, definitions, or hierarchy changes', async () => {

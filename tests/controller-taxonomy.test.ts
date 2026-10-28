@@ -360,6 +360,38 @@ function uncertainHarness(){
   };return h;
 }
 
+test('bulk mapping confirmation saves once without approving vocabulary, requesting AI, or changing native and manual choices',async()=>{
+  const h=uncertainHarness();h.host.native.set(1,[{tag:'Manual project',type:0}]);await run(h);
+  const proposal=h.state.taxonomyProposal!,tagId=proposal.tags.find(tag=>!tag.custom)!.id;
+  h.state.decisions['1:P1|custom-rcl']={locked:true,rejected:true};
+  const choices=copy(h.state.decisions),active=copy(h.state.tags),calls=h.ai.calls.length,saves=h.saved.length;
+  await h.controller.invoke('confirm-all-taxonomy-mappings',{id:proposal.id,tagIds:[tagId]});
+  assert.ok(proposal.mappingConfirmations?.[tagId]);assert.deepEqual(proposal.issues,[]);
+  assert.equal(h.saved.length,saves+1);assert.equal(h.ai.calls.length,calls);assert.equal(h.host.writes.length,0);
+  assert.equal(h.state.taxonomyReady,false);assert.deepEqual(h.state.tags,active);assert.deepEqual(h.state.decisions,choices);
+  assert.deepEqual(await h.host.readTags(1),[{tag:'Manual project',type:0}]);
+  assert.deepEqual(h.saved.at(-1)!.taxonomyProposal!.mappingConfirmations,proposal.mappingConfirmations);
+});
+
+test('bulk confirmation rejects stale proposals and selections before saving any partial review',async()=>{
+  const h=uncertainHarness();await run(h);const proposal=h.state.taxonomyProposal!,before=copy(proposal),saves=h.saved.length;
+  await assert.rejects(h.controller.invoke('confirm-all-taxonomy-mappings',{id:'old-proposal',tagIds:[]}),/proposal changed/);
+  await assert.rejects(h.controller.invoke('confirm-all-taxonomy-mappings',{id:proposal.id,tagIds:[proposal.tags.find(tag=>!tag.custom)!.id,'missing-concept']}),/Unknown|stale|changed/i);
+  await assert.rejects(h.controller.invoke('confirm-all-taxonomy-mappings',{id:proposal.id,tagIds:'all'}),/Choose the proposed concepts/);
+  assert.equal(h.saved.length,saves);assert.deepEqual(h.state.taxonomyProposal,before);assert.equal(h.host.writes.length,0);
+});
+
+test('removing a staged concept clears its hierarchy and detail contexts without changing active or native tags',async()=>{
+  const h=harness(2);h.host.native.set(1,[{tag:'Manual FC collection',type:0}]);await run(h);
+  const proposal=h.state.taxonomyProposal!,fc=proposal.tags.find(tag=>tag.name==='FC')!,detail=proposal.tags.find(tag=>tag.custom)!;
+  detail.relatedIds=[fc.id];const active=copy(h.state.tags),calls=h.ai.calls.length;
+  const tags=proposal.tags.filter(tag=>tag.id!==fc.id).map(tag=>({...tag,broaderIds:tag.broaderIds.filter(id=>id!==fc.id),relatedIds:(tag.relatedIds??[]).filter(id=>id!==fc.id)}));
+  await h.controller.invoke('save-taxonomy-proposal',{id:proposal.id,tags,excluded:[{name:fc.name,reason:'Removed during review.'}]});
+  assert.ok(!proposal.tags.some(tag=>tag.id===fc.id));assert.ok(proposal.tags.some(tag=>tag.id===detail.id&&tag.custom));
+  assert.deepEqual(proposal.issues,[]);assert.deepEqual(h.state.tags,active);assert.equal(h.ai.calls.length,calls);assert.equal(h.host.writes.length,0);
+  assert.deepEqual(await h.host.readTags(1),[{tag:'Manual FC collection',type:0}]);
+});
+
 test('explicit proposal export carries exact evidence identities while vocabulary export contains definitions only',async()=>{
   const h=harness(2);await run(h,'rebuild','selected');const documents:any[]=[],controller=new AppController(h.state,{host:h.host,ai:h.ai,persist:async()=>{},exportFile:async value=>{documents.push(copy(value));}}),proposal=h.state.taxonomyProposal!;
   await controller.invoke('export-vocabulary');const definitions=documents[0];assert.equal(definitions.format,'zotero-smart-tags-vocabulary');assert.equal(definitions.schemaVersion,3);assert.ok(definitions.tags);assert.equal(definitions.facts,undefined);assert.equal(definitions.proposal,undefined);assert.equal(definitions.evidenceSnapshot,undefined);

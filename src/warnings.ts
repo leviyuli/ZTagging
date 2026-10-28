@@ -114,7 +114,7 @@ export function validWarningRecord(value: unknown): value is WarningRecord {
   const record = value as WarningRecord;
   const strings = (list: unknown): list is string[] => Array.isArray(list) && list.every(item => typeof item === 'string');
   const time = (date: unknown) => date === null || typeof date === 'string' && Number.isFinite(Date.parse(date));
-  return ['id', 'code', 'message', 'context', 'conditionFingerprint'].every(key => typeof (value as any)[key] === 'string')
+  return (['id', 'code', 'message', 'context', 'conditionFingerprint'] as const).every(key => typeof record[key] === 'string')
     && !!record.id && !!record.code && strings(record.paperIds) && strings(record.runIds)
     && time(record.firstSeenAt) && time(record.lastSeenAt)
     && (record.occurrenceCount === null || Number.isSafeInteger(record.occurrenceCount) && record.occurrenceCount >= 1)

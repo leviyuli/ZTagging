@@ -1,10 +1,10 @@
 import { buildAnalysisPrompt, buildVocabularyPrompt, buildSimilarityNetwork, canonicalTagKey, findCleanupCandidates, fingerprint, isAutoAssignable, normalizeAnalysis, normalizeTagDefinitions, paperFingerprint, selectPDFPassages, validateEvidence, validateSuggestions } from './core.ts';
 import type { PaperRecord, Suggestion, TagDefinition, Neighbor } from './core.ts';
-import type { ApiKeyProvider, CompletionResult, ProviderClient, ProviderMode, ProviderSettings } from './providers.ts';
+import type { ApiKeyProvider, CompletionResult, ProviderClient, ProviderError, ProviderMode, ProviderSettings } from './providers.ts';
 import type { LibraryHost, NativeTag, TagPatch } from './platform.ts';
 import { sameTags } from './platform.ts';
 import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup } from './ui-contract.ts';
-import { buildFactExtractionPrompt, normalizeFacts, buildConsolidationPrompt, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, removeProposalEvidenceLinks, isProposalIssueBlocking, buildCorrectionPrompt, applyReferenceCorrection } from './taxonomy.ts';
+import { buildFactExtractionPrompt, normalizeFacts, buildConsolidationPrompt, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, confirmProposalMappings, removeProposalEvidenceLinks, isProposalIssueBlocking, buildCorrectionPrompt, applyReferenceCorrection } from './taxonomy.ts';
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
 import { equivalentTagNames, descendantIds, compileConceptFilter } from './concept-filter.ts';
 import type { ConceptFilter } from './concept-filter.ts';
@@ -15,6 +15,7 @@ import type { WarningRecord, WarningInput } from './warnings.ts';
 import { terminologyFor, terminologyKey } from './naming.ts';
 
 export type StoredSuggestion = Suggestion & { operation?:'add'|'remove'; applied?:boolean;definitionFingerprint?:string };
+type ProviderFailure = Partial<Pick<ProviderError,'category'|'rawText'|'completion'>>;
 type Decision = { rejected?:boolean; locked?:boolean };
 type Ownership = Record<string, Record<string, {name:string;changeId:string}>>;
 type Job = {id:string;paperId:string;status:'pending'|'running'|'completed';error?:string};
@@ -303,6 +304,11 @@ export class AppController implements ManagerAPI {
       case 'save-taxonomy-proposal': {const proposal=this.requireProposal(payload.id);if(!Array.isArray(payload.tags))throw new Error('Proposal tags are missing.');const normalized:TagDefinition[]=payload.tags.map((tag:any)=>this.normalizedDefinition(tag));if(proposal.merges.some(m=>!normalized.some(t=>t.id===m.toId)))throw new Error('This concept is a merge target. Reassign its incoming merges before excluding it, or rebuild the proposal.');proposal.tags=normalized;const stale=proposal.issues.filter(issue=>issue.startsWith('Source PDF'));proposal.issues=[...stale,...validateTaxonomy(normalized,proposal.coreLimit)];this.refreshProposalSupport(proposal);if(Array.isArray(payload.excluded))proposal.excluded=payload.excluded.filter((e:any)=>typeof e.name==='string'&&typeof e.reason==='string');await this.save();break;}
       case 'approve-taxonomy': await this.approveTaxonomy(payload.id,payload.preserveDecisions===true);break;
       case 'confirm-taxonomy-mapping': {const proposal=this.requireProposal(payload.id);confirmProposalMapping(proposal,String(payload.tagId));await this.save();break;}
+      case 'confirm-all-taxonomy-mappings': {
+        const proposal=this.requireProposal(payload.id);
+        if(payload.tagIds!==undefined&&(!Array.isArray(payload.tagIds)||!payload.tagIds.every((id:unknown)=>typeof id==='string')))throw new Error('Choose the proposed concepts to confirm.');
+        confirmProposalMappings(proposal,payload.tagIds);await this.save();break;
+      }
       case 'remove-taxonomy-support': {const proposal=this.requireProposal(payload.id);removeProposalEvidenceLinks(proposal,String(payload.tagId),payload.registryId?[String(payload.registryId)]:undefined);await this.save();break;}
       case 'regenerate-taxonomy': {if(payload.id)this.requireProposal(payload.id);const run=this.state.run;if(!run||run.kind!=='rebuild')throw new Error('Start a vocabulary rebuild to select papers before regenerating.');if(run.status==='running'||this.worker)throw new Error('Pause or finish the current analysis before regenerating.');this.checkConnectionSettings();const connectionChanged=run.settings.provider!==this.state.settings.provider||run.settings.model!==this.state.settings.model;run.settings=copy(this.state.settings);if(connectionChanged)for(const job of run.jobs)job.status='pending';else for(const job of run.jobs)if(!this.state.facts[job.paperId])job.status='pending';run.vocabularyVersion=this.state.vocabularyVersion;delete run.consolidation;delete this.state.approvedTaxonomyInput;this.state.taxonomyProposal=null;run.vocabFinished=false;run.status='running';run.message='Regenerating vocabulary with cached factual evidence…';await this.save();this.launch();break;}
       case 'discard-invalid-merges': await this.discardInvalidMerges(payload.id);break;
@@ -711,7 +717,7 @@ export class AppController implements ManagerAPI {
     try{await this.save();}catch(error){run.spentUSD=before;if(typeof rollback==='function')rollback();throw error;}
     let result:CompletionResult;
     try{result=await this.env.ai.completeJson(SYSTEM,prompt,this.providerSettings(run.settings),this.abort?.signal);}
-    catch(error){const completed=(error as any)?.completion as Omit<CompletionResult,'value'>|undefined;if(completed?.usageKnown&&completed.estimatedCostUSD!==null&&Number.isFinite(completed.estimatedCostUSD))run.spentUSD=Math.max(0,run.spentUSD-reservation+completed.estimatedCostUSD);throw error;}
+    catch(error){const completed=(error as ProviderFailure|null)?.completion;if(completed?.usageKnown&&completed.estimatedCostUSD!==null&&Number.isFinite(completed.estimatedCostUSD))run.spentUSD=Math.max(0,run.spentUSD-reservation+completed.estimatedCostUSD);throw error;}
     if(result.estimatedCostUSD!==null&&result.usageKnown)run.spentUSD=Math.max(0,run.spentUSD-reservation+result.estimatedCostUSD);
     else if(paidProvider(run.settings.provider))this.warn('A request omitted usage. Its full budget reservation was retained; failed requests may also incur charges.');
     return result;
@@ -765,7 +771,12 @@ export class AppController implements ManagerAPI {
     if(checkpoint.value===undefined){
       run.message=`Consolidating ${facts.length} papers using stable evidence references…`;await this.save();
       try{const response=await this.request(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60,checkpoint.snapshot),run);checkpoint.value=response.value;}
-      catch(error){if((error as any)?.category!=='invalid-response'||typeof (error as any)?.rawText!=='string')throw error;checkpoint.value=(error as any).rawText;checkpoint.diagnostics=[this.message(error)];if(!(error as any).completion)checkpoint.responseIssue='The provider did not return a completed response. Partial output is diagnostic only; explicitly regenerate this proposal.';}
+      catch(error){
+        const failure=error as ProviderFailure|null;
+        if(failure?.category!=='invalid-response'||typeof failure.rawText!=='string')throw error;
+        checkpoint.value=failure.rawText;checkpoint.diagnostics=[this.message(error)];
+        if(!failure.completion)checkpoint.responseIssue='The provider did not return a completed response. Partial output is diagnostic only; explicitly regenerate this proposal.';
+      }
       checkpoint.phase='validating';await this.save();
     }
     if(run.status!=='running'||run.vocabularyVersion!==this.state.vocabularyVersion)return;
@@ -786,16 +797,16 @@ export class AppController implements ManagerAPI {
         if(run.status!=='running'||run.vocabularyVersion!==this.state.vocabularyVersion)return;
         proposal=applyReferenceCorrection(response.value,proposal);this.state.taxonomyProposal=proposal;
       }catch(error){
-        if((error as any)?.category==='invalid-response'&&typeof (error as any)?.rawText==='string'){
-          checkpoint.correctionValue=(error as any).rawText;
-          if((error as any).completion){proposal=applyReferenceCorrection(checkpoint.correctionValue,proposal);this.state.taxonomyProposal=proposal;}
-          else{checkpoint.correctionIssue=this.message(error);proposal.correctionDiagnostics=[...(proposal.correctionDiagnostics??[]),this.message(error)];}
-          checkpoint.diagnostics=[...new Set([...(checkpoint.diagnostics??[]),this.message(error)])];
-          checkpoint.phase='needs-review';await this.save();
-        }else{
-        if(Number(checkpoint.correctionAttempts)===1){checkpoint.phase='needs-review';checkpoint.diagnostics=[...new Set([...(checkpoint.diagnostics??[]),`The correction request did not complete: ${this.message(error)}. No further automatic correction will be sent for this generation.`])];}
-        await this.save();throw error;
+        const failure=error as ProviderFailure|null;
+        if(failure?.category!=='invalid-response'||typeof failure.rawText!=='string'){
+          if(Number(checkpoint.correctionAttempts)===1){checkpoint.phase='needs-review';checkpoint.diagnostics=[...new Set([...(checkpoint.diagnostics??[]),`The correction request did not complete: ${this.message(error)}. No further automatic correction will be sent for this generation.`])];}
+          await this.save();throw error;
         }
+        checkpoint.correctionValue=failure.rawText;
+        if(failure.completion){proposal=applyReferenceCorrection(checkpoint.correctionValue,proposal);this.state.taxonomyProposal=proposal;}
+        else{checkpoint.correctionIssue=this.message(error);proposal.correctionDiagnostics=[...(proposal.correctionDiagnostics??[]),this.message(error)];}
+        checkpoint.diagnostics=[...new Set([...(checkpoint.diagnostics??[]),this.message(error)])];
+        checkpoint.phase='needs-review';await this.save();
       }
     }
     checkpoint.phase=proposal.issues.length||proposal.unresolvedMerges?.length?'needs-review':'ready';

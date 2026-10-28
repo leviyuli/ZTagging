@@ -35,6 +35,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   const app = doc.getElementById('app');
   if (!app) throw new Error('Smart Tags manager is missing its app container.');
   let state: ManagerSnapshot | null = null;
+  let proposalIssueCache: { proposal: NonNullable<ManagerSnapshot['taxonomyProposal']>; evaluate: ReturnType<typeof createProposalIssueEvaluator> } | null = null;
   let page: ManagerPage = options.page || 'overview';
   let pendingNavigation: ManagerUIOptions | null = options;
   let scope: Scope = 'pilot';
@@ -62,6 +63,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let proposalDecisionAck = '';
   let proposalViewId = '';
   let proposalPage = 0;
+  let proposalListOpen = true;
   const openProposalDetails = new Set<string>();
   const proposalEvidencePages = new Map<string, number>();
   const proposalScrollPositions = new Map<string, number>();
@@ -205,6 +207,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
             api.snapshot(),
             new Promise<never>((_resolve, reject) => { snapshotTimer = win.setTimeout(() => reject(new Error('Local settings took too long to load. Close and reopen Smart Tags, then check Zotero’s Error Console if this continues.')), 15000); }),
           ]);
+          // Display snapshots are read-only; a new snapshot ends every proof cache,
+          // including when a host adapter returns the same object identity again.
+          proposalIssueCache = null;
         } finally { if (snapshotTimer) win.clearTimeout(snapshotTimer); }
         if (disposed) return;
         diagnostic(`snapshot complete: ${state.papers.length} papers, ${state.tags.length} definitions`);
@@ -507,15 +512,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function taxonomyProposal() {
     const proposal = currentState().taxonomyProposal;
     if (!proposal) return null;
-    if (proposalViewId !== proposal.id) { proposalViewId = proposal.id;proposalPage = 0;openProposalDetails.clear();proposalEvidencePages.clear();proposalScrollPositions.clear(); }
+    if (proposalViewId !== proposal.id) { proposalViewId = proposal.id;proposalPage = 0;proposalListOpen = true;openProposalDetails.clear();proposalEvidencePages.clear();proposalScrollPositions.clear(); }
     const names = new Map(proposal.tags.map(tag => [tag.id, tag.name]));
     const coreTags = proposal.tags.filter(tag => !tag.custom);
     const limit = currentState().settings.coreConceptLimit ?? proposal.coreLimit ?? 60;
     const conflicts = proposal.decisionConflicts || [];
     const unresolvedMerges = proposal.unresolvedMerges || [];
     const validationIssues = proposal.validationIssues || [];
-    const isBlocking = createProposalIssueEvaluator(proposal);
+    if (proposalIssueCache?.proposal !== proposal) proposalIssueCache = { proposal, evaluate: createProposalIssueEvaluator(proposal) };
+    const isBlocking = proposalIssueCache.evaluate;
     const blockingValidation = validationIssues.filter(isBlocking);
+    const eligibleMappingIds = coreTags.filter(tag => {
+      const issues = validationIssues.filter(issue => issue.tagId === tag.id);
+      return !issues.some(issue => issue.severity === 'error') && issues.some(issue => issue.severity === 'confirmation' && isBlocking(issue));
+    }).map(tag => tag.id);
     const coreIds = new Set(coreTags.map(tag => tag.id));
     const perConceptMessages = new Set(validationIssues.filter(issue => issue.tagId && coreIds.has(issue.tagId)).map(issue => issue.message));
     const globalMessages = new Set([...(proposal.externalIssues || []), ...validationIssues.filter(issue => !issue.tagId || !coreIds.has(issue.tagId)).map(issue => issue.message)]);
@@ -539,8 +549,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       body.append(warning);
     }
     if (conflicts.length) body.append(h('div', 'notice warning section-gap', h('strong', '', 'Existing decisions need to be preserved'), h('ul', 'detail-list', ...conflicts.map(conflict => h('li', '', conflict))), h('div', 'section-gap', checkbox('taxonomy-preserve-decisions', proposalDecisionAck === acknowledgementKey, 'Preserve rejected and locked decisions when merging', checked => { proposalDecisionAck = checked ? acknowledgementKey : ''; render(); })), h('p', '', 'Approval carries the restrictive decisions into the merged concept.')));
+    body.append(h('div', 'section-gap', button(`Confirm all mappings (${eligibleMappingIds.length})`, () => run('confirm-all-taxonomy-mappings', { id: proposal.id, tagIds: eligibleMappingIds }, 'Eligible scientific mappings confirmed. Review the vocabulary before approving.'), 'small', !eligibleMappingIds.length), h('p', 'card-description', 'Blocked concepts still need correction; approval is separate.')));
     const concepts = h('details', 'proposal-details section-gap', h('summary', '', `Review ${coreTags.length} proposed concepts`));
-    concepts.open = true;
+    concepts.open = proposalListOpen;
+    concepts.addEventListener('toggle', () => { if (concepts.isConnected) proposalListOpen = concepts.open; });
     proposalPage = Math.min(proposalPage, Math.max(0, Math.ceil(coreTags.length / 20) - 1));
     const rows = h('div', 'tag-list section-gap');
     rows.id = 'proposal-concept-list';rows.setAttribute('data-view-key', `${proposal.id}:${proposalPage}`);
@@ -549,11 +561,23 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const tagIssues = validationIssues.filter(issue => issue.tagId === tag.id);
       const uncertain = tagIssues.filter(issue => issue.severity === 'confirmation' && isBlocking(issue));
       const hasContradiction = tagIssues.some(issue => issue.code === 'scientific-contradiction' && isBlocking(issue));
-      const rowActions = h('div', 'inline', button('Edit staged definition', () => editTag(tag, proposal.id), 'small quiet'), button('Exclude from core', () => run('save-taxonomy-proposal', {
-        id: proposal.id,
-        tags: proposal.tags.filter(other => other.id !== tag.id).map(other => other.custom ? other : { ...other, broaderIds: other.broaderIds.filter(id => id !== tag.id), relatedIds: (other.relatedIds || []).filter(id => id !== tag.id) }),
-        excluded: [...proposal.excluded, { name: conceptLabel(tag), reason: 'Excluded during vocabulary review.' }],
-      }, 'Concept excluded from the staged vocabulary.'), 'quiet small'));
+      const edit = button('Edit', () => editTag(tag, proposal.id), 'small quiet');
+      edit.setAttribute('aria-label', `Edit proposed concept ${tag.name}`);
+      const remove = button('Remove', async () => {
+        if (busy) return;
+        await run('save-taxonomy-proposal', {
+          id: proposal.id,
+          tags: proposal.tags.filter(other => other.id !== tag.id).map(other => ({ ...other, broaderIds: other.broaderIds.filter(id => id !== tag.id), relatedIds: (other.relatedIds || []).filter(id => id !== tag.id) })),
+          excluded: [...proposal.excluded, { name: conceptLabel(tag), reason: 'Excluded during vocabulary review.' }],
+        }, 'Concept removed from the staged vocabulary.');
+        if (editorProposalId === proposal.id && editorTag?.id === tag.id) {
+          editorTag = null;
+          editorProposalId = '';
+          render();
+        }
+      }, 'quiet small');
+      remove.setAttribute('aria-label', `Remove proposed concept ${tag.name}`);
+      const rowActions = h('div', 'inline', edit, remove);
       const row = h('article', 'tag-row', h('div', 'inline between', h('div', '', h('strong', '', conceptLabel(tag)), h('span', 'muted', ` · ${facetNames[tag.facet]}`)), rowActions),
         h('p', '', tag.description), h('div', 'tag-meta', h('span', '', `Evidence coverage: ${support?.paperIds.length ?? 0} papers`), h('span', '', `Currently tagged: ${currentlyTaggedCount(tag, proposal.tags)}`), tag.aliases.length ? h('span', '', `Aliases: ${tag.aliases.join(', ')}`) : null, tag.broaderIds.length ? h('span', '', `Subtype of: ${tag.broaderIds.map(id => names.get(id) || id).join(', ')}`) : null, tag.relatedIds?.length ? h('span', '', `Related: ${tag.relatedIds.map(id => names.get(id) || id).join(', ')}`) : null));
       if (tagIssues.length) {

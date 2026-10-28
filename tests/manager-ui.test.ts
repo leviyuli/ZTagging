@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { build } from 'esbuild';
 import type { DisplayTag, ManagerSnapshot } from '../src/ui-contract.ts';
+import type { ManagerUIOptions } from '../src/ui.ts';
 import type { WarningRecord } from '../src/warnings.ts';
+import { confirmProposalMapping } from '../src/taxonomy.ts';
+import { terminologyKey } from '../src/naming.ts';
 
 const bundle = build({entryPoints:['src/ui.ts'],bundle:true,write:false,format:'iife',globalName:'ManagerUI',platform:'browser',target:'firefox140'}).then(result=>result.outputFiles[0].text);
 const settle = () => new Promise<void>(resolve=>setImmediate(resolve));
@@ -63,25 +66,33 @@ function warning(id:string,extra:Partial<WarningRecord>={}):WarningRecord {
 function evidenceProposal():NonNullable<ManagerSnapshot['taxonomyProposal']> {
   return {id:'proposal',createdAt:'2026-10-28',inputFingerprint:'input',baseVersion:2,coreLimit:60,tags:[tag('staged','AEMWE',{status:'draft',fullName:'Anion exchange membrane water electrolysis'})],support:{staged:{registryIds:['registry-one'],sourceIds:['fact-one'],paperIds:['a'],evidence:[{paperId:'a',source:'abstract',text:'Anion-exchange membrane water electrolyzers operate under these conditions.'}]}},merges:[],excluded:[],issues:['Confirm the scientific mapping.'],paperIds:['a'],validationIssues:[{id:'issue-one',code:'uncertain-meaning',tagId:'staged',registryId:'registry-one',message:'Confirm the scientific mapping.',severity:'confirmation',paperIds:['a'],sourceNames:['Anion-exchange membrane water electrolyzers']}],mappingConfirmations:{},evidenceSnapshot:{id:'snapshot-one',protocolVersion:2,paperIds:['a'],entries:{'registry-one':{registryId:'registry-one',key:'source-key',sourceIds:['fact-one']}},sources:{'fact-one':{factConceptId:'fact-one',paperId:'a',name:'Anion-exchange membrane water electrolyzers',facet:'system',evidence:[{source:'abstract',text:'Anion-exchange membrane water electrolyzers operate under these conditions.'}],summary:'A factual paper summary.',metadataFingerprint:'metadata',inputFingerprint:'input',provider:'deepseek',model:'deepseek-chat',extractionVersion:1}}}};
 }
-async function harness(data=snapshot(),options:any={}) {
+interface HarnessOptions extends ManagerUIOptions {
+  failAction?: string;
+  emitOnInvoke?: number;
+  onSnapshot?: (call: number, emit: () => void, current: ManagerSnapshot) => void | ManagerSnapshot | Promise<void | ManagerSnapshot>;
+}
+async function harness(data=snapshot(),options:HarnessOptions={}) {
+  const {failAction,emitOnInvoke=0,onSnapshot,...uiOptions}=options;
   const dom=managerDOM();const actions:{action:string;payload:any}[]=[];
   const subscribers=new Set<()=>void>();let snapshotCalls=0;
   const context=vm.createContext({Zotero:{debug(){}},console});vm.runInContext(await bundle,context);
   const emit=()=>{for(const listener of subscribers)listener();};
-  const api={snapshot:async()=>{snapshotCalls++;if(options.onSnapshot)await options.onSnapshot(snapshotCalls,emit,data);return structuredClone(data);},subscribe:(listener:()=>void)=>{subscribers.add(listener);return()=>subscribers.delete(listener);},invoke:async(action:string,payload:any)=>{
+  const api={snapshot:async()=>{snapshotCalls++;return await onSnapshot?.(snapshotCalls,emit,data)??structuredClone(data);},subscribe:(listener:()=>void)=>{subscribers.add(listener);return()=>subscribers.delete(listener);},invoke:async(action:string,payload:any)=>{
     actions.push({action,payload:structuredClone(payload)});
+    if(failAction===action)throw new Error('Synthetic staged save failed');
     if(action==='save-taxonomy-proposal'&&data.taxonomyProposal){data.taxonomyProposal.tags=payload.tags;if(payload.excluded)data.taxonomyProposal.excluded=payload.excluded;}
     if(action==='discard-invalid-merges'&&data.taxonomyProposal)data.taxonomyProposal.unresolvedMerges=[];
     if(action==='dismiss-warning')for(const record of data.warnings||[])if(record.id===payload.id&&record.status==='active')record.status='dismissed';
     if(action==='dismiss-warnings')for(const record of data.warnings||[])if(record.status==='active')record.status='dismissed';
     if(action==='confirm-taxonomy-mapping'&&data.taxonomyProposal){data.taxonomyProposal.validationIssues=data.taxonomyProposal.validationIssues?.filter(issue=>issue.tagId!==payload.tagId||issue.severity!=='confirmation');data.taxonomyProposal.issues=[];}
+    if(action==='confirm-all-taxonomy-mappings'&&data.taxonomyProposal){data.taxonomyProposal.validationIssues=data.taxonomyProposal.validationIssues?.filter(issue=>!payload.tagIds.includes(issue.tagId)||issue.severity!=='confirmation');data.taxonomyProposal.issues=data.taxonomyProposal.validationIssues?.filter(issue=>issue.severity==='error').map(issue=>issue.message)||[];}
     if(action==='remove-taxonomy-support'&&data.taxonomyProposal){data.taxonomyProposal.validationIssues=data.taxonomyProposal.validationIssues?.filter(issue=>issue.registryId!==payload.registryId);data.taxonomyProposal.issues=[];}
     if(action==='save-settings')data.settings=payload.settings;
     if(action==='save-api-key'&&payload.provider==='deepseek')data.connection.deepseekKeyStored=true;
     if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);return created.id;}
-    for(let i=0;i<(options.emitOnInvoke||0);i++)emit();
+    for(let i=0;i<emitOnInvoke;i++)emit();
   }};
-  const ui=context.ManagerUI.mountManager(dom.win,api,options);await settle();
+  const ui=context.ManagerUI.mountManager(dom.win,api,uiOptions);await settle();
   assert.equal(dom.app.getAttribute('data-smart-tags-state'),'ready',dom.app.textContent);
   async function click(label:string){const button=dom.button(label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');await settle();}
   function expand(label:string){const details=dom.all().find(node=>node.localName==='details'&&node.children[0]?.textContent===label);assert.ok(details,`Missing details ${label}`);details.open=true;details.emit('toggle');return details;}
@@ -116,7 +127,7 @@ test('staged taxonomy approval requires acknowledgement for preserved rejected a
 
 test('editing a staged definition does not write the active vocabulary or paper tags',async t=>{
   const data=snapshot();data.taxonomyProposal={id:'proposal',createdAt:'now',inputFingerprint:'x',baseVersion:2,coreLimit:60,tags:[tag('staged','FC',{status:'draft'})],support:{},merges:[],excluded:[],issues:[],paperIds:[]};
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Edit staged definition');
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Edit');
   h.change('tag-full-name','Fuel-cell systems');await h.click('Save definition');
   assert.equal(h.actions[0].action,'save-taxonomy-proposal');assert.equal(h.actions[0].payload.tags[0].fullName,'Fuel-cell systems');
   assert.equal(data.tags[0].fullName,'Fuel cell');assert.equal(h.actions.some(entry=>entry.action==='apply-suggestions'),false);
@@ -141,20 +152,54 @@ test('editing another staged field cannot implicitly dismiss invalid merge revie
   const data=snapshot();const unresolved=[{fromId:'missing-source',toReference:'fuel-cell',reason:'Unknown source concept.'}];
   data.taxonomyProposal={id:'proposal',createdAt:'now',inputFingerprint:'x',baseVersion:2,coreLimit:60,tags:[tag('staged','FC',{status:'draft'})],support:{},merges:[],excluded:[],issues:[],paperIds:[],unresolvedMerges:unresolved};
   const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
-  await h.click('Edit staged definition');h.change('tag-description','A revised definition of fuel-cell systems.');await h.click('Save definition');
+  await h.click('Edit');h.change('tag-description','A revised definition of fuel-cell systems.');await h.click('Save definition');
   assert.deepEqual(data.taxonomyProposal.unresolvedMerges,unresolved);
   assert.equal(h.button('Approve global vocabulary').disabled,true);
   assert.ok(h.button('Discard invalid merge suggestions'));
   assert.equal(h.actions.length,1);assert.equal(h.actions[0].action,'save-taxonomy-proposal');
 });
 
-test('excluding a staged core removes dangling core edges while preserving user definitions',async t=>{
+test('Remove cleans staged core and DIY context links while retaining detail meanings and native choices',async t=>{
   const data=snapshot();data.taxonomyProposal={id:'proposal',createdAt:'now',inputFingerprint:'x',baseVersion:2,coreLimit:60,tags:data.tags.map(tag=>({...tag,status:'draft'})),support:{},merges:[],excluded:[],issues:[],paperIds:[]};
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Exclude from core');
+  data.taxonomyProposal.tags.find(tag=>tag.id==='rcl')!.broaderIds=['fc'];
+  const activeDetail=structuredClone(data.tags.find(tag=>tag.id==='rcl')!);const nativeChoices=structuredClone(data.papers);
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Remove');
   const payload=h.actions[0].payload;assert.equal(payload.tags.some((tag:DisplayTag)=>tag.id==='fc'),false);
   assert.deepEqual(payload.tags.find((tag:DisplayTag)=>tag.id==='pemfc').broaderIds,[]);
-  assert.deepEqual(payload.tags.find((tag:DisplayTag)=>tag.id==='rcl').relatedIds,['fc']);
+  const retained=payload.tags.find((tag:DisplayTag)=>tag.id==='rcl');
+  assert.deepEqual(retained.relatedIds,[]);assert.deepEqual(retained.broaderIds,[]);
+  assert.equal(retained.custom,true);assert.equal(retained.name,activeDetail.name);assert.equal(retained.description,activeDetail.description);assert.equal(retained.matchingMode,activeDetail.matchingMode);assert.deepEqual(retained.aliases,activeDetail.aliases);
+  assert.deepEqual(data.tags.find(tag=>tag.id==='rcl'),activeDetail,'Active DIY definition is unchanged before approval');
+  assert.deepEqual(data.papers,nativeChoices,'Removing a staged concept changes no native tag choices');
   assert.match(payload.excluded[0].reason,/review/);
+});
+
+test('successful Remove closes the editor for that staged concept',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  await h.click('Edit');h.change('tag-description','Unfinished draft for the removed concept.');await h.click('Remove');
+  assert.equal(data.taxonomyProposal.tags.some(value=>value.id==='staged'),false);
+  assert.equal(h.doc.getElementById('tag-name'),null,'A removed concept cannot remain editable');
+  assert.equal(h.button('Save definition'),undefined);assert.equal(h.actions.length,1);
+});
+
+test('Remove preserves an unfinished editor for another staged concept',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();data.taxonomyProposal.tags.push(tag('other','Other topic',{status:'draft'}));
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const edit=h.all().find(node=>node.getAttribute('aria-label')==='Edit proposed concept Other topic')!;
+  edit.emit('click');await settle();h.change('tag-description','Unfinished draft for another concept.');await h.click('Remove');
+  assert.equal(data.taxonomyProposal.tags.some(value=>value.id==='staged'),false);
+  assert.equal(h.doc.getElementById('tag-name').value,'Other topic');
+  assert.equal(h.doc.getElementById('tag-description').value,'Unfinished draft for another concept.');
+});
+
+test('failed Remove keeps the same staged editor and its unsaved changes',async t=>{
+  const data=snapshot();data.taxonomyProposal=evidenceProposal();
+  const h=await harness(data,{page:'vocabulary',failAction:'save-taxonomy-proposal'});t.after(()=>h.ui.destroy());
+  await h.click('Edit');h.change('tag-description','Unsaved text must survive a rejected removal.');await h.click('Remove');
+  assert.equal(data.taxonomyProposal.tags.some(value=>value.id==='staged'),true);
+  assert.equal(h.doc.getElementById('tag-description').value,'Unsaved text must survive a rejected removal.');
+  assert.ok(h.button('Save definition'));assert.match(h.app.textContent,/Synthetic staged save failed/);
 });
 
 test('Explore Any combines whole detail-context clauses and preserves them in native saved searches',async t=>{
@@ -338,7 +383,7 @@ test('large proposal review bounds DOM work and preserves evidence pages and unf
   const quotes=()=>h.all().filter(node=>node.localName==='blockquote');
   assert.equal(rows().length,20);assert.equal(quotes().length,0,'Collapsed evidence must not create hidden quote nodes');
   assert.ok(h.all().length<5000,'Initial render must be bounded independently of 15000 evidence links');
-  await h.click('Edit staged definition');h.change('tag-name','Unfinished local edit');
+  await h.click('Edit');h.change('tag-name','Unfinished local edit');
   await h.click('Next concepts');assert.match(rows()[0].textContent,/bulk concept 20/);
   assert.equal(h.doc.getElementById('tag-name').value,'Unfinished local edit');
   h.expand('Original source wording & registry links');assert.equal(quotes().length,40);
@@ -371,4 +416,49 @@ test('external notification during an action snapshot is refreshed after the act
   }});t.after(()=>h.ui.destroy());
   await h.click('Confirm scientific mapping');await settle();await settle();
   assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap concurrent/);
+});
+
+test('Confirm all mappings covers every concept page and skips blocked, confirmed, equivalent, and DIY concepts',async t=>{
+  const data=snapshot(),proposal=evidenceProposal();data.taxonomyProposal=proposal;
+  proposal.tags=Array.from({length:60},(_,index)=>tag(`all-${index}`,index===4?'AEMWE':`topic ${index}`,{status:'draft',description:'Anion exchange membrane water electrolyzer topic study.',aliases:index===0?['First full alias','Second full alias']:[]}));
+  proposal.tags.push(tag('all-diy','My DIY',{custom:true,status:'draft',relatedIds:[]}));
+  proposal.support=Object.fromEntries(proposal.tags.map(value=>[value.id,{registryIds:value.custom?[]:['registry-one'],paperIds:value.custom?[]:['a'],sourceIds:value.custom?[]:['fact-one']}]));
+  proposal.validationIssues=proposal.tags.filter(value=>!value.custom&&value.id!=='all-4').map(value=>({id:`issue-${value.id}`,code:'uncertain-meaning',severity:'confirmation',tagId:value.id,registryId:'registry-one',message:`Confirm ${value.name}.`}));
+  confirmProposalMapping(proposal,'all-2');
+  proposal.validationIssues!.push({id:'blocked',code:'scientific-contradiction',severity:'error',tagId:'all-1',message:'A contradictory mapping remains blocked.'},{id:'diy-pending',code:'uncertain-meaning',severity:'confirmation',tagId:'all-diy',message:'User detail is separate.'});
+  proposal.issues!.push('A contradictory mapping remains blocked.');
+  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.ok(h.button('Confirm all mappings (57)'));assert.match(h.app.textContent,/Blocked concepts still need correction; approval is separate/);
+  const concepts=h.all().find(node=>node.localName==='details'&&node.children[0]?.textContent==='Review 60 proposed concepts')!;
+  assert.equal(concepts.open,true);assert.equal(concepts.contains(h.button('Confirm all mappings (57)')),false);
+  const edit=h.all().find(node=>node.getAttribute('aria-label')==='Edit proposed concept topic 0')!;
+  const remove=h.all().find(node=>node.getAttribute('aria-label')==='Remove proposed concept topic 0')!;
+  assert.equal(edit.textContent,'Edit');assert.equal(remove.textContent,'Remove');assert.match(edit.getAttribute('aria-label'),/topic 0/);assert.match(remove.getAttribute('aria-label'),/topic 0/);
+  concepts.open=false;concepts.emit('toggle');await h.ui.refresh();
+  assert.equal(h.all().find(node=>node.localName==='details'&&node.children[0]?.textContent==='Review 60 proposed concepts')!.open,false,'User collapse survives refresh');
+  h.expand('Review 60 proposed concepts');await h.click('Next concepts');await h.click('Confirm all mappings (57)');
+  const expected=Array.from({length:60},(_,index)=>`all-${index}`).filter(id=>!['all-1','all-2','all-4'].includes(id));
+  assert.deepEqual(h.actions,[{action:'confirm-all-taxonomy-mappings',payload:{id:'proposal',tagIds:expected}}]);
+  assert.equal(h.button('Confirm all mappings (0)').disabled,true);assert.equal(h.button('Approve global vocabulary').disabled,true);
+  assert.match(h.app.textContent,/topic 20/,'Current concept page is preserved');
+});
+
+const changedConfirmedSnapshot: [string, (proposal: NonNullable<ManagerSnapshot['taxonomyProposal']>) => void][] = [
+  ['quotation', proposal => { proposal.evidenceSnapshot!.sources['fact-one'].evidence[0].text += ' Changed quotation.'; }],
+  ['meaning', proposal => { proposal.tags[0].description += ' A changed scientific scope.'; }],
+  ['support links', proposal => { proposal.support.staged.registryIds = []; }],
+];
+for (const [changed, mutate] of changedConfirmedSnapshot) test(`a new same-identity snapshot invalidates cached confirmation after changed ${changed}`,async t=>{
+  const data=snapshot(),proposal=evidenceProposal();data.taxonomyProposal=proposal;
+  proposal.tags[0].name='electrolyzer interface resistance';proposal.tags[0].fullName=proposal.tags[0].name;
+  proposal.tags[0].description='Resistance at the interface of an anion exchange membrane water electrolyzer.';
+  proposal.evidenceSnapshot!.entries['registry-one'].key=terminologyKey(proposal.evidenceSnapshot!.sources['fact-one'].name);
+  confirmProposalMapping(proposal,'staged');
+  assert.deepEqual(proposal.issues,[]);
+  const h=await harness(data,{page:'vocabulary',onSnapshot:()=>data});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Approve global vocabulary').disabled,false);
+  h.ui.navigate({page:'vocabulary'});assert.equal(h.button('Approve global vocabulary').disabled,false);
+  mutate(proposal);await h.emitUpdate();
+  assert.equal(h.snapshotCalls,2);assert.equal(h.button('Approve global vocabulary').disabled,true);
+  assert.ok(h.button('Confirm scientific mapping'),'Changed evidence must require confirmation again');
 });

@@ -1,4 +1,4 @@
-import { canonicalTagKey, FACETS, fingerprint, paperFingerprint, parseModelJSON, validateEvidence } from './core.ts';
+import { canonicalTagKey, FACETS, fingerprint, createFingerprinter, paperFingerprint, parseModelJSON, validateEvidence } from './core.ts';
 import type { Evidence, Facet, PaperRecord, TagDefinition } from './core.ts';
 import {allocateOpaqueId,ensureFactConceptIds,validateRegistrySnapshot} from './evidence.ts';
 import type {RegistrySnapshot} from './evidence.ts';
@@ -361,16 +361,27 @@ export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],e
 
 function meaningFingerprint(tag:TagDefinition):string{return fingerprint({description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples});}
 function scientificIdentity(label:string):string|undefined {return terminologyFor(label)?.name??(['Co','CO','pH'].includes(label)?label:undefined);}
-function mappingFingerprint(proposal:TaxonomyProposal,tagId:string):string {
+function mappingInput(proposal:TaxonomyProposal,tagId:string,snapshot:TaxonomyProposal['evidenceSnapshot']) {
   const tag=proposal.tags.find(candidate=>candidate.id===tagId);
-  return fingerprint({snapshot:proposal.evidenceSnapshot,tagId,meaning:tag?{description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples}:null,registryIds:[...(proposal.support[tagId]?.registryIds??[])].sort()});
+  return {snapshot,tagId,meaning:tag?{description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples}:null,registryIds:[...(proposal.support[tagId]?.registryIds??[])].sort()};
+}
+function mappingFingerprint(proposal:TaxonomyProposal,tagId:string):string {
+  return fingerprint(mappingInput(proposal,tagId,proposal.evidenceSnapshot));
 }
 export function isProposalIssueBlocking(proposal:TaxonomyProposal,value:ProposalValidationIssue):boolean {
   return createProposalIssueEvaluator(proposal)(value);
 }
 function proposalEvaluation(proposal:TaxonomyProposal) {
   const proofs=new Map<string,string>();
-  const proofFor=(tagId:string)=>{let proof=proofs.get(tagId);if(proof===undefined){proof=mappingFingerprint(proposal,tagId);proofs.set(tagId,proof);}return proof;};
+  let snapshot:TaxonomyProposal['evidenceSnapshot'],sharedFingerprint:ReturnType<typeof createFingerprinter>|undefined;
+  const proofFor=(tagId:string)=>{
+    let proof=proofs.get(tagId);
+    if(proof===undefined){
+      if(!sharedFingerprint){snapshot=proposal.evidenceSnapshot;sharedFingerprint=createFingerprinter(snapshot?[snapshot]:[]);}
+      proof=sharedFingerprint(mappingInput(proposal,tagId,snapshot));proofs.set(tagId,proof);
+    }
+    return proof;
+  };
   const isBlocking=(value:ProposalValidationIssue):boolean=>{
     if(value.severity==='error'||!value.tagId)return true;
     const confirmation=proposal.mappingConfirmations?.[value.tagId];
@@ -380,7 +391,7 @@ function proposalEvaluation(proposal:TaxonomyProposal) {
   };
   return {isBlocking,proofFor};
 }
-/** Use for one synchronous validation/render pass; create a fresh evaluator after any mutation. */
+/** Use while proposal inputs are unchanged; create a fresh evaluator after any mutation or snapshot refresh. */
 export function createProposalIssueEvaluator(proposal:TaxonomyProposal):(value:ProposalValidationIssue)=>boolean {
   return proposalEvaluation(proposal).isBlocking;
 }
@@ -411,8 +422,10 @@ function semanticRelation(tag:TagDefinition,sourceName:string,sourceEvidence:rea
 }
 /** Coverage is expanded exclusively from immutable source identities, never presentation labels. */
 export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyProposal {
+  return refreshEvidence(proposal,proposalEvaluation(proposal));
+}
+function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof proposalEvaluation>):TaxonomyProposal {
   const snapshot=proposal.evidenceSnapshot;if(!snapshot)return proposal;
-  const evaluation=proposalEvaluation(proposal);
   const activeTagIds=new Set(proposal.tags.map(tag=>tag.id));
   const previous=proposal.validationIssues??[],preserved=previous.filter(value=>value.code==='malformed-support'&&(!value.tagId||activeTagIds.has(value.tagId)||!Object.hasOwn(proposal.candidateKeys??{},value.tagId))),issues:ProposalValidationIssue[]=[...preserved];
   for(const relationship of proposal.unresolvedRelationships??[])if(proposal.tags.some(tag=>tag.id===relationship.tagId))issues.push(issue('invalid-relationship',`Unknown ${relationship.kind} reference "${relationship.reference}".`,relationship.tagId));
@@ -488,6 +501,23 @@ export function confirmProposalMapping(proposal:TaxonomyProposal,tagId:string,co
   if(!proposal.tags.some(tag=>tag.id===tagId))throw new Error('Unknown proposed concept.');
   if((proposal.validationIssues??[]).some(value=>value.tagId===tagId&&value.severity==='error'))throw new Error('Scientific contradictions and invalid evidence must be corrected before confirming a mapping.');
   proposal.mappingConfirmations??={};proposal.mappingConfirmations[tagId]={fingerprint:mappingFingerprint(proposal,tagId),confirmedAt};return refreshProposalEvidence(proposal);
+}
+/** Confirm a reviewed batch atomically; global approval requirements remain unchanged. */
+export function confirmProposalMappings(proposal:TaxonomyProposal,tagIds?:readonly string[],confirmedAt=new Date().toISOString()):TaxonomyProposal {
+  const knownIds=new Set(proposal.tags.map(tag=>tag.id));
+  if(tagIds!==undefined&&(!Array.isArray(tagIds)||tagIds.some(id=>typeof id!=='string'||!knownIds.has(id))))throw new Error('The selected proposed concepts changed. Refresh the proposal before confirming them.');
+  const selected=tagIds===undefined?knownIds:new Set(tagIds),staged=copy(proposal),evaluation=proposalEvaluation(staged);
+  refreshEvidence(staged,evaluation);
+  const issues=staged.validationIssues??[];
+  const eligible=staged.tags.filter(tag=>!tag.custom&&selected.has(tag.id)
+    &&!issues.some(issue=>issue.tagId===tag.id&&issue.severity==='error')
+    &&issues.some(issue=>issue.tagId===tag.id&&issue.code==='uncertain-meaning'&&evaluation.isBlocking(issue)));
+  if(!eligible.length)return proposal;
+  staged.mappingConfirmations??={};
+  for(const tag of eligible)staged.mappingConfirmations[tag.id]={fingerprint:evaluation.proofFor(tag.id),confirmedAt};
+  refreshEvidence(staged,evaluation);
+  Object.assign(proposal,staged);
+  return proposal;
 }
 export function removeProposalEvidenceLinks(proposal:TaxonomyProposal,tagId:string,registryIds?:readonly string[]):TaxonomyProposal {
   const support=proposal.support[tagId];if(!support)throw new Error('Unknown proposed concept.');

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2
+
+- Added Confirm all mappings across every proposal page, skipping blocked or already confirmed concepts and keeping vocabulary approval separate.
+- Made proposed concepts open initially, with clear Edit and Remove actions on each card.
+- Removed deleted hierarchy/context links from staged DIY details without deleting those details or changing native tags.
+- Closed the matching editor after successful removal while preserving other unfinished edits and failed-removal drafts.
+- Cleaned up provider-error typing, correction-error handling, warning validation, and test setup without changing their safeguards.
+- Reused canonical snapshot text and review evaluations without changing historical confirmation hashes; separated fingerprint compatibility tests from proposal workflow tests.
+
 ## 0.3.1
 
 - Fixed slow Vocabulary review by evaluating each confirmed mapping once per validation or render pass, preserving existing confirmation hashes.
