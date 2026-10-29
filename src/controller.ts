@@ -3,7 +3,7 @@ import type { PaperRecord, Suggestion, TagDefinition, Neighbor } from './core.ts
 import type { ApiKeyProvider, CompletionResult, ProviderClient, ProviderError, ProviderMode, ProviderSettings } from './providers.ts';
 import type { LibraryHost, NativeTag, TagPatch } from './platform.ts';
 import { sameTags } from './platform.ts';
-import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup } from './ui-contract.ts';
+import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup, BuildMode, Scope } from './ui-contract.ts';
 import { buildFactExtractionPrompt, normalizeFacts, buildConsolidationPrompt, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, confirmProposalMappings, removeProposalEvidenceLinks, isProposalIssueBlocking, applyReferenceCorrection } from './taxonomy.ts';
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
 import { equivalentTagNames, descendantIds, compileConceptFilter } from './concept-filter.ts';
@@ -25,6 +25,8 @@ import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYD
 import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork,noteConsolidationFailure,applyConsolidationCorrection,currentConsolidationTask,consolidationProgress,advanceConsolidationRecovery,MAX_CONSOLIDATION_AUTOMATIC_REQUESTS} from './library-consolidation.ts';
 import type {ConsolidationWork} from './library-consolidation.ts';
 import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
+import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,composeExtendedVocabulary} from './vocabulary-extension.ts';
+import type {VocabularyBaseline} from './vocabulary-extension.ts';
 
 export type StoredSuggestion = Suggestion & { operation?:'add'|'remove'; applied?:boolean;definitionFingerprint?:string };
 type ProviderFailure = Partial<Pick<ProviderError,'category'|'rawText'|'completion'>>;
@@ -41,6 +43,8 @@ type Run = {
   jobs:Job[];vocabCursor:number;vocabFinished:boolean;message:string;spentUSD:number;
   settings:ManagerSettings;vocabularyVersion:number;detailId?:string;proposalFingerprint?:string;
   preparationOnly?:boolean;
+  buildMode?:BuildMode;
+  extensionBaseline?:VocabularyBaseline;
   skippedIds?:string[];
   preparation?:PreparationCheckpoint;
   consolidation?:{protocolVersion:2;generationId:string;inputFingerprint:string;snapshot:RegistrySnapshot;candidateIds:Record<string,string>;value?:unknown;correctionValue?:unknown;correctionAttempts:0|1;phase:'generating'|'validating'|'correcting'|'needs-review'|'ready';failed?:boolean;diagnostics?:string[];responseIssue?:string;correctionIssue?:string;work?:ConsolidationWork;pendingResponse?:{requestId:string;raw:unknown;kind?:'initial'|'correction'}};
@@ -63,7 +67,8 @@ type ReconciliationPreview=ReviewedReconciliationChanges&{id:string;planId:strin
 type PaperExclusionPreview={id:string;exclude:boolean;paperIds:string[];patches:TagPatch[]};
 type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string;validatedCount?:number};
 type TaxonomyReview=Pick<TaxonomyProposal,'mappingConfirmations'|'validatedEvidenceLinks'|'evidenceMeaningFingerprints'|'evidenceScientificIdentities'|'paperFingerprints'|'paperInputFingerprints'|'machineDecisions'|'preparationPolicyVersion'>;
-export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState};
+type TaxonomyEvidenceScope={evidenceSnapshot:RegistrySnapshot;support:TaxonomyProposal['support'];review?:TaxonomyReview};
+export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState;evidenceScopes?:TaxonomyEvidenceScope[]};
 export interface AppState {
   schemaVersion:5;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
   nativeTags:Record<string,NativeTag[]>;suggestions:StoredSuggestion[];decisions:Record<string,Decision>;
@@ -78,6 +83,7 @@ export interface AppState {
   approvedTaxonomyInput?:string;
   evidenceCatalog:EvidenceCatalog;taxonomyEvidence:RegistrySnapshot|null;
   taxonomyReview?:TaxonomyReview;
+  taxonomyEvidenceScopes?:TaxonomyEvidenceScope[];
   tagPreparation?:TagPreparationState;
   activeTagPreparation?:TagPreparationState;
   userEditedTagIds?:string[];
@@ -92,6 +98,7 @@ export interface AppState {
   maintenanceTasks?:MaintenanceTask[];
   paperAttentionDismissals?:Record<string,string>;
   paperExclusionPreview?:PaperExclusionPreview;
+  workflow?:{buildMode:BuildMode;buildScope:Scope;buildPaperIds:string[];assignmentScope:Scope;assignmentPaperIds:string[]};
 }
 export interface ControllerEnvironment {
   host:LibraryHost; ai:Pick<ProviderClient,'hasApiKey'|'getSession'|'completeJson'|'testConnection'|'listModels'|'setApiKey'|'removeApiKey'|'signIn'|'cancelSignIn'|'signOut'|'selectAccount'>;
@@ -109,6 +116,9 @@ const paidProvider = (value:ProviderMode):value is ApiKeyProvider => value==='ap
 type DefinitionRecords=Record<string,TagDefinition|null>;
 const storedObject=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const stringList=(value:unknown):value is string[]=>Array.isArray(value)&&value.every(entry=>typeof entry==='string');
+function validExtensionContext(value:unknown):boolean {
+  return storedObject(value)&&validVocabularyBaseline(value.baseline)&&storedObject(value.relatedIds)&&Object.values(value.relatedIds).every(stringList);
+}
 function validDefinition(value:unknown):value is TagDefinition {
   if(!storedObject(value))return false;
   return ['id','name','description'].every(field=>typeof value[field]==='string')&&typeof value.custom==='boolean'&&['system','component','phenomenon','method'].includes(String(value.facet))&&['draft','approved'].includes(String(value.status))&&['aliases','inclusions','exclusions','examples','broaderIds'].every(field=>stringList(value[field]))&&(value.fullName===undefined||typeof value.fullName==='string')&&(value.relatedIds===undefined||stringList(value.relatedIds))&&(value.matchingMode===undefined||['manual','suggest','auto'].includes(String(value.matchingMode)));
@@ -209,6 +219,13 @@ function validIdentifiedState(value:unknown,version:3|4|5):boolean {
     }
   }
   if(version>=5){
+    if(v.workflow!==undefined){const workflow=v.workflow;if(!storedObject(workflow)||!['extend','replace'].includes(String(workflow.buildMode))||!['pilot','selected','collections','library'].includes(String(workflow.buildScope))||!['pilot','selected','collections','library'].includes(String(workflow.assignmentScope))||!stringList(workflow.buildPaperIds)||!stringList(workflow.assignmentPaperIds))return false;}
+    if(v.run?.buildMode!==undefined&&!['extend','replace'].includes(v.run.buildMode))return false;
+    if(v.run?.extensionBaseline!==undefined&&!validVocabularyBaseline(v.run.extensionBaseline))return false;
+    if(v.taxonomyProposal?.extension!==undefined&&!validExtensionContext(v.taxonomyProposal.extension))return false;
+    const validEvidenceScopes=(scopes:unknown)=>Array.isArray(scopes)&&scopes.every(scope=>storedObject(scope)&&storedObject(scope.support)&&storedObject(scope.evidenceSnapshot)&&validateRegistrySnapshot(scope.evidenceSnapshot as unknown as RegistrySnapshot).length===0);
+    if(v.taxonomyEvidenceScopes!==undefined&&!validEvidenceScopes(v.taxonomyEvidenceScopes))return false;
+    if(v.taxonomyArchives.some(archive=>archive.evidenceScopes!==undefined&&!validEvidenceScopes(archive.evidenceScopes)))return false;
     const historyValid=(entry:History)=>{
       if(entry.undoOfId!==undefined&&typeof entry.undoOfId!=='string')return false;
       if(entry.metadataPatches!==undefined&&(!Array.isArray(entry.metadataPatches)||!entry.metadataPatches.every(validMetadataPatch)||entry.metadataPatches.length>0&&entry.patches.length>0))return false;
@@ -412,8 +429,10 @@ export class AppController implements ManagerAPI {
     return {existingDefinitions:this.state.tags,protectedTagIds:[...protectedIds],facts:proposal?.paperIds.map(id=>this.state.facts[id]).filter(Boolean)??[],repairAttempts:run?.kind==='rebuild'?run.preparation?.attempts??0:0,maxRepairs:3,provider:run?.kind==='rebuild'?run.settings.provider:this.state.settings.provider,model:run?.kind==='rebuild'?run.settings.model:this.state.settings.model,targetCount:this.state.settings.coreConceptLimit??60};
   }
   private refreshPreparation():PreparationResult|undefined {
-    const proposal=this.state.taxonomyProposal;
+    let proposal=this.state.taxonomyProposal;
     if(!proposal){delete this.state.tagPreparation;return;}
+    const baseline=proposal.extension?.baseline??(this.state.run?.kind==='rebuild'&&this.state.run.buildMode==='extend'?this.state.run.extensionBaseline:undefined);
+    if(baseline)proposal=reconcileExtensionProposal(proposal,baseline);
     const previous=this.state.tagPreparation?.proposalId===proposal.id?this.state.tagPreparation:undefined;
     const result=prepareTagList(proposal,previous,this.preparationOptions());
     this.state.taxonomyProposal=result.proposal;this.state.tagPreparation=result.state;
@@ -429,19 +448,26 @@ export class AppController implements ManagerAPI {
     if(/maximum context|context.length|too many tokens|request.*too large/i.test(message))return 'The tag-building request was too large. Resume to organize the saved analysis in smaller parts.';
     if(/comparison.*changed|preview.*(?:stale|out of date)|refresh.*comparison/i.test(message))return 'Paper information or tags changed. Refresh the comparison before applying it.';
     if(/tag-building part|consolidation response|one part/i.test(message))return 'One part of tag building could not finish. Resume to retry that part; completed paper analysis is saved.';
-    if(/budget/i.test(message))return 'This run has reached its budget. Adjust it in Settings, then continue.';
-    if(/auth|api key|sign.in|signed out|token.*expir|401|403/i.test(message))return 'Check your AI connection in Settings, then continue.';
+    if(/budget/i.test(message))return 'This run has reached its budget. Adjust it in Connect AI, then continue.';
+    if(/auth|api key|sign.in|signed out|token.*expir|401|403/i.test(message))return 'Check your connection in Connect AI, then continue.';
     if(/quota|insufficient.balance|429/i.test(message))return 'The AI connection has no available usage. Check your account, then continue.';
     if(/metadata.*changed|PDF.*changed|source paper.*changed/i.test(message))return 'Some paper information changed. Update the analysis before applying tags.';
-    return 'This run could not finish. Try again, or check your AI connection in Settings.';
+    return 'This run could not finish. Try again, or check your connection in Connect AI.';
   }
   private preparationDisplay() {
     const preparation=this.state.tagPreparation,proposal=this.state.taxonomyProposal;
     if(!preparation||!proposal||preparation.proposalId!==proposal.id)return undefined;
     const removed=new Set(preparation.excluded.filter(value=>value.origin==='researcher').map(value=>value.tagId));
+    const retained=new Set(proposal.extension?.baseline.definitions.map(tag=>tag.id)??[]);
     const tags=new Map(proposal.tags.map(tag=>[tag.id,tag]));
+    for(const tag of proposal.extension?.baseline.definitions??[])tags.set(tag.id,tag);
     for(const tag of this.state.tags)if(tag.custom&&!tags.has(tag.id)&&!removed.has(tag.id))tags.set(tag.id,tag);
-    return {id:preparation.id,status:preparation.status,tags:[...tags.values()].map(tag=>({...copy(tag),coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',scopeCount:proposal.paperIds.length,targetCount:this.state.settings.coreConceptLimit??60,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
+    return {id:preparation.id,status:preparation.status,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',scopeCount:proposal.paperIds.length,targetCount:this.state.settings.coreConceptLimit??60,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
+  }
+  private updateExtensionContexts(proposal:TaxonomyProposal,tags:readonly TagDefinition[]) {
+    if(!proposal.extension)return;
+    const retained=new Set(proposal.extension.baseline.definitions.map(tag=>tag.id));
+    for(const tag of tags)if(!retained.has(tag.id))proposal.extension.relatedIds[tag.id]=(tag.relatedIds??[]).filter(id=>retained.has(id));
   }
   private rememberPreparation() {
     const proposal=this.state.taxonomyProposal;if(!proposal)return;
@@ -462,6 +488,7 @@ export class AppController implements ManagerAPI {
       run={id:uid('run'),kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:current.proposal.paperIds.map(paperId=>({id:uid('job'),paperId,status:'completed'})),vocabCursor:current.proposal.paperIds.length,vocabFinished:false,message:'Checking the suggested tags…',spentUSD:run?.spentUSD??0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
       this.state.run=run;
     }
+    if(current.proposal.extension){run.buildMode='extend';run.extensionBaseline=copy(current.proposal.extension.baseline);}
     run.settings=copy(this.state.settings);run.preparationOnly=true;run.vocabFinished=false;
     if((run.preparation?.attempts??0)>=3||current.state.status==='failed'){
       this.rememberPreparation();
@@ -516,19 +543,13 @@ export class AppController implements ManagerAPI {
     if(this.worker)await this.worker;
     const current=this.requirePreparation(id);
     if(current.state.status!=='ready'||current.state.questions.length)throw new Error('Answer the remaining questions, or finish the automatic checks first.');
-    const paperIds=[...current.proposal.paperIds],scope=this.state.run?.kind==='rebuild'?this.state.run.scope:'selected',preparation=copy(current.state);
+    const preparation=copy(current.state);
     this.rememberPreparation();
     await this.approveTaxonomy(current.proposal.id,true);
     this.state.activeTagPreparation=preparation;
-    delete this.state.tagPreparation;await this.save();
-    const papers=paperIds.map(id=>this.state.papers[id]).filter(Boolean);
-    if(!papers.length)return;
-    try{await this.start('tag',scope,false,papers);}
-    catch(error){
-      if(this.state.run?.kind!=='tag')this.state.run={id:uid('run'),kind:'tag',scope,automatic:false,status:'paused',jobs:papers.map(paper=>({id:uid('job'),paperId:paper.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:this.processingMessage(this.message(error)),spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
-      else{this.state.run.status='paused';this.state.run.message=this.processingMessage(this.message(error));}
-      await this.save();
-    }
+    delete this.state.tagPreparation;
+    if(this.state.run?.kind==='rebuild')this.state.run.message='Your tag list is saved. Choose papers to preview assignments.';
+    await this.save();
   }
   private async reconciliationInput():Promise<ReconciliationInput> {
     const papers=await this.env.host.list('library');
@@ -770,6 +791,25 @@ export class AppController implements ManagerAPI {
       }catch(error){if(task.status==='running'){task.status='paused';task.run.status='paused';task.error=this.message(error);if(task.kind==='retry'){const job=task.run.jobs[task.cursor];if(job){job.status='pending';job.error=task.error;}}}await this.save();break;}
     }
   }
+  private workflowState():NonNullable<AppState['workflow']> {
+    if(this.state.workflow)return this.state.workflow;
+    const run=this.state.run,scope=(value:string|undefined,fallback:Scope):Scope=>['pilot','selected','collections','library'].includes(value??'')?value as Scope:fallback;
+    return {buildMode:run?.kind==='rebuild'?run.buildMode??'replace':this.state.taxonomyReady?'extend':'replace',buildScope:run?.kind==='rebuild'?scope(run.scope,'pilot'):'pilot',buildPaperIds:this.state.taxonomyProposal?.paperIds??(run?.kind==='rebuild'?run.jobs.map(job=>job.paperId):this.state.taxonomyEvidence?.paperIds??[]),assignmentScope:run?.kind==='tag'&&!run.automatic?scope(run.scope,'library'):'library',assignmentPaperIds:run?.kind==='tag'&&!run.automatic?run.jobs.map(job=>job.paperId):[]};
+  }
+  private workflowDisplay(nativeTags:Record<string,NativeTag[]>):NonNullable<ManagerSnapshot['workflow']> {
+    const workflow=this.workflowState(),active=new Set(scientificDefinitions(this.state.tags).filter(tag=>tag.status==='approved').map(tag=>tag.id));
+    const assignedPaperCount=new Set(workflow.assignmentPaperIds.filter(paperId=>Object.entries(this.state.ownership[paperId]??{}).some(([tagId,assignment])=>active.has(tagId)&&(nativeTags[paperId]??[]).some(tag=>canonicalTagKey(tag.tag)===canonicalTagKey(assignment.name))))).size;
+    return {buildMode:workflow.buildMode,buildScope:workflow.buildScope,buildPaperCount:new Set(workflow.buildPaperIds).size,assignmentScope:workflow.assignmentScope,assignmentPaperCount:new Set(workflow.assignmentPaperIds).size,assignedPaperCount,assignmentPilotReady:this.pilotReviewIssue()===undefined};
+  }
+  private pilotReviewIssue():string|undefined {
+    const ids=new Set(this.state.pilotIds),run=this.state.run;
+    if(!ids.size||ids.size<this.state.pilotExpected)return 'Finish the pilot analysis before marking it reviewed.';
+    if(run?.scope!=='pilot'||run.kind!=='tag'||run.status!=='idle'||run.jobs.some(job=>job.status!=='completed')||run.vocabularyVersion!==this.state.vocabularyVersion)return 'Finish the tagging pilot for the current vocabulary before marking it reviewed.';
+    const suggestions=this.state.suggestions.filter(suggestion=>ids.has(suggestion.paperId)&&suggestion.vocabularyVersion===this.state.vocabularyVersion),pending=suggestions.filter(suggestion=>suggestion.status==='pending');
+    if(pending.length)return `Review the ${pending.length} pending pilot suggestions first.`;
+    if(!suggestions.some(suggestion=>suggestion.status==='accepted'&&suggestion.tagId!==NO_TAG_ID&&!this.state.tags.some(tag=>tag.id===suggestion.tagId&&isNoTagDefinition(tag))))return 'The pilot needs at least one accepted, evidence-backed scientific tag suggestion.';
+    return undefined;
+  }
   async snapshot():Promise<ManagerSnapshot> {
     const [apiKey,deepseekKey,session] = await Promise.all([this.env.ai.hasApiKey('api').catch(()=>false),this.env.ai.hasApiKey('deepseek').catch(()=>false),this.env.ai.getSession().catch(()=>({connected:false,sharing:false,email:null,accountId:null,accounts:[]}))]);
     const library=this.env.librarySnapshot?await this.env.librarySnapshot():null;
@@ -789,8 +829,8 @@ export class AppController implements ManagerAPI {
     }
     const tags=definitions.map(tag=>{
       const matches=coverage.get(tag.id)??new Set<string>();
-      const support=this.state.taxonomySupport[tag.id];
-      return {...tag,coverage:support?.paperIds.length,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...(matches.size?nativePaperIds.filter(id=>matches.has(id)):[]),...(support?.paperIds??[])])].slice(0,3)};
+      const supports=[this.state.taxonomySupport[tag.id],...(this.state.taxonomyEvidenceScopes??[]).map(scope=>scope.support[tag.id])].filter(Boolean),supportedPapers=[...new Set(supports.flatMap(support=>support.paperIds))];
+      return {...tag,coverage:supports.length?supportedPapers.length:undefined,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...(matches.size?nativePaperIds.filter(id=>matches.has(id)):[]),...supportedPapers])].slice(0,3)};
     });
     const run=this.state.run;
     const metadata=this.state.metadataPreview;
@@ -804,7 +844,7 @@ export class AppController implements ManagerAPI {
     const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):run?.message??'Ready';
     const queueEstimate=queueRun?this.estimateRun(queueRun):{value:0,pending:false};
     return {
-      vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,
+      vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,workflow:this.workflowDisplay(nativeTags),
       existingTags:this.existingTagDisplay(),paperAttention:attention,metadataPreview:metadataDisplay,
       paperExclusionPreview:this.state.paperExclusionPreview?{id:this.state.paperExclusionPreview.id,exclude:this.state.paperExclusionPreview.exclude,changes:this.state.paperExclusionPreview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Item',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined,
       tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
@@ -812,7 +852,7 @@ export class AppController implements ManagerAPI {
       taxonomyArchives:this.state.taxonomyArchives.map(a=>({id:a.id,date:a.date,version:a.version,reason:a.reason,count:a.tags.length})),
       suggestions:this.state.suggestions.map(s=>({...s,locked:!!this.state.decisions[pair(s.paperId,s.tagId)]?.locked,applied:s.applied||false})),
       cleanup:this.state.cleanup.map(({patches,...display})=>display),history:this.state.history.map(h=>({id:h.id,date:h.date,label:h.label,count:h.patches.length+(h.metadataPatches?.length??0)+Object.keys(h.afterDefinitions??{}).length,canUndo:h.status==='applied',status:h.status})),neighbors:this.state.neighbors,
-      queue:{phase:maintenance?'reading':phase,phaseProgress:maintenance?undefined:phaseProgress,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueEstimate.value,estimatePending:queueEstimate.pending,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
+      queue:{kind:queueRun?.kind,phase:maintenance?'reading':phase,phaseProgress:maintenance?undefined:phaseProgress,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueEstimate.value,estimatePending:queueEstimate.pending,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
       settings:{...this.state.settings},models:[...this.state.models],connection:{apiKeyStored:apiKey,deepseekKeyStored:deepseekKey,chatgptSignedIn:session.connected&&session.sharing,accountLabel:session.email??undefined,verified:this.state.verifiedConnections.includes(this.connectionKey()),credentialStorage:this.env.credentialStatus?.()??'OS-encrypted',accounts:session.accounts.map(a=>({id:a.id,label:a.label})),selectedAccountId:session.accountId??undefined},warnings:[...this.state.warnings]
     };
   }
@@ -847,7 +887,7 @@ export class AppController implements ManagerAPI {
       case 'cancel-paper-exclusion': delete this.state.paperExclusionPreview;await this.save();break;
       case 'preview-metadata': await this.previewMetadata(String(payload.id),payload.identifier);break;
       case 'apply-metadata': await this.applyMetadataPreview(String(payload.previewId));break;
-      case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot');break;
+      case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot',false,undefined,undefined,payload.mode);break;
       case 'retry-tag-preparation': await this.continuePreparation(String(payload.id));break;
       case 'answer-tag-question': {
         if(this.worker)await this.worker;
@@ -856,13 +896,16 @@ export class AppController implements ManagerAPI {
       }
       case 'edit-prepared-tag': {
         const current=this.requirePreparation(String(payload.id)),tag=this.normalizedDefinition(payload.tag);
+        if(current.proposal.extension?.baseline.definitions.some(value=>value.id===tag.id))throw new Error('Approved tags stay unchanged when extending the list. Choose Replace to review changes to them.');
         if(!current.proposal.tags.some(value=>value.id===tag.id))throw new Error('This tag changed. Refresh the list before editing it.');
+        this.updateExtensionContexts(current.proposal,[tag]);
         current.proposal.tags=current.proposal.tags.map(value=>value.id===tag.id?tag:value);
         this.state.userEditedTagIds=[...new Set([...(this.state.userEditedTagIds??[]),tag.id])];
         this.state.taxonomyProposal=current.proposal;this.refreshPreparation();await this.save();break;
       }
       case 'remove-prepared-tag': {
         const current=this.requirePreparation(String(payload.id)),id=String(payload.tagId),tag=current.proposal.tags.find(value=>value.id===id);
+        if(current.proposal.extension?.baseline.definitions.some(value=>value.id===id))throw new Error('Approved tags stay in the extended list. Choose Replace to review removing them.');
         if(!tag)throw new Error('This tag is no longer in the suggested list.');
         if(current.proposal.merges.some(merge=>merge.toId===id))throw new Error('Other tags are being combined into this tag. Keep it or choose a different combination first.');
         current.proposal.tags=current.proposal.tags.filter(value=>value.id!==id).map(value=>({...value,broaderIds:value.broaderIds.filter(parent=>parent!==id),relatedIds:(value.relatedIds??[]).filter(related=>related!==id)}));
@@ -874,11 +917,11 @@ export class AppController implements ManagerAPI {
       case 'apply-tag-list': await this.applyPreparedTags(String(payload.id));break;
       case 'export-tag-analysis': {const current=this.requirePreparation(String(payload.id));return this.dispatch('export-taxonomy-proposal',{id:current.proposal.id});}
       case 'scan': await this.scan(payload.scope??'library');break;
-      case 'rebuild':case 'tag': await this.start(action,payload.scope??'pilot');break;
+      case 'rebuild':case 'tag': await this.start(action,payload.scope??'pilot',false,undefined,undefined,payload.mode);break;
       case 'create-detail': {this.saveTag({...payload.tag,custom:true});const tag=this.state.tags.at(-1)!;if(this.state.taxonomyProposal&&!this.state.taxonomyProposal.tags.some(value=>value.id===tag.id))this.state.taxonomyProposal.tags.push(copy(tag));this.refreshPreparation();await this.save();return tag.id;}
       case 'assign-detail': await this.assignDetail(payload);break;
       case 'preview-detail': {const tag=this.state.tags.find(t=>t.id===payload.tagId&&t.custom);if(!tag)throw new Error('Choose a user-created detail tag.');if(tag.matchingMode==='manual')throw new Error('Enable suggestion matching for this detail before previewing.');await this.start('tag',payload.scope??'library',false,undefined,tag.id);break;}
-      case 'save-taxonomy-proposal': {const proposal=this.requireProposal(payload.id);if(!Array.isArray(payload.tags))throw new Error('Proposal tags are missing.');const normalized:TagDefinition[]=payload.tags.map((tag:any)=>this.normalizedDefinition(tag));if(proposal.merges.some(m=>!normalized.some(t=>t.id===m.toId)))throw new Error('This concept is a merge target. Reassign its incoming merges before excluding it, or rebuild the proposal.');proposal.tags=normalized;const stale=proposal.issues.filter(issue=>issue.startsWith('Source PDF'));proposal.issues=[...stale,...validateTaxonomy(normalized,proposal.coreLimit)];this.refreshProposalSupport(proposal);if(Array.isArray(payload.excluded))proposal.excluded=payload.excluded.filter((e:any)=>typeof e.name==='string'&&typeof e.reason==='string');await this.save();break;}
+      case 'save-taxonomy-proposal': {const proposal=this.requireProposal(payload.id);if(!Array.isArray(payload.tags))throw new Error('Proposal tags are missing.');const normalized:TagDefinition[]=payload.tags.map((tag:any)=>this.normalizedDefinition(tag));if(proposal.merges.some(m=>!normalized.some(t=>t.id===m.toId)))throw new Error('This concept is a merge target. Reassign its incoming merges before excluding it, or rebuild the proposal.');this.updateExtensionContexts(proposal,normalized);proposal.tags=normalized;const stale=proposal.issues.filter(issue=>issue.startsWith('Source PDF'));proposal.issues=[...stale,...validateTaxonomy(normalized,proposal.coreLimit)];this.refreshProposalSupport(proposal);if(Array.isArray(payload.excluded))proposal.excluded=payload.excluded.filter((e:any)=>typeof e.name==='string'&&typeof e.reason==='string');await this.save();break;}
       case 'approve-taxonomy': await this.approveTaxonomy(payload.id,payload.preserveDecisions===true);break;
       case 'confirm-taxonomy-mapping': {const proposal=this.requireProposal(payload.id);confirmProposalMapping(proposal,String(payload.tagId));await this.save();break;}
       case 'confirm-all-taxonomy-mappings': {
@@ -892,6 +935,7 @@ export class AppController implements ManagerAPI {
       case 'discard-taxonomy': this.requireProposal(payload.id);this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;await this.save();break;
       case 'restore-taxonomy': {
         const archived=this.state.taxonomyArchives.find(archive=>archive.id===payload.id);if(!archived)throw new Error('The previous taxonomy is unavailable.');
+        if(archived.evidenceScopes?.length)throw new Error('This saved tag list uses evidence from several builds. Rebuild a tag list for the papers you want to review; its saved definitions and history are preserved.');
         const tags=copy(archived.tags),snapshot=archived.evidenceSnapshot;
         const legacyIssues=snapshot?[]:['This archived vocabulary predates stable evidence identities. Rebuild a current proposal before approval.'];
         const proposal:TaxonomyProposal={id:uid('taxonomy-restore'),createdAt:new Date().toISOString(),inputFingerprint:fingerprint(tags),baseVersion:this.state.vocabularyVersion,tags,support:copy(archived.support??{}),merges:[],excluded:[],issues:[...legacyIssues,...validateTaxonomy(tags,this.state.settings.coreConceptLimit??60)],externalIssues:legacyIssues,paperIds:snapshot?[...snapshot.paperIds]:[],coreLimit:this.state.settings.coreConceptLimit??60};
@@ -995,12 +1039,7 @@ export class AppController implements ManagerAPI {
         this.state.verifiedConnections=[...new Set([...this.state.verifiedConnections,this.connectionKey()])];await this.save();return result;
       }
       case 'mark-pilot-reviewed': {
-        const ids=new Set(this.state.pilotIds);
-        if(!ids.size||ids.size<this.state.pilotExpected)throw new Error('Finish the pilot analysis before marking it reviewed.');
-        if(this.state.run?.scope!=='pilot'||this.state.run.kind!=='tag'||this.state.run.status!=='idle'||this.state.run.jobs.some(j=>j.status!=='completed')||this.state.run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Finish the tagging pilot for the current vocabulary before marking it reviewed.');
-        const pending=this.state.suggestions.filter(s=>ids.has(s.paperId)&&s.vocabularyVersion===this.state.vocabularyVersion&&s.status==='pending');
-        if(pending.length)throw new Error(`Review the ${pending.length} pending pilot suggestions first.`);
-        if(!this.state.suggestions.some(s=>ids.has(s.paperId)&&s.vocabularyVersion===this.state.vocabularyVersion&&s.status==='accepted'&&s.tagId!==NO_TAG_ID))throw new Error('The pilot needs at least one accepted, evidence-backed scientific tag suggestion.');
+        const issue=this.pilotReviewIssue();if(issue)throw new Error(issue);
         this.state.pilotReviewed=true;this.state.pilotVersion=this.state.vocabularyVersion;await this.save();break;
       }
       case 'dismiss-warning': this.state.warnings=dismissWarnings(this.state.warnings,[String(payload.id)]);await this.save();break;
@@ -1026,6 +1065,8 @@ export class AppController implements ManagerAPI {
     if(document.schemaVersion>=3&&(original.protocolVersion!==2||!original.evidenceSnapshot))throw new Error('The saved tag analysis is missing its paper references.');
     if(original.unresolvedMerges!==undefined&&(!Array.isArray(original.unresolvedMerges)||original.unresolvedMerges.some(m=>!m||typeof m.fromId!=='string'||typeof m.toReference!=='string'||typeof m.reason!=='string')))throw new Error('Invalid unresolved merge review records.');
     if(original.baseVersion!==this.state.vocabularyVersion||document.sourceVocabularyFingerprint!==fingerprint(this.state.tags))throw new Error('This proposal was prepared for a different vocabulary. Rebuild it against the current library.');
+    if(original.extension&&!validExtensionContext(original.extension))throw new Error('The extension baseline is invalid. Build the tag list again.');
+    if(original.extension&&(original.extension.baseline.version!==this.state.vocabularyVersion||original.extension.baseline.fingerprint!==captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint))throw new Error('The saved extension was prepared for a different approved tag list. Build it again.');
     if(new Set(original.paperIds).size!==original.paperIds.length)throw new Error('Duplicate source paper IDs in the proposal.');
     const tags=original.tags.map(tag=>this.normalizedDefinition(tag)),facts:PaperFacts[]=[];
     for(const id of original.paperIds) {
@@ -1085,6 +1126,7 @@ export class AppController implements ManagerAPI {
       proposal.machineDecisions=copy(original.machineDecisions??{});
       proposal.evidenceMeaningFingerprints=copy(original.evidenceMeaningFingerprints??{});
       proposal.preparationPolicyVersion=original.preparationPolicyVersion;
+      if(original.extension)proposal.extension=copy(original.extension);
     }
     proposal.externalIssues=[...new Set([...(original.externalIssues??[]),...original.issues.filter(message=>!(original.validationIssues??[]).some(issue=>issue.message===message))])];proposal.unresolvedMerges=copy(original.unresolvedMerges??[]);refreshProposalEvidence(proposal);
     this.state.evidenceCatalog=catalog;for(const fact of facts)this.state.facts[fact.paperId]=fact;
@@ -1139,6 +1181,7 @@ export class AppController implements ManagerAPI {
         if(proposal.validatedEvidenceLinks?.[oldId])(next.validatedEvidenceLinks??={})[newId]=copy(proposal.validatedEvidenceLinks[oldId]);
       }
       next.inputFingerprint=proposal.inputFingerprint;next.externalIssues=[...(proposal.externalIssues??[])];
+      if(proposal.extension)next.extension=copy(proposal.extension);
       next.validationIssues=[...(next.validationIssues??[]),...(proposal.validationIssues??[]).filter(issue=>issue.code==='malformed-support')];
       next.unresolvedRelationships=proposal.unresolvedRelationships?.map(relationship=>({...relationship,tagId:newByKey.get(keys[relationship.tagId])??relationship.tagId}));
       refreshProposalEvidence(next);this.state.taxonomyProposal=next;
@@ -1150,6 +1193,7 @@ export class AppController implements ManagerAPI {
     }),merges:proposal.merges.map(merge=>({fromId:merge.fromId,toKey:merge.toId})),excluded:proposal.excluded};
     const next=createTaxonomyProposal(raw,facts,this.consolidationDefinitions(),{limit:proposal.coreLimit,baseVersion:proposal.baseVersion,createdAt:proposal.createdAt});
     next.id=proposal.id;next.inputFingerprint=proposal.inputFingerprint;next.issues=[...new Set([...proposal.issues,...next.issues])];
+    if(proposal.extension)next.extension=copy(proposal.extension);
     this.warn(`Discarded ${proposal.unresolvedMerges.length} invalid AI merge suggestion(s) after review. No native tag names were changed.`);
     this.state.taxonomyProposal=next;await this.save();
   }
@@ -1162,7 +1206,12 @@ export class AppController implements ManagerAPI {
     return [...new Set(conflicts)];
   }
   private async approveTaxonomy(id:string,preserveDecisions:boolean) {
-    const proposal=this.requireProposal(id);
+    let proposal=this.requireProposal(id);
+    const baseline=proposal.extension?.baseline;
+    if(baseline){
+      if(baseline.version!==this.state.vocabularyVersion||baseline.fingerprint!==captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint)throw new Error('The approved tag list changed after this extension began. Build a new extension before applying it.');
+      proposal=reconcileExtensionProposal(proposal,baseline);this.state.taxonomyProposal=proposal;
+    }
     if(proposal.protocolVersion===2){refreshProposalEvidence(proposal);const errors=validateSnapshotAgainstFacts(proposal.evidenceSnapshot!,proposal.paperIds.map(paperId=>this.state.facts[paperId]).filter(Boolean));if(errors.length)throw new Error('The proposal evidence snapshot changed. Rebuild before approval.');if(proposal.validationIssues?.some(issue=>isProposalIssueBlocking(proposal,issue)))throw new Error('Resolve the proposal evidence issues and confirm uncertain scientific mappings before approval.');}
     if(proposal.unresolvedMerges?.length)throw new Error('Review and explicitly discard the invalid merge suggestions before approving this taxonomy.');
     if(proposal.baseVersion!==this.state.vocabularyVersion)throw new Error('The active core vocabulary changed. Rebuild this stale proposal.');
@@ -1174,14 +1223,18 @@ export class AppController implements ManagerAPI {
     }
     const redirects=new Map(proposal.merges.map(merge=>[merge.fromId,merge.toId]));
     const removed=new Set(this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.tagId)??[]);
-    const tags=[...proposal.tags.filter(t=>!t.custom).map(t=>({...copy(t),status:'approved' as const})),...this.state.tags.filter(t=>t.custom&&!removed.has(t.id)).map(t=>({...copy(t),status:'approved' as const,broaderIds:t.broaderIds.map(id=>redirects.get(id)??id),relatedIds:(t.relatedIds??[]).map(id=>redirects.get(id)??id)}))];
+    const tags=baseline?composeExtendedVocabulary(proposal,baseline):[...proposal.tags.filter(t=>!t.custom).map(t=>({...copy(t),status:'approved' as const})),...this.state.tags.filter(t=>t.custom&&!removed.has(t.id)).map(t=>({...copy(t),status:'approved' as const,broaderIds:t.broaderIds.map(id=>redirects.get(id)??id),relatedIds:(t.relatedIds??[]).map(id=>redirects.get(id)??id)}))];
     const problems=validateTaxonomy(tags,this.state.settings.coreConceptLimit??60);
     if(!tags.length)problems.push('Add a tag before applying this list.');
     if(proposal.issues.length)problems.push(...proposal.issues);
     if(problems.length)throw new Error(problems.join(' '));
     if(this.taxonomyConflicts(proposal).length&&!preserveDecisions)throw new Error('Review the conflicting remembered choices and confirm preservation of rejected/locked decisions.');
     for(const merge of proposal.merges)if(!tags.some(t=>t.id===merge.toId))throw new Error('A merge target is missing. Edit or rebuild the proposal.');
-    this.state.taxonomyArchives.unshift({id:uid('taxonomy-archive'),date:new Date().toISOString(),version:this.state.vocabularyVersion,tags:copy(this.state.tags),redirects:copy(this.state.taxonomyRedirects),reason:'Replaced after tag list update',...(this.state.activeTagPreparation?{preparation:copy(this.state.activeTagPreparation)}:{}),...(this.state.taxonomyEvidence?{evidenceSnapshot:copy(this.state.taxonomyEvidence),support:copy(this.state.taxonomySupport),review:copy(this.state.taxonomyReview??{})}:{})});
+    this.state.taxonomyArchives.unshift({id:uid('taxonomy-archive'),date:new Date().toISOString(),version:this.state.vocabularyVersion,tags:copy(this.state.tags),redirects:copy(this.state.taxonomyRedirects),reason:baseline?'Extended after tag list update':'Replaced after tag list update',...(this.state.activeTagPreparation?{preparation:copy(this.state.activeTagPreparation)}:{}),...(this.state.taxonomyEvidenceScopes?.length?{evidenceScopes:copy(this.state.taxonomyEvidenceScopes)}:{}),...(this.state.taxonomyEvidence?{evidenceSnapshot:copy(this.state.taxonomyEvidence),support:copy(this.state.taxonomySupport),review:copy(this.state.taxonomyReview??{})}:{})});
+    if(baseline){
+      const scopes=[...(this.state.taxonomyEvidenceScopes??[]),...(this.state.taxonomyEvidence?[{evidenceSnapshot:this.state.taxonomyEvidence,support:this.state.taxonomySupport,review:this.state.taxonomyReview}]:[])];
+      this.state.taxonomyEvidenceScopes=[...new Map(scopes.map(scope=>[fingerprint(scope),copy(scope)])).values()];
+    }else delete this.state.taxonomyEvidenceScopes;
     for(const merge of proposal.merges) {
       if(merge.fromId===merge.toId)continue;
       this.state.taxonomyRedirects[merge.fromId]=merge.toId;
@@ -1197,7 +1250,7 @@ export class AppController implements ManagerAPI {
     this.state.suggestions=this.state.suggestions.filter(s=>s.applied);
     this.vocabularyChanged();
     const facts=proposal.paperIds.map(id=>this.state.facts[id]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
-    if(facts.length===proposal.paperIds.length)this.state.approvedTaxonomyInput=fingerprint({protocolVersion:2,facts,existing:scientificDefinitions(this.state.tags),limit:this.state.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
+    if(facts.length===proposal.paperIds.length)this.state.approvedTaxonomyInput=fingerprint({protocolVersion:2,facts,existing:scientificDefinitions(this.state.tags),limit:this.state.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,...(baseline?{buildMode:'extend',baselineFingerprint:captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint}:{})});
     await this.save();
   }
   private detailFingerprint(definitions=this.state.tags) {return fingerprint(scientificDefinitions(definitions).filter(t=>t.custom).map(t=>({id:t.id,name:t.name,fullName:t.fullName,description:t.description,aliases:t.aliases,inclusions:t.inclusions,exclusions:t.exclusions,matchingMode:t.matchingMode,status:t.status})));}
@@ -1283,10 +1336,12 @@ export class AppController implements ManagerAPI {
   }
   private checkConnectionSettings() {
     const s=this.state.settings;
-    if(!s.model)throw new Error('Choose a model in Settings first.');
+    if(!s.model)throw new Error('Choose a model in Connect AI first.');
     if(paidProvider(s.provider)&&(s.inputPricePerMillion<=0||s.outputPricePerMillion<=0))throw new Error('Enter the current input and output token prices for this API model before starting a budgeted run.');
   }
-  private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string) {
+  private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string,mode?:BuildMode) {
+    if(mode!==undefined&&mode!=='extend'&&mode!=='replace')throw new Error('Choose whether to extend or replace the tag list.');
+    const buildMode=mode??(this.state.taxonomyReady?'extend':'replace');
     const replacePausedRebuild=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&this.state.run.status==='paused';
     if(replacePausedRebuild&&this.worker)await this.worker;
     if(this.worker||this.maintenanceWorker||this.state.run?.status==='running')throw new Error('Pause or finish the current run first.');
@@ -1296,9 +1351,16 @@ export class AppController implements ManagerAPI {
     const papers=provided??await this.scan(scope);
     if(!papers.length)throw new Error('No eligible papers were found in this scope.');
     for(const p of papers){if(!this.state.papers[p.id])this.remember(p);this.state.nativeTags[p.id]=await this.env.host.readTags(p.itemID);}
-    const checkpoint=kind==='rebuild'&&this.state.run?.kind==='rebuild'?this.state.run.consolidation:undefined;
+    const workflow=this.workflowState();
+    const checkpoint=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&(this.state.run.buildMode??'replace')===buildMode?this.state.run.consolidation:undefined;
     if(kind==='rebuild'){this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;}
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reviewing paper metadata for vocabulary discovery…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
+    const selectedScope=['pilot','selected','collections','library'].includes(scope)?scope as Scope:undefined;
+    if(kind==='rebuild'){
+      this.state.run.buildMode=buildMode;
+      if(buildMode==='extend')this.state.run.extensionBaseline=captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion);
+      this.state.workflow={...workflow,buildMode,buildScope:selectedScope??'selected',buildPaperIds:papers.map(paper=>paper.id)};
+    }else if(!automatic&&!detailId)this.state.workflow={...workflow,assignmentScope:selectedScope??'selected',assignmentPaperIds:papers.map(paper=>paper.id)};
     if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}
     if(scope==='pilot'&&kind==='tag'&&!detailId){this.state.pilotIds=[];this.state.pilotExpected=papers.filter(paper=>!this.excluded(paper.id)).length;this.state.pilotReviewed=false;}
@@ -1330,7 +1392,7 @@ export class AppController implements ManagerAPI {
     const signal=(this.state.run===run?this.abort:this.maintenanceAbort)?.signal;
     if(run.status!=='running'||signal?.aborted||this.shuttingDown)throw new Error('This work was paused. Completed results are saved.');
     const reservation=this.estimate(prompt,run.settings);
-    if(paidProvider(run.settings.provider)&&run.spentUSD+reservation>run.settings.budgetUSD)throw new Error('The next request exceeds the remaining estimated API budget. Increase the cap in Settings, then resume.');
+    if(paidProvider(run.settings.provider)&&run.spentUSD+reservation>run.settings.budgetUSD)throw new Error('The next request exceeds the remaining estimated API budget. Increase the cap in Connect AI, then resume.');
     const before=run.spentUSD,rollback=onDispatch?.();run.spentUSD+=reservation;
     try{await this.save();}catch(error){run.spentUSD=before;if(typeof rollback==='function')rollback();throw error;}
     let result:CompletionResult;
@@ -1389,7 +1451,7 @@ export class AppController implements ManagerAPI {
     if(!facts.length){run.vocabFinished=true;run.message='All papers were skipped for this build. Your existing tag list is unchanged.';return;}
     if(facts.some(fact=>!fact))throw new Error('A selected paper needs fresh factual extraction. Resume to process its saved job.');
     ensureFactConceptIds(facts);
-    const existing=this.consolidationDefinitions(),inputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
+    const existing=this.consolidationDefinitions(),inputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,...(run.buildMode==='extend'?{buildMode:'extend',baselineFingerprint:run.extensionBaseline?.fingerprint}:{})});
     if(this.state.approvedTaxonomyInput===inputFingerprint){run.vocabFinished=true;run.message='The unchanged papers and approved taxonomy were reused. No new proposal or native changes were needed.';return;}
     let checkpoint=run.consolidation;
     if(!checkpoint||checkpoint.protocolVersion!==2||checkpoint.inputFingerprint!==inputFingerprint){

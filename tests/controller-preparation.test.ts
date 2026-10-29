@@ -31,9 +31,11 @@ test('Build tags, Apply tag list and paper Apply remain separate, undoable steps
   const h=harness();await build(h);let view=await h.controller.snapshot();
   assert.equal(view.tagPreparation?.status,'ready');assert.equal(h.writes.length,0);
   assert.equal(view.taxonomyProposal,undefined);assert.equal(view.queue.consolidation,undefined);
+  const calls=h.calls.length;
   await h.controller.invoke('apply-tag-list',{id:view.tagPreparation!.id});await h.controller.waitForIdle();
-  assert.equal(h.state.taxonomyReady,true);assert.equal(h.state.run?.kind,'tag');assert.equal(h.state.run?.scope,'selected');
-  assert.equal(h.state.settings.autoAssign,false);assert.equal(h.writes.length,0);assert.equal(h.state.suggestions.length,1);
+  assert.equal(h.state.taxonomyReady,true);assert.equal(h.state.run?.kind,'rebuild');assert.equal(h.state.run?.scope,'selected');
+  assert.equal(h.state.settings.autoAssign,false);assert.equal(h.writes.length,0);assert.equal(h.state.suggestions.length,0);assert.equal(h.calls.length,calls);
+  await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.suggestions.length,1);
   assert.deepEqual(h.state.run!.jobs.map(job=>job.paperId),['1:PREPARATION']);
   const suggestion=h.state.suggestions[0];await h.controller.invoke('accept-suggestion',{id:suggestion.id});await h.controller.invoke('apply-suggestions',{ids:[suggestion.id]});
   assert.ok(h.native().some(tag=>tag.tag==='EIS'));assert.ok(h.native().some(tag=>tag.tag==='Project paper'));
@@ -145,16 +147,18 @@ test('removing a user topic affects the working list and applies only after Appl
   await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();assert.equal(h.state.tags.some(tag=>tag.id===custom.id),false);assert.equal(h.writes.length,0);assert.ok(h.state.taxonomyArchives[0].tags.some(tag=>tag.id===custom.id));
 });
 
-test('applying tags retains a resumable paper preview when the connection needs attention',async()=>{
+test('saving a tag list is independent of the connection and a paper preview starts explicitly',async()=>{
   const h=harness();await build(h);h.state.settings.model='';
+  const calls=h.calls.length;
   await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});
-  assert.equal(h.state.taxonomyReady,true);assert.equal(h.state.run?.kind,'tag');assert.equal(h.state.run?.status,'paused');assert.deepEqual(h.state.run?.jobs.map(job=>job.paperId),['1:PREPARATION']);assert.equal(h.writes.length,0);
-  h.state.settings.model='test-model';await h.controller.invoke('resume');await h.controller.waitForIdle();assert.equal(h.state.suggestions.length,1);
+  assert.equal(h.state.taxonomyReady,true);assert.equal(h.state.run?.kind,'rebuild');assert.equal(h.state.run?.status,'idle');assert.equal(h.calls.length,calls);assert.equal(h.writes.length,0);
+  await assert.rejects(h.controller.invoke('tag',{scope:'selected'}),/model/i);assert.equal(h.state.suggestions.length,0);
+  h.state.settings.model='test-model';await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.suggestions.length,1);
 });
 
 test('new-topic notices stay dismissed until changed and resolve after the same paper is reevaluated',async()=>{
   const h=harness(),normal=h.ai.handler;let topics=['Electrode porosity'];h.ai.handler=data=>data.approvedVocabulary?{...(normal(data) as object),newTagCandidates:topics}:normal(data);
-  await build(h);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();
+  await build(h);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();
   const warning=h.state.warnings.find(warning=>warning.code==='unapproved-topics')!;assert.equal(warning.status,'active');assert.deepEqual(warning.paperIds,['1:PREPARATION']);
   await h.controller.invoke('dismiss-warning',{id:warning.id});await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.warnings.find(value=>value.id===warning.id)?.status,'dismissed');
   topics=[];h.paper.abstract+=' Updated measurements are available.';await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();

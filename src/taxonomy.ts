@@ -4,6 +4,7 @@ import {allocateOpaqueId,ensureFactConceptIds,validateRegistrySnapshot} from './
 import type {RegistrySnapshot} from './evidence.ts';
 import {equivalentTerminology,preferredCoreNaming,terminologyFor} from './naming.ts';
 import type {NormalizationVersion} from './naming.ts';
+import type {VocabularyExtensionContext} from './vocabulary-extension.ts';
 
 export const FACT_EXTRACTION_VERSION=1 as const;
 export const CONSOLIDATION_PROTOCOL_VERSION=2 as const;
@@ -33,6 +34,7 @@ export interface TaxonomyProposal {
   evidenceScientificIdentities?:Record<string,string>;
   machineDecisions?:Record<string,MachineEvidenceDecision>;
   preparationPolicyVersion?:2;
+  extension?:VocabularyExtensionContext;
 }
 export interface ProposalOptions {limit?:number;baseVersion?:number;createdAt?:string;snapshot?:RegistrySnapshot;candidateIds?:Record<string,string>;generationId?:string}
 

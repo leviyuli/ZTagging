@@ -415,7 +415,7 @@ test('the real manager renders in an XML chrome document using explicit HTML nam
   for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready', dialog.app!.textContent);
   assert.match(dialog.app!.textContent, /Your library, clearly tagged/);
-  assert.match(dialog.app!.textContent, /Prepare tags/);
+  assert.match(dialog.app!.textContent, /Build tags/);
   assert.doesNotMatch(dialog.app!.textContent, /Opening Smart Tags/);
   assert.equal(native.errors.length, 0);
   await native.app.shutdown();

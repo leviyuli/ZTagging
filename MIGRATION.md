@@ -1,4 +1,16 @@
-# Upgrading to Smart Tags 0.5.3
+# Upgrading to Smart Tags 0.6.0
+
+## Version 0.6.0
+
+The sidebar now follows **Connect AI → Build tags → Review & clean up → Assign & automate**, with the applied list under **Tag library**. Apply tag list saves definitions without immediately analyzing the build papers for assignment. Choose a separate assignment group and start its suggestions explicitly. Native paper tags still require a reviewed batch Apply.
+
+State remains schema 5, with optional workflow choices and an immutable baseline for new-field builds. Cached factual extraction, source identities, historical snapshots and confirmations, credentials, settings, completed work, and native data remain intact. Loading the update performs no provider request. Existing paused builds keep their original mode; updating does not reinterpret an old proposal as an extension.
+
+New builds default to adding tags when an applied list exists. The current applied definitions are retained while incoming suggestions are checked against the newly selected papers. Old papers are not silently added to the new evidence snapshot. Full replacement remains an explicit option. Build and assignment group choices are kept independently; the first assignment group defaults to the whole personal library.
+
+The assignment-pilot gate is unchanged: use Run assignment pilot, review its suggestions, and mark the pilot reviewed before enabling incoming-paper automation. Applying a different core tag list resets that gate and turns automatic assignment off. DIY creation alone does not reset it.
+
+Earlier evidence remains in separate build records when you extend the list. Restoring a previous list that spans several builds requires rebuilding a proposal from the retained paper facts; the extension explains this rather than mixing source identities from different snapshots. Native assignment undo remains available through History.
 
 ## Version 0.5.3
 
@@ -28,7 +40,7 @@ Schema-4 source evidence, pending proposals, human choices, IDs, completed jobs,
 
 ## Continuing an existing review
 
-Open **Tags** for a saved proposal, or **Activity → Resume** for an interrupted build. The extension retains selected evidence, saved edits, human confirmations, and completed paper analysis. It runs local preparation checks first when a proposal is available. If more scientific checking is needed, choose **Resume checks**; if a preparation run cannot finish, **Try again** starts another bounded attempt. You do not need to discard the review or repeat unchanged factual extraction.
+Open **Review & clean up** for a saved proposal, or **Activity → Resume** for an interrupted build. The extension retains selected evidence, saved edits, human confirmations, and completed paper analysis. It runs local preparation checks first when a proposal is available. If more scientific checking is needed, choose **Resume checks**; if a preparation run cannot finish, **Try again** starts another bounded attempt. You do not need to discard the review or repeat unchanged factual extraction.
 
 Large builds now organize validated concepts in bounded portions before producing one global proposal. Saved completed portions and raw responses are retained. **Reading papers** reaching the selected count means extraction is complete; **Organizing tags** and **Checking tag meanings** still precede **Ready for review**. Resume continues available work, with changed metadata or PDF evidence refreshing only affected papers.
 
@@ -36,7 +48,7 @@ The new preparation stage can make **up to three additional requests** after the
 
 **Questions** contains choices that the available scientific context cannot settle. Existing edits, DIY names, and human choices remain protected. The preferred number of core tags is **60**, with distinct concepts allowed to remain separate above that number.
 
-When ready, **Apply tag list** saves the vocabulary and starts assignment suggestions for the same papers. Inspect those in **Paper suggestions**, then confirm a separate batch Apply to write native tags. That batch has an undo record in **Activity**. Preparing a list, answering questions, and applying the list do not enable unattended assignment. Review the tagging pilot before enabling automation in Settings.
+When ready, **Apply tag list** saves the vocabulary. In 0.6.0, continue to **Assign & automate**, choose the assignment group, and start suggestions explicitly. Inspect those in **Paper suggestions**, then confirm a separate batch Apply to write native tags. That batch has an undo record in **Activity**. Preparing a list, answering questions, and applying the list do not enable unattended assignment. Review the tagging pilot before enabling automation.
 
 ## Backups and retained evidence
 
@@ -70,4 +82,4 @@ From schema 1 or 2, the earlier local evidence-identity and preparation upgrades
 
 Older definition exports remain importable. Private proposal/evidence exports retain their source and vocabulary checks. Normal definition export stays separate from exports containing paper wording and quotations.
 
-The account/workspace switch introduced in 0.4.1 remains under **Settings → Use another account or workspace**. It preserves saved accounts and paper analysis while starting a fresh ChatGPT connection when needed.
+The account/workspace switch introduced in 0.4.1 is available under **Connect AI → Use another account or workspace**. It preserves saved accounts and paper analysis while starting a fresh ChatGPT connection when needed.

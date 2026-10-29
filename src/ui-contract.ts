@@ -1,10 +1,12 @@
 import type { TaxonomyProposal } from './taxonomy';
 import type { WarningRecord } from './warnings';
 /** The manager receives display data only. Credentials never belong in a snapshot. */
-export type ManagerPage = 'overview' | 'vocabulary' | 'existing-tags' | 'review' | 'library' | 'activity' | 'settings';
+export type ManagerPage = 'overview' | 'connection' | 'build' | 'cleanup' | 'assignment' | 'vocabulary' | 'existing-tags' | 'review' | 'library' | 'activity' | 'settings';
 export type Scope = 'pilot' | 'selected' | 'collections' | 'library';
+export type BuildMode = 'extend' | 'replace';
 export interface DisplayTag {
   builtin?: 'no_tag';
+  retained?: boolean;
   id: string;
   name: string;
   fullName?: string;
@@ -101,6 +103,15 @@ export interface ManagerSettings {
 }
 export interface ManagerSnapshot {
   pluginVersion?: string;
+  workflow?: {
+    buildMode: BuildMode;
+    buildScope: Scope;
+    buildPaperCount: number;
+    assignmentScope: Scope;
+    assignmentPaperCount: number;
+    assignedPaperCount: number;
+    assignmentPilotReady?: boolean;
+  };
   navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
   existingTags?: {
     id: string;
@@ -127,6 +138,7 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    kind?: 'rebuild' | 'tag';
     phase?: 'reading' | 'organizing' | 'checking' | 'ready';
     phaseProgress?: { completed: number; total: number; label: string };
     needsInformation?: number;

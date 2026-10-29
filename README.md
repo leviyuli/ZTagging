@@ -5,13 +5,13 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.5.3.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.3.xpi).
+2. Select [`smart-tags-0.6.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.6.0.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
-4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
-5. Choose **Pilot · 50 papers** on Overview and click **Prepare tags**. Smart Tags reads the papers, brings related concepts together, and checks names, categories, and scientific meanings using your selected model.
-6. Open **Tags**. Browse the suggested tags, edit or remove entries, and answer any items in **Questions**. When the list is ready, click **Apply tag list**. This saves the vocabulary and starts paper-tag suggestions for the same papers.
-7. Open **Paper suggestions**, inspect the supporting passages, and accept or reject matches. Use **Apply accepted…** or **Review selected changes**, then confirm the displayed batch. This separate action writes native Zotero tags and records an undoable change.
-8. Mark the completed tagging pilot reviewed. You can then enable automatic assignment for incoming papers. Changing the active core vocabulary resets this gate; creating DIY details or confirming an equivalent legacy alias preserves it.
+4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
+5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
+6. Open **Review & clean up**. Browse the suggested tags, edit or remove entries, answer any scientific questions, and compare existing native tags when needed. Click **Apply tag list** to save the tag library. This does not start assignment or write paper tags.
+7. Open **Assign & automate** and choose the papers that should receive tags. This is a separate group, initially **Whole personal library**. Click **Suggest paper tags**, review the matches in **Paper suggestions**, then confirm a separate batch Apply to write native Zotero tags with undo. You can assign beyond the papers used to build the list.
+8. Use **Run assignment pilot**, review its suggestions, and mark the pilot reviewed before explicitly enabling automatic assignment for incoming papers. Changing the active core vocabulary resets this gate; creating DIY details or confirming an equivalent legacy alias preserves it.
 
 The classifier usually proposes up to five core tags plus matching custom tags; it does not pad papers to a minimum. Routine assignment uses approved definitions. New topics are presented for vocabulary review rather than silently added as native tags.
 
@@ -19,7 +19,15 @@ The extension checks this repository's [update manifest](updates.json) for new v
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.5.3** automatically recovers from routine tag-building reply errors, rather than asking for Resume after each failed part. If your build is already paused, update and click **Resume** once. Completed paper analysis and saved parts are retained. The compact paper-attention panel, **Dismiss**, reviewed exclusions, and **no_tag** remain available. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+Version **0.6.0** follows the same four steps in its sidebar and Overview: **Connect AI → Build tags → Review & clean up → Assign & automate**. Build and assignment groups stay independent. After setup, **Tag library** holds your applied tags and DIY topics, **Find papers** provides retrieval, and **Activity** keeps progress and history. Routine tag-building reply repair remains automatic, with completed analysis and spending controls preserved. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+
+## Keep using and extending your tag library
+
+Use **Tag library → Add tag** for a DIY topic, or edit an existing definition. A topic can be useful even when no current paper matches it. Matching and assignment keep their existing suggestion, review, and manual-choice protections.
+
+For papers from another field, open **Build tags**, select those papers or their collections, and use **Extend my saved tag list**. This is the default after a tag list has been applied. New suggestions are compared with the applied definitions; equivalent topics reuse existing identities, while subtypes and related topics remain separate. Tags outside this new sample stay in your library. Review the additions and apply the list, then choose the whole library or a different assignment group on **Assign & automate**.
+
+**Replace full tag list** remains an explicit option when you intend to reorganize the complete vocabulary. Review that proposal before applying it. Both modes leave native paper tags unchanged until a separate reviewed paper-tag operation. Neither mode enables incoming-paper automation.
 
 The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 
@@ -65,7 +73,7 @@ If OpenAI says **“This account can't access this app”** because the app belo
 
 **OpenAI API key:** use your own Platform key; this is billed separately from a ChatGPT subscription. Save the key, enter the current input/output prices for your model, choose a per-run USD cap, and discover/select a model. Prices are explicit rather than hard-coded. Before each request the queue reserves a conservative estimate, including its configured output-token limit. Failed or usage-less requests retain their reservation because they may have incurred charges. This is a local run budget, not a platform-wide billing limit. Run estimates include factual extraction and the initial consolidation. PDF follow-ups, preparation checks, and paper-assignment analysis can add requests; every request is checked against the cap before dispatch.
 
-**DeepSeek API key:** choose **DeepSeek API key** in Settings and save a key from the [DeepSeek platform](https://platform.deepseek.com/). This uses DeepSeek’s separately billed API. Click **Discover models**, choose an available text model, enter its current USD input/output rates and a per-run budget, then click **Test connection**. Use the published peak rates, with cache-miss input pricing, for a conservative estimate; off-peak requests and cache hits may cost less. Consult [DeepSeek’s current model prices](https://api-docs.deepseek.com/quick_start/pricing/) for rates. Keys are encrypted and stored separately from OpenAI credentials. Switching providers clears the model selection and rate fields so you can choose values for the new provider.
+**DeepSeek API key:** choose **DeepSeek API key** in Connect AI and save a key from the [DeepSeek platform](https://platform.deepseek.com/). This uses DeepSeek’s separately billed API. Click **Discover models**, choose an available text model, enter its current USD input/output rates and a per-run budget, then click **Test connection**. Use the published peak rates, with cache-miss input pricing, for a conservative estimate; off-peak requests and cache hits may cost less. Consult [DeepSeek’s current model prices](https://api-docs.deepseek.com/quick_start/pricing/) for rates. Keys are encrypted and stored separately from OpenAI credentials. Switching providers clears the model selection and rate fields so you can choose values for the new provider.
 
 DeepSeek uses its official Chat Completions endpoint with JSON output. Empty, truncated, or malformed responses cannot authorize tag changes. All scientific checks, remembered decisions, and undo protections apply to this connection too. The extension never switches between providers automatically.
 
@@ -144,7 +152,7 @@ npm run verify
 
 `npm run check` runs strict TypeScript checking; `npm test` runs the domain, provider, controller, persistence, and native-adapter regression suites using Node's test runner. `npm run build` bundles the extension and creates the XPI. Tests use synthetic papers and mocked network responses; they do not read your credentials or modify your working library.
 
-The development native smoke harness uses a separate profile **and** data directory under this workspace. It is excluded from the installable XPI. Its `--open-manager` flag opens the interface for visual checks; `--light-theme` sets light-theme preferences in that isolated test profile. Real ChatGPT eligibility and API-key inference are user-account checks performed from Settings.
+The development native smoke harness uses a separate profile **and** data directory under this workspace. It is excluded from the installable XPI. Its `--open-manager` flag opens the interface for visual checks; `--light-theme` sets light-theme preferences in that isolated test profile. Real ChatGPT eligibility and API-key inference are user-account checks performed from Connect AI.
 
 MIT licensed. See [LICENSE](LICENSE).
 

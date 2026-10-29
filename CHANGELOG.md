@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Aligned the sidebar and Overview with four setup steps: Connect AI, Build tags, Review & clean up, and Assign & automate. Kept Tag library and Find papers available for everyday use.
+- Separated the papers used to build tags from the papers receiving tags. Apply tag list now saves the library only; assignment starts explicitly for a chosen pilot, selected papers, collections, or the whole library.
+- Added extension of an applied tag list for a new field. Existing definitions and identities are retained, equivalent incoming topics are compared against them, and new subtypes and related topics stay distinct. Full replacement remains an explicit build mode.
+- Labelled current build matches separately from papers already tagged, so saved definitions do not imply completed library assignment.
+- Kept DIY creation/editing, existing-tag cleanup, separate native Apply, undo, incoming automation controls, and the assignment-pilot safeguard.
+- Retained cached analysis, historical evidence snapshots, manual choices, collections, columns, and resumable work. State remains schema 5 with optional workflow records.
+
 ## 0.5.3
 
 - Recover routine tag-building reply errors automatically: reuse saved replies locally, request a bounded correction and fresh reply, then split failing portions without another Resume click. Completed paper analysis and completed parts are retained.

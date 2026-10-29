@@ -70,16 +70,16 @@ export async function runNativeV040(app,check,config){
     const ml=large.proposal.tags.find(tag=>tag.name==='ML'),mlEntry=entries.find(entry=>snapshot.sources[entry.sourceIds[0]].name==='ML');
     large=applyRepair({judgements:[{tagId:ml.id,registryId:mlEntry.registryId,sourceIds:mlEntry.sourceIds,relation:'needs-context',reason:'The abbreviation has more than one possible meaning.'}],questions:[{tagId:ml.id,sourceIds:mlEntry.sourceIds,title:'What does ML mean in your tag list?',description:'Choose the topic you want to follow.',choices:[{id:'learning',label:'Machine learning',description:'Methods using learned models.'},{id:'layers',label:'Material layers',description:'Thin material layers in electrochemical devices.'}]}]},large,options);
     app.state.facts=Object.fromEntries(facts.map(fact=>[fact.paperId,fact]));app.state.evidenceCatalog=catalog;app.state.taxonomyProposal=large.proposal;app.state.tagPreparation=large.state;await app.save();
-    const started=Date.now(),largeDoc=await open('vocabulary');await until(()=>button(largeDoc,'Questions (1)'),'one meaningful question');const largeRenderMS=Date.now()-started;
+    const started=Date.now(),largeDoc=await open('cleanup');await until(()=>button(largeDoc,'Questions (1)'),'one meaningful question');const largeRenderMS=Date.now()-started;
     check('v040LargeCleanPreparation',facts.length===51&&Object.keys(snapshot.sources).length===428&&large.state.questions.length===1,{papers:51,sources:428,questions:large.state.questions.length,snapshotBytes:new TextEncoder().encode(JSON.stringify(snapshot)).length});
     check('v040LargeHumanUIFast',largeRenderMS<5000&&largeDoc.querySelectorAll('article.tag-row').length===20&&!largeDoc.querySelector('blockquote'),{milliseconds:largeRenderMS});
     check('v040NoRoutineProofControls',!button(largeDoc,'Confirm scientific mapping')&&!/\b(?:registry|fingerprint|staged|taxonomy)\b/i.test(largeDoc.body.textContent));
     close();
 
     // Exercise public preparation and apply actions against real local native metadata.
-    reset();await app.save();await app.invoke('prepare-tags',{scope:'selected'});await app.waitForIdle();
+    reset();await app.save();await app.invoke('prepare-tags',{scope:'selected',mode:'replace'});await app.waitForIdle();
     check('v040CuratedTechnologyReadyWithoutQuestions',app.state.tagPreparation?.status==='ready'&&app.state.tagPreparation.questions.length===0&&app.state.taxonomyProposal.tags.some(tag=>tag.name==='PEMWE'&&tag.facet==='system'),{status:app.state.tagPreparation?.status,questions:app.state.tagPreparation?.questions.length,runMessage:app.state.run?.message,diagnostics:app.state.tagPreparation?.diagnostics});
-    const doc=await open('vocabulary');button(doc,'Edit tag PEMWE').click();await until(()=>doc.querySelector('.tag-editor'),'editor open');
+    const doc=await open('cleanup');button(doc,'Edit tag PEMWE').click();await until(()=>doc.querySelector('.tag-editor'),'editor open');
     const advanced=doc.querySelector('.editor-advanced');advanced.open=true;await until(()=>advanced.open,'more options');
     const form=doc.querySelector('.editor-scroll');form.scrollTop=form.scrollHeight;
     const save=button(doc,'Save'),saveRect=save.getBoundingClientRect();
@@ -91,16 +91,18 @@ export async function runNativeV040(app,check,config){
     button(doc,'Save').click();await until(()=>!doc.querySelector('.tag-editor')&&!button(doc,'Apply tag list').disabled,'editor saved');
     const toastStart=Date.now();await until(()=>!doc.querySelector('.toast'),'success notice clears',7000);const toastMS=Date.now()-toastStart;
     check('v040SuccessNoticeExpires',toastMS<6000,{milliseconds:toastMS});
-    button(doc,'Apply tag list').click();await until(()=>app.state.run?.kind==='tag'&&app.state.run.status==='idle','paper preview completed');await app.waitForIdle();await until(()=>doc.body.textContent.includes('Paper suggestions'),'paper suggestions view');
-    check('v040ApplyCreatesSeparatePaperPreview',app.state.suggestions.some(suggestion=>suggestion.paperId===nativePaper.id&&suggestion.status==='pending'&&!suggestion.applied)&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags&&!app.state.settings.autoAssign);
+    const beforeApplyRequests=requests;button(doc,'Apply tag list').click();await until(()=>app.state.taxonomyReady&&!app.state.tagPreparation,'tag list saved');await app.waitForIdle();
+    check('v040ApplySavesWithoutAssignment',requests===beforeApplyRequests&&app.state.run?.kind!=='tag'&&!app.state.suggestions.length&&nativeWrites===0&&!app.state.settings.autoAssign);
+    await app.invoke('tag',{scope:'selected'});await app.waitForIdle();await open('review');
+    check('v040ExplicitGroupCreatesSeparatePaperPreview',app.state.suggestions.some(suggestion=>suggestion.paperId===nativePaper.id&&suggestion.status==='pending'&&!suggestion.applied)&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags&&!app.state.settings.autoAssign);
 
-    phase='question';app.state.settings.coreConceptLimit=61;await app.invoke('prepare-tags',{scope:'selected'});await app.waitForIdle();
+    phase='question';app.state.settings.coreConceptLimit=61;await app.invoke('prepare-tags',{scope:'selected',mode:'replace'});await app.waitForIdle();
     check('v040OnlyUnresolvedScopeBecomesQuestion',app.state.tagPreparation?.status==='questions'&&app.state.tagPreparation.questions.length===1,{status:app.state.tagPreparation?.status,questions:app.state.tagPreparation?.questions.length,runMessage:app.state.run?.message,diagnostics:app.state.tagPreparation?.diagnostics});
-    await open('vocabulary');button(doc,'Questions (1)').click();await until(()=>button(doc,'Catalyst-layer resistance'),'scientific choices');button(doc,'Catalyst-layer resistance').click();await until(()=>app.state.tagPreparation?.status==='ready'&&!button(doc,'Apply tag list').disabled,'question answered');
+    await open('cleanup');button(doc,'Questions (1)').click();await until(()=>button(doc,'Catalyst-layer resistance'),'scientific choices');button(doc,'Catalyst-layer resistance').click();await until(()=>app.state.tagPreparation?.status==='ready'&&!button(doc,'Apply tag list').disabled,'question answered');
     check('v040QuestionChoiceFinishesPreparation',app.state.tagPreparation.questions.length===0&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags);
     const signIns=[];
     app.invoke=function(action,payload){if(action==='sign-in'){signIns.push(payload);return Promise.resolve();}return oldInvoke.call(this,action,payload);};
-    const settingsDoc=await open('settings');
+    const settingsDoc=await open('connection');
     button(settingsDoc,'Use another account or workspace').click();await until(()=>signIns.length===1&&!button(settingsDoc,'Continue with ChatGPT').disabled,'new ChatGPT connection action');
     check('v041NewChatGPTConnectionUsesFreshRegistration',signIns[0]?.newAccount===true);
     button(settingsDoc,'Continue with ChatGPT').click();await until(()=>signIns.length===2&&!button(settingsDoc,'Continue with ChatGPT').disabled,'saved ChatGPT connection action');

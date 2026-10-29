@@ -63,7 +63,7 @@ test('50-paper rebuild stages one supported global taxonomy without changing 107
 test('unchanged rebuilds reuse extraction and the staged proposal instead of appending labels',async()=>{
   const h=harness(50);await run(h);const id=h.state.taxonomyProposal!.id,calls=h.ai.calls.length;
   await run(h);assert.equal(h.ai.calls.length,calls);assert.equal(h.state.taxonomyProposal!.id,id);assert.equal(h.state.tags.length,1);
-  await h.controller.invoke('approve-taxonomy',{id});await run(h);
+  await h.controller.invoke('approve-taxonomy',{id});await h.controller.invoke('rebuild',{scope:'library',mode:'replace'});await h.controller.waitForIdle();
   assert.equal(h.ai.calls.filter(c=>c.kind==='facts').length,50,'Taxonomy approval must not invalidate factual extraction');
   assert.equal(h.ai.calls.filter(c=>c.kind==='taxonomy').length,1,'An unchanged approved taxonomy must not send a new consolidation request');assert.equal(h.state.tags.filter(t=>!t.custom).length,4);
 });

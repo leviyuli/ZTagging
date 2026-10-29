@@ -1,4 +1,4 @@
-import type { DisplayPaper, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
+import type { BuildMode, DisplayPaper, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
 import { createDropdown, cleanupDropdowns } from './dropdown';
 import { compileConceptFilter, descendantIds } from './concept-filter';
 import type { ConceptFilter } from './concept-filter';
@@ -12,16 +12,24 @@ const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
 const pageTitles: Record<ManagerPage, [string, string]> = {
   overview: ['Your library, clearly tagged', 'Prepare a useful tag list, then review its paper suggestions.'],
-  vocabulary: ['Tags', 'Keep useful topics together, with only the questions that need your choice.'],
+  connection: ['Connect AI', 'Choose the connection and model used for your papers.'],
+  build: ['Build tags', 'Choose papers to learn from, then review the suggested tag list.'],
+  cleanup: ['Review & clean up', 'Review your tag list and bring existing paper tags into order.'],
+  assignment: ['Assign & automate', 'Choose the papers to tag, review their suggestions, and set up routine assignment.'],
+  vocabulary: ['Tag library', 'Edit saved tags and add topics you want to follow.'],
   'existing-tags': ['Existing tags', 'Bring useful library tags into Smart Tags and review any paper changes.'],
   review: ['Review suggestions', 'Check the evidence, keep useful tags, and teach Smart Tags your preferences.'],
   library: ['Explore your library', 'Combine approved tags and discover papers with related content.'],
   activity: ['Queue & history', 'Follow analysis progress and review changes that have been applied.'],
-  settings: ['Connections & settings', 'Choose an AI connection and control automatic assignment and API spending.'],
+  settings: ['Settings', 'Manage tag preferences, library navigation, imports, and updates.'],
 };
-const pageNames: Record<ManagerPage, string> = { overview: 'Overview', vocabulary: 'Tags', 'existing-tags': 'Existing tags', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
+const pageNames: Record<ManagerPage, string> = { overview: 'Overview', connection: 'Connect AI', build: 'Build tags', cleanup: 'Review & clean up', assignment: 'Assign & automate', vocabulary: 'Tag library', 'existing-tags': 'Existing tags', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
 const iconPaths = {
   overview: ['M3 10.5 12 3l9 7.5', 'M5 9v12h14V9', 'M9 21v-7h6v7'],
+  connection: ['M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0V8Z', 'M12 18v4'],
+  build: ['M12 3 3 8l9 5 9-5-9-5Z', 'm3 12 9 5 9-5M3 16l9 5 9-5'],
+  cleanup: ['M9 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-4', 'M9 2h6v5H9z', 'm8 13 3 3 5-5'],
+  assignment: ['M3 6h15M14 2l4 4-4 4', 'M21 18H6M10 14l-4 4 4 4'],
   vocabulary: ['M20 13 13 20a2 2 0 0 1-3 0l-7-7V4h9l8 6a2 2 0 0 1 0 3Z', 'M7.5 8h.01'],
   'existing-tags': ['M4 4h16v16H4z', 'M8 8h8M8 12h8M8 16h5'],
   review: ['M9 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-4', 'M9 2h6v5H9z', 'm8 13 3 3 5-5'],
@@ -39,7 +47,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let state: ManagerSnapshot | null = null;
   let page: ManagerPage = options.page || 'overview';
   let pendingNavigation: ManagerUIOptions | null = options;
-  let scope: Scope = 'pilot';
+  let buildScope: Scope = 'pilot';
+  let assignmentScope: Scope = 'library';
+  let buildMode: BuildMode = 'replace';
+  let workflowInitialized = false;
+  let assignmentView: 'setup' | 'suggestions' = 'setup';
+  let routineDraft: boolean | null = null;
   let busy = false;
   let signingIn = false;
   let disposed = false;
@@ -208,7 +221,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     trigger.addEventListener('keydown', keydown);
     return trigger;
   }
-  function nav(target: ManagerPage) { page = target; modal = null; render(); }
+  function nav(target: ManagerPage) { page = target; if (target === 'review') assignmentView = 'suggestions';modal = null;render(); }
   function empty(title: string, message: string, action?: Node) {
     return h('div', 'empty', h('strong', '', title), h('p', '', message), action ? h('div', 'actions', action) : null);
   }
@@ -262,8 +275,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function humanMessage(error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    if (/authenticat|unauthori|HTTP 40[13]|sign.?in|invalid.*key/i.test(message)) return 'Please check your connection in Settings, then try again.';
-    if (/budget|quota|usage limit|insufficient.balance/i.test(message)) return 'This analysis reached its usage or spending limit. Check Settings before continuing.';
+    if (/authenticat|unauthori|HTTP 40[13]|sign.?in|invalid.*key/i.test(message)) return 'Please check your connection in Connect AI, then try again.';
+    if (/budget|quota|usage limit|insufficient.balance/i.test(message)) return 'This analysis reached its usage or spending limit. Check Connect AI before continuing.';
     if (/registry|fingerprint|snapshot|schema|taxonomy|supportRegistryIds|(?:tag|fact|registry)-[a-z0-9]{10}/i.test(message)) return 'Some tags need another check. Your completed paper analysis is saved.';
     if (/HTTP \d|invalid.response|malformed|JSON|endpoint|token/i.test(message)) return 'The AI connection could not finish this request. Your completed work is saved. Try again.';
     return message;
@@ -317,6 +330,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         }
         for (const id of searchCache.keys()) if (!paperMap.has(id)) searchCache.delete(id);
         if (!settingsDirty) settingsDraft = { ...state.settings };
+        if (!workflowInitialized) {
+          buildScope = state.workflow?.buildScope || (state.taxonomyReady ? 'selected' : 'pilot');
+          assignmentScope = state.workflow?.assignmentScope || 'library';
+          buildMode = state.taxonomyReady ? 'extend' : state.workflow?.buildMode || 'replace';
+          workflowInitialized = true;
+        }
         if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
       } while (refreshAgain && !disposed);
       render();
@@ -378,8 +397,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('div', 'inline', button(`Previous${noun ? ` ${noun}` : ''}`, () => { change(pageIndex - 1); render(); }, 'small', pageIndex <= 0), h('span', 'muted', `${pageIndex + 1} / ${pages}`), button(`Next${noun ? ` ${noun}` : ''}`, () => { change(pageIndex + 1); render(); }, 'small', pageIndex >= pages - 1)));
   }
   function relevantSuggestions() { return currentState().suggestions.filter(item => reviewFilter === 'all' || (reviewFilter === 'applied' ? item.applied : item.status === reviewFilter && !item.applied)); }
-  function scopeSelect() {
-    return select<Scope>('analysis-scope', scope, [['pilot', 'Pilot · 50 papers'], ['selected', 'Selected papers in Zotero'], ['collections', 'Selected collections'], ['library', 'Whole personal library']], value => { scope = value; });
+  function scopeSelect(id: string, value: Scope, changed: (value: Scope) => void) {
+    return select<Scope>(id, value, [['pilot', 'Pilot · 50 papers'], ['selected', 'Selected papers in Zotero'], ['collections', 'Selected collections'], ['library', 'Whole personal library']], changed);
   }
   function canAnalyze() {
     const s = currentState();
@@ -390,15 +409,13 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (snapshot.settings.provider === 'deepseek') return snapshot.connection.deepseekKeyStored === true;
     return snapshot.connection.chatgptSignedIn;
   }
-  function runControls() {
+  function renderBuild() {
     const s = currentState();
-    return h('div', '',
-      field('Analyze', scopeSelect()),
-      h('div', 'actions',
-        button('Prepare tags', async () => { await run('prepare-tags', { scope }, 'Preparing your tag list.');nav('vocabulary'); }, 'primary', !canAnalyze() || s.queue.status === 'running'),
-        button('Suggest paper tags', () => run('tag', { scope }, 'Tag analysis queued.'), '', !canAnalyze() || !approvedTags().length || s.queue.status === 'running')),
-      !canAnalyze() ? h('p', 'card-description', 'Choose a connection and a model in Settings to start analysis.') : null,
-      h('p', 'card-description', 'Start with a tag list. You will review paper changes before applying them.'));
+    const mode = s.taxonomyReady ? buildMode : 'replace';
+    const modeField = s.taxonomyReady ? field('Tag list', select<BuildMode>('build-mode', mode, [['extend', 'Extend my saved tag list'], ['replace', 'Replace the full tag list']], value => { buildMode = value;render(); })) : null;
+    const explanation = !s.taxonomyReady ? 'Create your first tag list from this group of papers. Review it before saving, then choose which papers to tag.' : mode === 'extend' ? 'Keep your saved tags and use this group of papers to suggest additions and useful updates.' : 'Build a replacement for the full saved tag list. Review the result before replacing it. Existing paper tags change only through a separate reviewed action.';
+    const body = h('div', 'stack', field('Papers for building tags', scopeSelect('build-scope', buildScope, value => { buildScope = value;render(); }), 'Select papers or collections in Zotero when using those groups.'), modeField, h('div', 'notice', explanation), h('div', 'actions', button('Prepare tags', async () => { await run('prepare-tags', { scope: buildScope, mode }, 'Preparing your tag list.');nav('cleanup'); }, 'primary', !canAnalyze() || s.queue.status === 'running'), s.tagPreparation ? button('Review the prepared list', () => nav('cleanup')) : null));
+    return h('div', 'stack', !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Choose an AI connection and model before building tags.'), button('Connect AI', () => nav('connection'), 'small')) : null, card(s.taxonomyReady ? 'Extend your tag library' : 'Start with a small group', s.taxonomyReady ? 'Selected papers can add new topics while your saved list remains available.' : 'A 50-paper pilot gives you a manageable first list to review.', body), h('p', 'card-description', 'This group builds the tag list. You will choose which papers receive tags in Assign & automate.'));
   }
   function queueStrip() {
     const q = currentState().queue;
@@ -426,15 +443,17 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     for (const [count, label] of [[approvedTags().length, 'tags ready'], [s.analyzedPaperCount ?? s.papers.length, 'papers read'], [s.suggestions.filter(item => item.status === 'pending' && !item.applied).length, 'paper suggestions'], [s.tags.filter(tag => tag.custom && !tag.builtin).length, 'your topics']] as [number, string][]) {
       stats.append(h('div', 'stat', h('strong', '', count.toLocaleString()), h('span', '', label)));
     }
-    const steps = h('ol', 'step-list');
-    [
-      ['Connect an AI model', 'Use your eligible ChatGPT plan or a separately billed OpenAI or DeepSeek API key.'],
-      ['Prepare your tags', 'Start with 50 papers. Change any names or meanings you want.'],
-      ['Review paper suggestions', 'Inspect evidence, accept useful tags, and reject unwanted matches.'],
-      ['Enable routine assignment', 'Review the pilot first. New papers can then use the same tags.'],
-    ].forEach(([title, description], index) => steps.append(h('li', 'step', h('span', 'step-number', String(index + 1)), h('div', '', h('h3', '', title), h('p', '', description)))));
-    const pilot = h('div', '', h('p', '', s.pilotReviewed ? 'Your pilot has been reviewed. Automatic assignment can be enabled in Settings.' : 'Review the pilot tags and paper suggestions before enabling automatic assignment.'), h('div', 'actions', button('Open paper suggestions', () => nav('review')), button(s.pilotReviewed ? 'Pilot reviewed' : 'Mark pilot reviewed', () => run('mark-pilot-reviewed', undefined, 'Pilot review recorded.'), 'primary', s.pilotReviewed || !approvedTags().length || !s.papers.length)));
-    return h('div', '', stats, h('div', 'grid', card('Start an analysis', 'A small pilot is a useful first step.', runControls(), undefined, 'overview-primary'), card('How Smart Tags works', '', steps, undefined, 'overview-guide')), h('div', 'section-gap', card('Pilot review', 'Your decisions guide future assignments.', pilot)), h('div', 'notice section-gap', 'Your existing collections and Zotero columns stay as they are. Smart Tags organizes content through native tags and optional saved searches.'));
+    const steps: [ManagerPage, string, string][] = [
+      ['connection', 'Connect AI', 'Choose a connection and model.'],
+      ['build', 'Build tags', 'Learn topics from a pilot or another group of papers.'],
+      ['cleanup', 'Review & clean up', 'Check the tag list and organize existing paper tags.'],
+      ['assignment', 'Assign & automate', 'Choose papers to tag, then review their suggestions.'],
+    ];
+    const workflow = h('ol', 'step-list');
+    steps.forEach(([target, title, description], index) => workflow.append(h('li', 'step', h('span', 'step-number', String(index + 1)), h('div', '', button(title, () => nav(target), 'workflow-link'), h('p', '', description)))));
+    const next: ManagerPage = !canAnalyze() ? 'connection' : s.tagPreparation ? 'cleanup' : s.taxonomyReady ? 'assignment' : 'build';
+    const nextLabel = next === 'connection' ? 'Connect your AI model' : next === 'cleanup' ? 'Review your prepared tags' : next === 'assignment' ? 'Choose papers to tag' : 'Prepare your first tag list';
+    return h('div', '', stats, h('div', 'grid', card(s.taxonomyReady ? 'Your tag library is ready' : 'Set up your tag library', 'Building the tag list and assigning paper tags are separate steps.', h('div', '', h('p', '', s.taxonomyReady ? 'Use the saved list for another group of papers, or extend it when your research changes.' : 'Begin with a small group, review its topics, then choose where to use those tags.'), h('div', 'actions', button(nextLabel, () => nav(next), 'primary'), s.taxonomyReady ? button('Open tag library', () => nav('vocabulary')) : null)), undefined, 'overview-primary'), card('Your workflow', 'You can open any step at any time.', workflow, undefined, 'overview-guide')));
   }
 
   function newTag(custom = false, contextId?: string, shouldRender = true) {
@@ -460,6 +479,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (disposed) return;
     if (!state) { pendingNavigation = next; return; }
     if (next.page) page = next.page;
+    if (next.page === 'review') assignmentView = 'suggestions';
     modal = null;
     if (next.createDetail) { page = 'vocabulary'; newTag(true, next.detailContextId, false); }
     else if (next.tagId) { const tag = tagById(next.tagId); if (tag) { page = 'vocabulary'; editTag(tag, '', false); } }
@@ -491,8 +511,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (!saved || definitionKey(tag) !== definitionKey(saved)) throw new Error('Save your changes before finding matches or assigning this tag.');
     return saved;
   }
-  function tagEditor() {
-    if (!editorTag) return h('section', 'card editor editor-placeholder', empty('Make the tags yours', 'Choose Edit beside a tag, or add a topic you want to follow.'));
+  function tagEditor(visible = true) {
+    if (!editorTag || !visible) return h('section', 'card editor editor-placeholder', empty('Make the tags yours', 'Choose Edit beside a tag, or add a topic you want to follow.'));
     const tag = editorTag;
     const preparationId = editorPreparationId;
     const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
@@ -533,7 +553,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const cancel = () => { editorDrafts.delete(`${preparationId}:${tag.id || 'new'}`);editorTag = null;editorPreparationId = '';render(); };
     return h('section', 'card editor tag-editor', h('div', 'card-header', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag')), form, h('div', 'card-footer editor-footer', button('Save', save, 'primary'), button('Cancel', cancel, 'quiet')));
   }
-  function workingTags() { return (currentState().tagPreparation?.tags || currentState().tags.filter(tag => tag.status === 'approved' || tag.custom)).filter(tag => !tag.builtin); }
+  function workingTags(preparation?: ManagerSnapshot['tagPreparation']) { return (preparation?.tags || currentState().tags.filter(tag => tag.status === 'approved' || tag.custom)).filter(tag => !tag.builtin); }
   function hasUnsavedPreparedChanges() {
     const preparation = state?.tagPreparation;
     if (!preparation) return false;
@@ -553,30 +573,33 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const dirty = hasUnsavedPreparedChanges();
     apply.disabled = busy || !state.tagPreparation.canApply || state.tagPreparation.status === 'checking' || dirty;
     const note = doc.getElementById('tag-apply-note');
-    if (note) note.textContent = dirty ? 'Save or cancel your edits before applying this tag list.' : 'You will review paper changes before they are applied.';
+    if (note) note.textContent = dirty ? 'Save or cancel your edits before applying this tag list.' : 'Next, choose which papers to tag. No paper tags change yet.';
   }
-  function renderVocabulary() {
+  function renderVocabulary(prepared = false) {
     const s = currentState();
-    const preparation = s.tagPreparation;
+    const preparation = prepared ? s.tagPreparation : undefined;
+    const view = preparation ? tagView : 'tags';
+    const editorVisible = !!editorTag && (preparation ? editorPreparationId === preparation.id || editorTag.custom : !editorPreparationId);
+    const extending = !!preparation && s.workflow?.buildMode === 'extend';
     const query = vocabQuery.trim().toLocaleLowerCase();
-    const tags = workingTags().filter(tag => !query || conceptText(tag).includes(query));
+    const tags = workingTags(preparation).filter(tag => !query || conceptText(tag).includes(query));
     const questions = preparation?.questions || [];
     vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil(tags.length / 20) - 1));
     tagQuestionPage = Math.min(tagQuestionPage, Math.max(0, Math.ceil(questions.length / 10) - 1));
     const status = preparation?.status === 'checking' ? 'Checking your tags…' : preparation?.status === 'questions' ? `${questions.length} ${questions.length === 1 ? 'question needs' : 'questions need'} your choice` : preparation?.status === 'failed' ? 'Your tag list needs another try' : preparation ? 'Your tag list is ready' : 'Your tags';
-    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : `${tags.length} tags ready to use`)), h('div', 'inline', button('Add tag', () => newTag(true)), preparation ? button('Apply tag list', async () => { await run('apply-tag-list', { id: preparation.id }, 'Tag list saved. Preparing paper suggestions.'); nav('review'); }, 'primary', !preparation.canApply || preparation.status === 'checking') : button('Prepare tags', () => run('prepare-tags', { scope }, 'Preparing your tag list.'), 'primary', !canAnalyze() || s.queue.status === 'running')));
+    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', preparation ? `${preparation.tags.length} ${extending ? 'suggested tags' : 'tags'} · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : `${tags.length} tags ready to use`), extending ? h('p', 'card-description', 'Suggested additions and updates; your other saved tags are kept.') : null), h('div', 'inline', button('Add tag', () => newTag(true)), preparation ? button('Apply tag list', async () => { await run('apply-tag-list', { id: preparation.id }, 'Tag list saved. Choose which papers to tag next.');buildMode = 'extend';buildScope = 'selected';assignmentView = 'setup';nav('assignment'); }, 'primary', !preparation.canApply || preparation.status === 'checking') : button('Build tags', () => nav('build'))));
     if (preparation) header.querySelector<HTMLButtonElement>('.primary')!.id = 'apply-tag-list';
     const tabs = h('div', 'tag-workspace-tabs');
     tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Tags and questions');
     for (const [value, label] of [['tags', 'Tags'], ['questions', `Questions (${questions.length})`]] as const) {
-      const tab = button(label, () => { tagView = value;render(); }, tagView === value ? 'selected' : 'quiet');
-      tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(tagView === value));tabs.append(tab);
+      const tab = button(label, () => { tagView = value;render(); }, view === value ? 'selected' : 'quiet');
+      tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(view === value));tabs.append(tab);
     }
     const content = h('div', 'tag-workspace-list card');
-    content.id = 'tag-list-scroll';content.setAttribute('data-view-key', `${preparation?.id || s.vocabularyVersion}:${tagView}:${tagView === 'tags' ? vocabularyPage : tagQuestionPage}`);
+    content.id = 'tag-list-scroll';content.setAttribute('data-view-key', `${preparation?.id || s.vocabularyVersion}:${view}:${view === 'tags' ? vocabularyPage : tagQuestionPage}`);
     if (preparation?.status === 'failed') content.append(h('div', 'notice warning', h('p', '', humanMessage(preparation.error || 'We could not finish preparing tags. Your completed paper analysis is saved.')), button('Try again', () => run('retry-tag-preparation', { id: preparation.id }, 'Checking your tags again.'), 'small')));
     if (preparation?.status === 'checking') content.append(h('div', 'notice info', h('p', '', 'Your papers have been read. We are checking the tag names and meanings.'), s.queue.status !== 'running' ? button('Resume checks', () => run('retry-tag-preparation', { id: preparation.id }, 'Checking your tags.'), 'small') : null));
-    if (tagView === 'questions') {
+    if (view === 'questions') {
       if (!questions.length) content.append(empty('No questions waiting', 'You can browse or edit the tags before applying the list.', button('Back to tags', () => { tagView = 'tags';render(); }, 'quiet')));
       for (const question of questions.slice(tagQuestionPage * 10, (tagQuestionPage + 1) * 10)) {
         const cardBody = h('article', 'tag-question', h('h3', '', question.title), h('p', '', question.description));
@@ -594,21 +617,48 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       content.append(h('div', 'tag-list-search', input('vocabulary-search', vocabQuery, value => { vocabQuery = value;vocabularyPage = 0;render(); }, 'Find a tag or another name…', 'search')));
       if (!tags.length) content.append(empty('No tags here yet', 'Prepare tags from a few papers, or add a topic of your own.'));
       for (const tag of tags.slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
-        const edit = button('Edit', () => editTag(tag, preparation?.id || ''), 'small quiet');edit.setAttribute('aria-label', `Edit tag ${tag.name}`);
-        const remove = button('Remove', async () => {
-          if (busy) return;
-          if (!preparation) { await run('delete-tag', { id: tag.id }, 'Tag removed from your list.'); }
-          else await run('remove-prepared-tag', { id: preparation.id, tagId: tag.id }, 'Tag removed from this list.');
-          editorDrafts.delete(`${preparation?.id || ''}:${tag.id}`);
-          if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
-        }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);
-        content.append(h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), tag.custom ? badge('Your topic', 'custom') : null), h('div', 'inline', edit, remove)), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', `${tag.coverage ?? tag.currentlyTaggedCount ?? 0} papers`), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null)));
+        const retained = !!preparation && tag.retained === true;
+        const edit = button(retained ? 'Edit in tag library' : 'Edit', () => retained ? navigate({ page: 'vocabulary', tagId: tag.id }) : editTag(tag, preparation?.id || ''), 'small quiet');edit.setAttribute('aria-label', retained ? `Edit saved tag ${tag.name} in tag library` : `Edit tag ${tag.name}`);
+        const actions = h('div', 'inline', edit);
+        if (!retained) {
+          const remove = button('Remove', async () => {
+            if (busy) return;
+            if (!preparation) { await run('delete-tag', { id: tag.id }, 'Tag removed from your list.'); }
+            else await run('remove-prepared-tag', { id: preparation.id, tagId: tag.id }, 'Tag removed from this list.');
+            editorDrafts.delete(`${preparation?.id || ''}:${tag.id}`);
+            if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
+          }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);actions.append(remove);
+        }
+        const countLabel = preparation && !retained ? `${tag.coverage ?? 0} papers in this build` : `${tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
+        content.append(h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : tag.custom ? badge('Your topic', 'custom') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null)));
       }
       if (tags.length > 20) content.append(pagination(tags.length, vocabularyPage, next => { vocabularyPage = next; }, 20, 'tags'));
     }
-    const note = h('p', 'card-description', preparation ? 'You will review paper changes before they are applied.' : 'Project collections and existing paper tags stay under your control.');
+    const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : 'Project collections and existing paper tags stay under your control.');
     note.id = 'tag-apply-note';
-    return h('div', `tag-workspace ${editorTag ? 'has-editor' : ''}`, header, tabs, note, h('div', 'tag-workspace-columns', content, tagEditor()));
+    return h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, preparation ? tabs : null, note, h('div', 'tag-workspace-columns', content, tagEditor(editorVisible)));
+  }
+
+  function renderCleanup() {
+    const s = currentState();
+    return h('div', 'stack', h('div', 'workflow-section-links', h('p', 'muted', 'Review the suggested list before using it. Existing paper tags have their own reviewed cleanup.'), button('Clean up existing tags', () => nav('existing-tags'))), s.tagPreparation ? renderVocabulary(true) : card('Your saved tag list', 'Edit individual tags in your library, or build an updated list from another group of papers.', h('div', 'actions', button('Open tag library', () => nav('vocabulary'), 'primary'), button('Build tags', () => nav('build')))));
+  }
+
+  function renderAssignment() {
+    const s = currentState();
+    const tabs = h('div', 'tag-workspace-tabs');tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Assignment views');
+    const pending = s.suggestions.filter(item => item.status === 'pending' && !item.applied).length;
+    for (const [value, label] of [['setup', 'Assignment setup'], ['suggestions', `Paper suggestions (${pending})`]] as const) {
+      const tab = button(label, () => { assignmentView = value;render(); }, assignmentView === value ? 'selected' : 'quiet');tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(assignmentView === value));tabs.append(tab);
+    }
+    if (assignmentView === 'suggestions') return h('div', 'stack', tabs, renderReview());
+    const unavailable = !canAnalyze() || !approvedTags().length || s.queue.status === 'running';
+    const suggest = async (scope: Scope) => { await run('tag', { scope }, 'Paper suggestions queued.');assignmentView = 'suggestions';render(); };
+    const group = h('div', 'stack', field('Papers to assign tags', scopeSelect('assignment-scope', assignmentScope, value => { assignmentScope = value;render(); }), 'This group is independent of the papers used to build your tag list.'), s.workflow?.assignmentScope === assignmentScope ? h('p', 'card-description', `${s.workflow.assignmentPaperCount} papers in the last chosen group · ${s.workflow.assignedPaperCount} with Smart Tags assignments`) : null, h('div', 'actions', button('Suggest paper tags', () => suggest(assignmentScope), 'primary', unavailable)), h('p', 'card-description', 'Review the suggestions before applying paper tags. Existing manual choices remain protected.'));
+    const pilot = h('div', '', h('p', '', s.pilotReviewed ? 'Your assignment pilot is reviewed. You can enable routine assignment below.' : 'Complete and review a 50-paper assignment pilot before enabling routine assignment. You can still tag another chosen group manually.'), h('div', 'actions', button('Run assignment pilot', () => suggest('pilot'), '', unavailable), button(s.pilotReviewed ? 'Pilot reviewed' : 'Mark pilot reviewed', () => run('mark-pilot-reviewed', undefined, 'Pilot review recorded.'), '', s.pilotReviewed || !s.workflow?.assignmentPilotReady || s.queue.status === 'running')));
+    const routineValue = routineDraft ?? s.settings.autoAssign;
+    const routine = h('div', '', checkbox('assignment-auto-assign', routineValue, 'Automatically assign supported tags when a new paper is added', value => { routineDraft = value;render(); }, !s.pilotReviewed), h('p', 'card-description', 'Unclear matches remain suggestions. Manual removals, rejected matches, and locked assignments are remembered.'), h('div', 'actions', button('Save routine assignment', async () => { await run('save-settings', { settings: { ...currentState().settings, autoAssign: routineValue } }, 'Routine assignment saved.');routineDraft = null;render(); }, 'primary', routineValue === s.settings.autoAssign || !s.pilotReviewed)), routineValue !== s.settings.autoAssign ? h('p', 'card-description', 'Unsaved routine-assignment change') : null);
+    return h('div', 'stack', tabs, !approvedTags().length ? h('div', 'notice info inline between', h('span', '', 'Apply a tag list before assigning paper tags.'), button('Review tag list', () => nav('cleanup'), 'small')) : !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Connect an AI model before requesting suggestions.'), button('Connect AI', () => nav('connection'), 'small')) : null, card('Choose the papers to tag', 'Saving a tag list does not start paper analysis.', group), card('Assignment pilot', 'The pilot checks paper matching before routine assignment.', pilot), card('Routine assignment', 'Enable this only when you are ready to use the saved list for incoming papers.', routine));
   }
 
   function renderExistingTags() {
@@ -779,7 +829,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('span', 'search-results', `${suggestions.length} suggestions`));
     const actions = h('div', 'notice inline between', h('span', '', h('span', 'batch-count', `${applicableSelected.length} selected`), ` · ${accepted.length} accepted and ready to apply`), h('div', 'inline', button('Review selected changes', () => { modalPage = 0; modal = { kind: 'apply', ids: applicableSelected }; render(); }, '', !applicableSelected.length), button('Apply accepted…', () => { modalPage = 0; modal = { kind: 'apply', ids: accepted }; render(); }, 'primary', !accepted.length)));
     const list = h('section', 'card');
-    if (!suggestions.length) list.append(empty(s.queue.status === 'running' ? 'Preparing paper suggestions…' : 'No paper suggestions here yet', s.queue.status === 'running' ? 'Your tag list is ready. Paper matches will appear here as they finish.' : 'Apply your tag list or choose another paper view.', button('Go to Overview', () => nav('overview'), 'quiet')));
+    if (!suggestions.length) list.append(empty(s.queue.status === 'running' && s.queue.kind !== 'rebuild' ? 'Preparing paper suggestions…' : 'No paper suggestions here yet', s.queue.status === 'running' && s.queue.kind !== 'rebuild' ? 'Paper matches will appear here as they finish.' : 'Choose a group in Assignment setup to request suggestions.', button('Assignment setup', () => { assignmentView = 'setup';nav('assignment'); }, 'quiet')));
     for (const suggestion of visible) list.append(suggestionCard(suggestion));
     return h('div', 'stack', toolbar, actions, list, pagination(suggestions.length, reviewPage, next => { reviewPage = next; }));
   }
@@ -914,7 +964,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
-    if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('vocabulary'), 'small')));
+    if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('cleanup'), 'small')));
     const history = h('div', '');
     if (!s.history.length) history.append(empty('No applied changes yet', 'Approved tag assignments and cleanup batches will appear here with their undo status.'));
     else {
@@ -931,7 +981,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention?.queued ? `${s.paperAttention.queued} papers queued` : '', paperAttention()), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
-  function renderSettings() {
+  function renderSettings(connectionOnly = false) {
     const s = currentState();
     const draft = settingsDraft || { ...s.settings };
     settingsDraft = draft;
@@ -994,22 +1044,21 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('div', 'section-gap', numberField('budgetUSD', 'Per-run API budget · USD', 'The queue pauses before dispatching requests that would exceed its remaining estimate.', '0.01')),
       h('div', 'field-grid', numberField('inputPricePerMillion', 'Input · USD / million tokens', 'Use the standard input rate.', '0.001'), numberField('outputPricePerMillion', 'Output · USD / million tokens', 'Use the standard output rate.', '0.001')),
       h('div', 'section-gap', numberField('maxOutputTokens', 'API output-token limit', 'This request limit is used for API-key requests.', '1')));
-    const automatic = h('div', '', checkbox('settings-auto-assign', draft.autoAssign, 'Automatically assign supported tags when a new paper is added', value => mark('autoAssign', value), !s.pilotReviewed),
-      h('p', 'card-description', s.pilotReviewed ? 'New papers use your saved tag meanings. Unclear matches stay in Paper suggestions for your review.' : 'Complete and mark your pilot review on Overview to enable automatic assignment.'),
-      h('p', 'card-description', 'Manual removals, rejected matches, and locked assignments are remembered. Existing collections and workflow labels remain under your control.'));
     const vocabulary = h('div', '', numberField('coreConceptLimit', 'Preferred number of tags', '60 is a starting point. Distinct topics can stay separate when more tags are useful.', '1'));
     const transfers = h('details', 'section-gap', h('summary', '', 'Import, export, and previous tag lists'), h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null);
     for (const archive of s.taxonomyArchives || []) transfers.append(h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')));
     transfers.append(h('div', 'actions', button('Manage existing tags', () => nav('existing-tags'))));
     const navigationLabels = { starting: 'Starting', ready: 'Available', hidden: 'Sidebar hidden', unavailable: 'Unavailable in this window' };
     const navigation = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('p', '', `Library navigation: ${s.navigation ? navigationLabels[s.navigation.status] : 'Open Zotero to check'}`), s.navigation?.message ? h('p', 'card-description', humanMessage(s.navigation.message)) : null, h('div', 'actions', button('Show tag navigation', () => run('show-tag-navigation')), button('Restore navigation', () => run('show-tag-navigation', { restore: true })), button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
-    return h('div', 'stack', card('Smart Tags in Zotero', 'Use Smart Tags or Collections in Zotero’s left library pane.', navigation), h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), card('Automatic assignment', 'Use your tag list for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')), transfers);
+    const save = h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved'));
+    if (connectionOnly) return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), save, canAnalyze() ? h('div', 'actions', button('Continue to Build tags', () => nav('build'))) : null);
+    return h('div', 'stack', card('Smart Tags in Zotero', 'Use Smart Tags or Collections in Zotero’s left library pane.', navigation), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), save, h('div', 'workflow-section-links', button('AI connection and budget', () => nav('connection')), button('Routine assignment', () => { assignmentView = 'setup';nav('assignment'); })), transfers);
   }
   async function saveSettings() {
     if (!settingsDraft) return;
     if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) throw new Error('Set the preferred number of tags to a whole number from 1 to 500.');
     if (settingsDraft.provider !== 'chatgpt' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
-    const result = await run('save-settings', { settings: { ...settingsDraft } }, 'Settings saved.');
+    const result = await run('save-settings', { settings: { ...settingsDraft, autoAssign: currentState().settings.autoAssign } }, 'Settings saved.');
     settingsDirty = false;
     settingsDraft = { ...currentState().settings };
     render();
@@ -1091,23 +1140,27 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const s = state;
     const sidebar = h('aside', 'sidebar', h('div', 'brand', h('span', 'brand-mark', icon('vocabulary')), h('div', '', h('strong', '', 'ZTagging'), h('small', '', 'Personal library'))));
-    const navigation = h('nav', 'nav');
-    navigation.setAttribute('aria-label', 'Library pages');
+    const navigation = h('nav', 'nav');navigation.setAttribute('aria-label', 'Library pages');
+    const workflow = h('nav', 'nav workflow-nav');workflow.setAttribute('aria-label', 'Workflow steps');
     const utilities = h('nav', 'nav');
     utilities.setAttribute('aria-label', 'Library tools');
-    const navItems: [ManagerPage, number?][] = [['overview'], ['vocabulary', workingTags().length], ['existing-tags'], ['review', s.suggestions.filter(item => item.status === 'pending' && !item.applied).length], ['library'], ['activity'], ['settings']];
-    for (const [target, count] of navItems) {
-      const navButton = button('', () => nav(target), `nav-button ${page === target ? 'active' : ''}`);
+    const activePage = page === 'existing-tags' ? 'cleanup' : page === 'review' ? 'assignment' : page;
+    const addNavigation = (container: HTMLElement, target: ManagerPage, count?: number, step?: number) => {
+      const navButton = button('', () => nav(target), `nav-button ${activePage === target ? 'active' : ''}`);
       navButton.id = `nav-${target}`;
+      navButton.setAttribute('aria-label', pageNames[target]);
       navButton.disabled = false;
-      navButton.append(h('span', 'nav-icon', icon(target)), h('span', '', pageNames[target]));
+      navButton.append(step ? h('span', 'nav-step-number', String(step)) : h('span', 'nav-icon', icon(target)), h('span', '', pageNames[target]));
       if (count !== undefined && count > 0) navButton.append(h('span', 'nav-count', count.toLocaleString()));
-      if (page === target) navButton.setAttribute('aria-current', 'page');
-      (target === 'activity' || target === 'settings' ? utilities : navigation).append(navButton);
-    }
+      if (activePage === target) navButton.setAttribute('aria-current', 'page');container.append(navButton);
+    };
+    const homeNavigation = h('nav', 'nav');homeNavigation.setAttribute('aria-label', 'Workspace overview');addNavigation(homeNavigation, 'overview');
+    (['connection', 'build', 'cleanup', 'assignment'] as const).forEach((target, index) => addNavigation(workflow, target, undefined, index + 1));
+    addNavigation(navigation, 'vocabulary', approvedTags().length);addNavigation(navigation, 'library');
+    addNavigation(utilities, 'activity');addNavigation(utilities, 'settings');
     const connected = connectionReady(s);
     const connectionLabel = s.settings.provider === 'deepseek' ? 'DeepSeek API connected' : s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected';
-    sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workspace'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', 'Stored on this computer')));
+    sidebar.append(homeNavigation, h('div', '', h('div', 'sidebar-section-label', 'Workflow'), workflow), h('div', '', h('div', 'sidebar-section-label', 'Library'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', 'Stored on this computer')));
     const home = button('Personal library', () => nav('overview'), 'breadcrumb-home');
     home.id = 'workspace-home';
     home.disabled = false;
@@ -1116,7 +1169,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const currentCrumb = breadcrumbs.lastElementChild;
     currentCrumb?.setAttribute('aria-current', 'page');
     const topbar = h('div', 'workspace-topbar', breadcrumbs, h('div', 'header-status', busy ? h('span', 'busy-indicator', 'Working…') : s.settings.autoAssign ? 'Automatic assignment on' : 'Review before applying'));
-    const workspace = h('main', `workspace ${page === 'vocabulary' ? 'tag-workspace-page' : ''}`, h('header', 'page-header', h('div', '', h('div', 'workspace-page-icon', icon(page)), h('h1', '', pageTitles[page][0]), h('p', 'subtitle', pageTitles[page][1]))));
+    const workspace = h('main', `workspace ${page === 'vocabulary' || page === 'cleanup' ? 'tag-workspace-page' : ''}`, h('header', 'page-header', h('div', '', h('div', 'workspace-page-icon', icon(page)), h('h1', '', pageTitles[page][0]), h('p', 'subtitle', pageTitles[page][1]))));
     const strip = queueStrip();
     if (strip) workspace.append(strip);
     if (signingIn) {
@@ -1126,8 +1179,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const warnings = activeWarnings();
     if (warnings) workspace.append(warnings);
-    const contents = page === 'overview' ? renderOverview() : page === 'vocabulary' ? renderVocabulary() : page === 'existing-tags' ? renderExistingTags() : page === 'review' ? renderReview() : page === 'library' ? renderLibrary() : page === 'activity' ? renderActivity() : renderSettings();
-    workspace.append(contents);
+    const renderers: Record<ManagerPage, () => Node> = {
+      overview: renderOverview,
+      connection: () => renderSettings(true),
+      build: renderBuild,
+      cleanup: renderCleanup,
+      assignment: renderAssignment,
+      vocabulary: renderVocabulary,
+      'existing-tags': () => h('div', 'stack', h('div', 'workflow-section-links', button('Review tag list', () => nav('cleanup')), button('Open tag library', () => nav('vocabulary'))), renderExistingTags()),
+      review: renderAssignment,
+      library: renderLibrary,
+      activity: renderActivity,
+      settings: renderSettings,
+    };
+    workspace.append(renderers[page]());
     const shell = h('div', 'shell', sidebar, h('div', 'workspace-frame', topbar, workspace));
     if (toast) {
       const toastElement = h('div', `toast ${toastError ? 'error' : ''}`, toast);

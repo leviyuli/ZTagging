@@ -5,6 +5,7 @@ import {validateRegistrySnapshot} from './evidence.ts';
 import type {FactSource} from './evidence.ts';
 import {conceptMeaningFingerprint,createProposalIssueEvaluator,createTaxonomyProposal,refreshProposalEvidence,semanticDecisionKey} from './taxonomy.ts';
 import type {MachineEvidenceDecision,TaxonomyProposal,PaperFacts,ProposalValidationIssue} from './taxonomy.ts';
+import {reconcileExtensionProposal} from './vocabulary-extension.ts';
 
 export const PREPARATION_POLICY_VERSION=2;
 export const PREPARATION_REQUEST_BYTE_LIMIT=100_000;
@@ -26,7 +27,7 @@ export function validTagPreparationState(value:unknown):value is TagPreparationS
 }
 function protectedIds(options:PreparationOptions,proposal:TaxonomyProposal):Set<string> {
   const answered=Object.values(proposal.machineDecisions??{}).filter(value=>value.origin==='researcher'&&value.snapshotId===proposal.evidenceSnapshot?.id&&proposal.tags.some(tag=>tag.id===value.tagId&&conceptMeaningFingerprint(tag)===value.meaningFingerprint)).map(value=>value.tagId);
-  return new Set([...(options.protectedTagIds??[]),...(options.existingDefinitions??[]).filter(tag=>tag.custom||tag.status==='approved').map(tag=>tag.id),...answered]);
+  return new Set([...(options.protectedTagIds??[]),...(options.existingDefinitions??[]).filter(tag=>tag.custom||tag.status==='approved').map(tag=>tag.id),...(proposal.extension?.baseline.definitions??[]).map(tag=>tag.id),...answered]);
 }
 function sourcesFor(proposal:TaxonomyProposal,tagId:string):{registryId:string;source:FactSource}[] {
   const snapshot=proposal.evidenceSnapshot;if(!snapshot)return [];
@@ -84,6 +85,7 @@ function recoverInvalidMerges(proposal:TaxonomyProposal,state:TagPreparationStat
   const snapshot=proposal.evidenceSnapshot!,facts=options.facts.filter(fact=>snapshot.paperIds.includes(fact.paperId));if(facts.length!==snapshot.paperIds.length)return proposal;
   const keys=proposal.candidateKeys??{},raw={tags:proposal.tags.filter(tag=>!tag.custom).map(tag=>({...tag,key:keys[tag.id]??tag.id,parentKeys:tag.broaderIds.map(id=>keys[id]??id),relatedKeys:(tag.relatedIds??[]).map(id=>keys[id]??id),supportRegistryIds:proposal.support[tag.id]?.registryIds??[]})),merges:proposal.merges.map(value=>({fromId:value.fromId,toKey:keys[value.toId]??value.toId})),excluded:proposal.excluded};
   const next=createTaxonomyProposal(raw,facts,options.existingDefinitions,{snapshot,candidateIds:clone(proposal.candidateIds??{}),generationId:proposal.id,baseVersion:proposal.baseVersion,createdAt:proposal.createdAt,limit:proposal.coreLimit});
+  if(proposal.extension)next.extension=clone(proposal.extension);
   const byKey=new Map(Object.entries(next.candidateKeys??{}).map(([id,key])=>[key,id])),redirect=(id:string)=>byKey.get(keys[id])??id;
   for(const [oldId,key] of Object.entries(keys)){
     const id=byKey.get(key);if(!id)continue;
@@ -129,7 +131,7 @@ function makeQuestion(proposal:TaxonomyProposal,tag:TagDefinition,sourceIds:stri
 }
 
 export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,options:PreparationOptions={}):PreparationResult {
-  let proposal=clone(input);const snapshot=proposal.evidenceSnapshot;
+  let proposal=input.extension?reconcileExtensionProposal(input,input.extension.baseline):clone(input);const snapshot=proposal.evidenceSnapshot;
   const compatible=previous?.proposalId===proposal.id&&previous.snapshotId===snapshot?.id&&previous.policyVersion===PREPARATION_POLICY_VERSION;
   const state:TagPreparationState=compatible?clone(previous!):{id:allocateOpaqueId('preparation'),proposalId:proposal.id,snapshotId:snapshot?.id??'',policyVersion:PREPARATION_POLICY_VERSION,status:'checking',judgements:{},questions:[],answers:{},diagnostics:[],excluded:[]};
   state.provider=options.provider??state.provider;state.model=options.model??state.model;
@@ -158,7 +160,7 @@ export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,opt
   }
   for(const [tagId,sourceIds] of needsContext)if(!state.questions.some(question=>question.tagId===tagId)){const tag=proposal.tags.find(tag=>tag.id===tagId)!;state.questions.push(makeQuestion(proposal,tag,[...new Set(sourceIds)]));}
   const pending=pendingEvidence(proposal),pendingTags=new Set(pending.map(value=>value.tagId)),questionTags=new Set(state.questions.map(question=>question.tagId)),unresolved=(proposal.validationIssues??[]).filter(issue=>!issue.tagId||!questionTags.has(issue.tagId)||pendingTags.has(issue.tagId));
-  const deliberatelyEmpty=state.excluded.some(value=>value.origin==='researcher'),hasBlocking=proposal.issues.length>0||Boolean(proposal.unresolvedMerges?.length),missingCore=!proposal.tags.some(tag=>!tag.custom),repairRequest=(hasBlocking&&(unresolved.length>0||Boolean(proposal.externalIssues?.length)||Boolean(proposal.unresolvedMerges?.length))||missingCore&&!deliberatelyEmpty&&Object.keys(snapshot.sources).length>0)&&attempts<maxRepairs;
+  const deliberatelyEmpty=state.excluded.some(value=>value.origin==='researcher'),hasBlocking=proposal.issues.length>0||Boolean(proposal.unresolvedMerges?.length),missingCore=!proposal.tags.some(tag=>!tag.custom)&&!proposal.extension?.baseline.definitions.some(tag=>!tag.custom),repairRequest=(hasBlocking&&(unresolved.length>0||Boolean(proposal.externalIssues?.length)||Boolean(proposal.unresolvedMerges?.length))||missingCore&&!deliberatelyEmpty&&Object.keys(snapshot.sources).length>0)&&attempts<maxRepairs;
   state.status=repairRequest?'checking':state.questions.length?'questions':hasBlocking?'failed':'ready';
   const result={proposal,state,repairRequest,diagnostics:state.diagnostics},scope=repairRequest||pending.length?repairScope(result,pending):undefined;state.contextTruncated=scope?.truncated??false;state.pendingSourceCount=pending.length;
   if(pending.length&&attempts>=maxRepairs){state.status='failed';if(scope?.truncated)state.diagnostics.push('Some source contexts remain unchecked because this run reached its bounded request limit. Retry automatic checks to continue with the retained judgements.');}
@@ -207,8 +209,9 @@ export function applyRepair(raw:unknown,current:PreparationResult,options:Prepar
   if(!proposal.tags.some(tag=>!tag.custom)&&Array.isArray(data.tags)&&data.tags.length){
     const snapshot=proposal.evidenceSnapshot!,facts=(options.facts??[]).filter(fact=>snapshot.paperIds.includes(fact.paperId));
     if(facts.length!==snapshot.paperIds.length){state.diagnostics.push('Full candidate recovery requires the retained selected paper facts.');return prepare(proposal,state,options);}
-    const exclusions=proposal.excluded;
+    const exclusions=proposal.excluded,extension=proposal.extension;
     proposal=createTaxonomyProposal(data,facts,options.existingDefinitions??current.proposal.tags.filter(tag=>tag.custom),{snapshot,candidateIds:proposal.candidateIds??{},generationId:proposal.id,baseVersion:proposal.baseVersion,limit:proposal.coreLimit,createdAt:proposal.createdAt});
+    if(extension)proposal.extension=clone(extension);
     proposal.excluded=[...new Map([...exclusions,...proposal.excluded].map(value=>[fingerprint(value),value])).values()];respectResearcherExclusions(proposal,state);
     proposal.inputFingerprint=current.proposal.inputFingerprint;
   }

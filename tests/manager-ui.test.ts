@@ -84,7 +84,8 @@ async function harness(data=snapshot(),options:HarnessOptions={}) {
     if(action==='remove-prepared-tag'&&data.tagPreparation)data.tagPreparation.tags=data.tagPreparation.tags.filter(tag=>tag.id!==payload.tagId).map(tag=>({...tag,broaderIds:tag.broaderIds.filter(id=>id!==payload.tagId),relatedIds:tag.relatedIds?.filter(id=>id!==payload.tagId)}));
     if(action==='answer-tag-question'&&data.tagPreparation){data.tagPreparation.questions=data.tagPreparation.questions.filter(question=>question.id!==payload.questionId);data.tagPreparation.canApply=!data.tagPreparation.questions.length;data.tagPreparation.status=data.tagPreparation.questions.length?'questions':'ready';}
     if(action==='retry-tag-preparation'&&data.tagPreparation){data.tagPreparation.status='checking';data.tagPreparation.canApply=false;}
-    if(action==='apply-tag-list'&&data.tagPreparation){data.tags=data.tagPreparation.tags;data.queue={status:'running',total:data.tagPreparation.scopeCount,completed:0,failed:0,message:'Preparing paper suggestions.'};}
+    if(action==='apply-tag-list'&&data.tagPreparation){data.tags=data.tagPreparation.tags;delete data.tagPreparation;data.taxonomyReady=true;}
+    if(action==='tag')data.queue={kind:'tag',status:'running',total:4,completed:0,failed:0,message:'Preparing paper suggestions.'};
     if(action==='dismiss-warning')for(const record of data.warnings||[])if(record.id===payload.id&&record.status==='active')record.status='dismissed';
     if(action==='dismiss-warnings')for(const record of data.warnings||[])if(record.status==='active')record.status='dismissed';
     if(action==='dismiss-paper-attention'&&data.paperAttention)data.paperAttention.papers=data.paperAttention.papers.filter(paper=>!payload.ids.includes(paper.id));
@@ -104,7 +105,7 @@ async function harness(data=snapshot(),options:HarnessOptions={}) {
 
 test('Tags shows one prepared list instead of the 107 previous definitions, without technical review controls',async t=>{
   const data=snapshot();data.tags=Array.from({length:107},(_,i)=>tag(`old-${i}`,`Old draft ${i}`,{status:'draft'}));data.tagPreparation=preparation([tag('fc','FC',{fullName:'fuel cell',aliases:['fuel cells']})]);
-  const nativeChoices=structuredClone(data.papers);const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const nativeChoices=structuredClone(data.papers);const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
   assert.equal(h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row')).length,1);
   assert.match(h.app.textContent,/Your tag list is ready/);assert.equal(h.app.textContent.includes('Old draft'),false);
   assert.doesNotMatch(h.app.textContent,/\b(?:registry|snapshot|fingerprint|staged|core|taxonomy)\b/i);
@@ -112,42 +113,87 @@ test('Tags shows one prepared list instead of the 107 previous definitions, with
   assert.deepEqual(data.papers,nativeChoices);assert.equal(h.actions.length,0);
 });
 
-test('Prepare tags starts the selected scope and opens the Tags workspace',async t=>{
-  const h=await harness(snapshot());t.after(()=>h.ui.destroy());h.choose('analysis-scope',1);await h.click('Prepare tags');
-  assert.deepEqual(h.actions,[{action:'prepare-tags',payload:{scope:'selected'}}]);assert.match(h.app.textContent,/Checking your tags/);assert.ok(h.button('Resume checks'));
+test('Prepare tags uses its own selected group and opens the list for review',async t=>{
+  const h=await harness(snapshot(),{page:'build'});t.after(()=>h.ui.destroy());h.choose('build-scope',1);await h.click('Prepare tags');
+  assert.deepEqual(h.actions,[{action:'prepare-tags',payload:{scope:'selected',mode:'extend'}}]);assert.match(h.app.textContent,/Checking your tags/);assert.ok(h.button('Resume checks'));assert.equal(h.doc.getElementById('nav-cleanup').getAttribute('aria-current'),'page');
+});
+
+test('the sidebar follows four open workflow steps and keeps library tools separate',async t=>{
+  const data=snapshot();data.connection.apiKeyStored=false;const h=await harness(data);t.after(()=>h.ui.destroy());
+  const sidebar=h.all().find(node=>node.localName==='aside')!;const workflow=sidebar.children.find(node=>node.textContent.startsWith('Workflow'))!;
+  assert.deepEqual(workflow.querySelectorAll('button').map(node=>node.getAttribute('aria-label')),['Connect AI','Build tags','Review & clean up','Assign & automate']);assert.equal(sidebar.querySelectorAll('button').length,9);
+  for(const page of ['connection','build','cleanup','assignment','vocabulary','library','activity','settings'] as const){h.ui.navigate({page});assert.equal(h.app.getAttribute('data-smart-tags-state'),'ready');assert.ok(h.doc.getElementById(`nav-${page}`).getAttribute('aria-current'));}
+  h.ui.navigate({page:'cleanup'});await h.click('Clean up existing tags');assert.equal(h.doc.getElementById('nav-cleanup').getAttribute('aria-current'),'page');assert.ok(h.doc.getElementById('existing-tag-search'));
+});
+
+test('the first build defaults to a pilot while assignment independently defaults to the library',async t=>{
+  const data=snapshot();data.taxonomyReady=false;data.workflow={buildMode:'extend',buildScope:'pilot',buildPaperCount:0,assignmentScope:'library',assignmentPaperCount:0,assignedPaperCount:0};const h=await harness(data,{page:'build'});t.after(()=>h.ui.destroy());assert.equal(h.doc.getElementById('build-scope').textContent,'Pilot · 50 papers');assert.equal(h.doc.getElementById('build-mode'),null);assert.match(h.app.textContent,/Create your first tag list/);assert.doesNotMatch(h.app.textContent,/Extend my saved tag list|Replace the full tag list/);
+  h.choose('build-scope',2);h.ui.navigate({page:'assignment'});assert.equal(h.doc.getElementById('assignment-scope').textContent,'Whole personal library');h.choose('assignment-scope',1);await h.emitUpdate();h.ui.navigate({page:'build'});assert.equal(h.doc.getElementById('build-scope').textContent,'Selected collections');await h.click('Prepare tags');assert.deepEqual(h.actions[0],{action:'prepare-tags',payload:{scope:'collections',mode:'replace'}});
+  h.ui.navigate({page:'assignment'});assert.equal(h.doc.getElementById('assignment-scope').textContent,'Selected papers in Zotero');await h.click('Suggest paper tags');assert.deepEqual(h.actions[1],{action:'tag',payload:{scope:'selected'}});assert.match(h.app.textContent,/Preparing paper suggestions/);
+});
+
+test('saved workflow groups restore independently while Extend is the next build default',async t=>{
+  const data=snapshot();data.workflow={buildMode:'replace',buildScope:'collections',buildPaperCount:51,assignmentScope:'selected',assignmentPaperCount:12,assignedPaperCount:4};const h=await harness(data,{page:'build'});t.after(()=>h.ui.destroy());assert.equal(h.doc.getElementById('build-mode').textContent,'Extend my saved tag list');assert.equal(h.doc.getElementById('build-scope').textContent,'Selected collections');
+  h.choose('build-scope',1);data.workflow.buildScope='library';await h.emitUpdate();assert.equal(h.doc.getElementById('build-scope').textContent,'Selected papers in Zotero');h.choose('build-mode',1);assert.match(h.app.textContent,/Build a replacement for the full saved tag list/);assert.equal(h.actions.length,0);
+  h.ui.navigate({page:'assignment'});assert.equal(h.doc.getElementById('assignment-scope').textContent,'Selected papers in Zotero');assert.match(h.app.textContent,/12 papers in the last chosen group · 4 with Smart Tags assignments/);assert.doesNotMatch(h.app.textContent,/library tagged|library complete/);
+});
+
+test('assignment runs the chosen group only on request and a pilot does not replace that choice',async t=>{
+  const h=await harness(snapshot(),{page:'assignment'});t.after(()=>h.ui.destroy());assert.equal(h.actions.length,0);await h.click('Suggest paper tags');assert.deepEqual(h.actions,[{action:'tag',payload:{scope:'library'}}]);h.data.queue.status='idle';await h.emitUpdate();await h.click('Assignment setup');h.choose('assignment-scope',2);await h.click('Run assignment pilot');assert.deepEqual(h.actions.at(-1),{action:'tag',payload:{scope:'pilot'}});h.data.queue.status='idle';await h.emitUpdate();await h.click('Assignment setup');assert.equal(h.doc.getElementById('assignment-scope').textContent,'Selected collections');
+});
+
+test('routine assignment keeps its pilot gate and changes only through its explicit save',async t=>{
+  const data=snapshot();data.pilotReviewed=false;data.workflow={buildMode:'extend',buildScope:'selected',buildPaperCount:51,assignmentScope:'library',assignmentPaperCount:0,assignedPaperCount:0,assignmentPilotReady:false};const h=await harness(data,{page:'assignment'});t.after(()=>h.ui.destroy());assert.equal(h.doc.getElementById('assignment-auto-assign').disabled,true);assert.equal(h.button('Mark pilot reviewed').disabled,true);assert.match(h.app.textContent,/50-paper assignment pilot/);assert.equal(h.actions.length,0);data.workflow.assignmentPilotReady=true;await h.emitUpdate();assert.equal(h.button('Mark pilot reviewed').disabled,false);
+  data.pilotReviewed=true;await h.emitUpdate();h.change('assignment-auto-assign',true);assert.equal(data.settings.autoAssign,false);assert.equal(h.actions.length,0);h.ui.navigate({page:'library'});h.ui.navigate({page:'assignment'});assert.equal(h.doc.getElementById('assignment-auto-assign').checked,true);await h.click('Save routine assignment');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:{...data.settings,autoAssign:true}}}]);assert.equal(data.settings.autoAssign,true);
+});
+
+test('routine saves and unfinished connection edits cannot silently overwrite each other',async t=>{
+  const data=snapshot();const h=await harness(data,{page:'connection'});t.after(()=>h.ui.destroy());h.choose('settings-provider',2);h.change('settings-model','deepseek-test-model');h.ui.navigate({page:'assignment'});h.change('assignment-auto-assign',true);await h.click('Save routine assignment');assert.equal(h.actions[0].payload.settings.provider,'api');assert.equal(h.actions[0].payload.settings.model,'openai-model');assert.equal(data.settings.autoAssign,true);
+  h.ui.navigate({page:'connection'});assert.equal(h.doc.getElementById('settings-model').value,'deepseek-test-model');await h.click('Save settings');assert.equal(h.actions[1].payload.settings.provider,'deepseek');assert.equal(h.actions[1].payload.settings.autoAssign,true);assert.equal(data.settings.autoAssign,true);
+});
+
+test('the saved tag library stays distinct from pending additions and preserves both editor drafts',async t=>{
+  const data=snapshot();data.tagPreparation=preparation([tag('incoming','CO2RR',{description:'Incoming carbon-dioxide reduction topic.'})]);data.workflow={buildMode:'extend',buildScope:'selected',buildPaperCount:51,assignmentScope:'library',assignmentPaperCount:0,assignedPaperCount:0};const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Suggested additions and updates; your other saved tags are kept/);assert.equal(h.button('Edit tag FC'),undefined);await h.click('Edit tag CO2RR');h.change('tag-description','Unfinished incoming topic.');h.ui.navigate({page:'vocabulary'});assert.ok(h.button('Edit tag FC'));assert.equal(h.button('Edit tag CO2RR'),undefined);assert.equal(h.button('Apply tag list'),undefined);assert.equal(h.doc.getElementById('tag-name'),null);
+  h.ui.navigate({tagId:'fc'});assert.equal(h.doc.getElementById('tag-description').value,'Definition of FC');h.change('tag-description','Unfinished saved FC wording.');h.ui.navigate({page:'cleanup'});assert.equal(h.doc.getElementById('tag-name'),null);await h.click('Edit tag CO2RR');assert.equal(h.doc.getElementById('tag-description').value,'Unfinished incoming topic.');h.ui.navigate({page:'vocabulary'});await h.click('Edit tag FC');assert.equal(h.doc.getElementById('tag-description').value,'Unfinished saved FC wording.');assert.equal(h.actions.length,0);
+});
+
+test('retained tags in extension review link to saved edits without prepared Remove or mutation',async t=>{
+  const data=snapshot();data.tagPreparation=preparation([{...data.tags[0],retained:true},tag('incoming','New topic')]);const before=structuredClone(data.papers),h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Saved tag · kept unchanged/);assert.equal(h.button('Edit tag FC'),undefined);assert.equal(h.button('Remove tag FC'),undefined);assert.ok(h.button('Edit tag New topic'));assert.ok(h.button('Remove tag New topic'));
+  await h.click('Edit saved tag FC in tag library');assert.equal(h.doc.getElementById('nav-vocabulary').getAttribute('aria-current'),'page');assert.equal(h.doc.getElementById('tag-description').value,'Definition of FC');assert.equal(h.actions.length,0);assert.ok(h.button('Edit tag FC'));assert.ok(h.button('Remove tag FC'));h.change('tag-description','My saved fuel-cell meaning.');await h.click('Save');assert.equal(h.actions[0].action,'save-tag');assert.equal(h.actions[0].payload.tag.id,'fc');assert.equal(h.actions[0].payload.tag.retained,undefined);assert.deepEqual(data.papers,before);assert.equal(h.actions.some(entry=>entry.action==='edit-prepared-tag'||entry.action==='remove-prepared-tag'),false);
 });
 
 test('only meaningful questions need a choice, with paper links and exact choice identities',async t=>{
   const data=snapshot();data.tagPreparation={...preparation(),status:'questions',canApply:false,questions:[{id:'meaning-rcl',title:'Does this measurement belong under RCL?',description:'The paper discusses catalyst-layer resistance. Choose the meaning you want to keep.',paperIds:['a'],choices:[{id:'same',label:'Use RCL',description:'Keep this meaning together.'},{id:'separate',label:'Keep it separate',description:'Use a different tag for this topic.'}]}]};
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.button('Apply tag list').disabled,true);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.equal(h.button('Apply tag list').disabled,true);
   await h.click('Questions (1)');assert.match(h.app.textContent,/Does this measurement belong under RCL/);await h.click('Context match');
   assert.deepEqual(h.actions[0],{action:'show-paper',payload:{id:'a'}});await h.click('Use RCL');
   assert.deepEqual(h.actions[1],{action:'answer-tag-question',payload:{id:'prepared',questionId:'meaning-rcl',choiceId:'same'}});
   assert.equal(h.button('Apply tag list').disabled,false);assert.match(h.app.textContent,/No questions waiting/);
 });
 
-test('Apply tag list prepares paper suggestions without writing paper tags or enabling automatic assignment',async t=>{
+test('Apply tag list saves only the list and opens independent assignment setup',async t=>{
   const data=snapshot();data.settings.autoAssign=false;data.tagPreparation=preparation();const original=structuredClone(data.papers);
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Apply tag list');
-  assert.deepEqual(h.actions,[{action:'apply-tag-list',payload:{id:'prepared'}}]);assert.match(h.app.textContent,/Preparing paper suggestions/);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Apply tag list');
+  assert.deepEqual(h.actions,[{action:'apply-tag-list',payload:{id:'prepared'}}]);assert.match(h.app.textContent,/Saving a tag list does not start paper analysis/);assert.ok(h.doc.getElementById('assignment-scope'));assert.equal(h.doc.getElementById('assignment-scope').textContent,'Whole personal library');assert.equal(data.queue.status,'idle');assert.equal(data.suggestions.length,0);
   assert.deepEqual(data.papers,original);assert.equal(data.settings.autoAssign,false);assert.equal(h.actions.some(entry=>entry.action==='apply-suggestions'),false);
+  h.ui.navigate({page:'build'});assert.equal(h.doc.getElementById('build-scope').textContent,'Selected papers in Zotero');assert.equal(h.doc.getElementById('build-mode').textContent,'Extend my saved tag list');h.ui.navigate({page:'vocabulary'});assert.equal(h.button('Questions (0)'),undefined);assert.equal(h.button('Apply tag list'),undefined);assert.ok(h.button('Edit tag FC'));
 });
 
 test('the preferred count is soft and a larger ready tag list can be applied',async t=>{
   const data=snapshot();data.tagPreparation=preparation(Array.from({length:67},(_,i)=>tag(`t${i}`,`Topic ${i}`)));data.tagPreparation.targetCount=60;
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/67 tags/);assert.equal(h.button('Apply tag list').disabled,false);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/67 tags/);assert.equal(h.button('Apply tag list').disabled,false);
   assert.equal(h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row')).length,20);await h.click('Next tags');assert.match(h.app.textContent,/Topic 20/);
 });
 
 test('checking and failed preparations retain completed work and offer explicit continuation',async t=>{
   const data=snapshot();data.tagPreparation={...preparation(),status:'failed',canApply:false,error:'Unknown registry registry-0123456789 in snapshot'};
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.button('Apply tag list').disabled,true);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.equal(h.button('Apply tag list').disabled,true);
   assert.doesNotMatch(h.app.textContent,/registry-0123456789|snapshot/);assert.match(h.app.textContent,/completed paper analysis is saved/);
   await h.click('Try again');assert.deepEqual(h.actions[0],{action:'retry-tag-preparation',payload:{id:'prepared'}});assert.ok(h.button('Resume checks'));
 });
 
 test('Edit saves a prepared tag through its preparation and keeps editor scrolling separate from Save',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
   await h.click('Edit tag FC');h.change('tag-description','A clearer meaning of fuel-cell systems.');
   const editor=h.all().find(node=>node.classList.contains('tag-editor'))!,body=h.all().find(node=>node.classList.contains('editor-scroll'))!,footer=h.all().find(node=>node.classList.contains('editor-footer'))!;
   assert.equal(body.contains(h.button('Save')),false);assert.equal(footer.contains(h.button('Save')),true);assert.equal(editor.contains(body),true);
@@ -157,14 +203,14 @@ test('Edit saves a prepared tag through its preparation and keeps editor scrolli
 });
 
 test('editor drafts survive other edits and background refresh; Cancel discards only the current draft',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
   await h.click('Edit tag FC');h.change('tag-description','My unfinished FC wording.');await h.click('Edit tag PEMFC');h.change('tag-name','My PEMFC');
   await h.click('Edit tag FC');assert.equal(h.doc.getElementById('tag-description').value,'My unfinished FC wording.');await h.emitUpdate();assert.equal(h.doc.getElementById('tag-description').value,'My unfinished FC wording.');
   await h.click('Cancel');await h.click('Edit tag FC');assert.equal(h.doc.getElementById('tag-description').value,'Definition of FC');await h.click('Edit tag PEMFC');assert.equal(h.doc.getElementById('tag-name').value,'My PEMFC');
 });
 
 test('Apply waits for every unsaved edit, including drafts for another prepared tag',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
   await h.click('Edit tag FC');assert.equal(h.button('Apply tag list').disabled,false);
   h.change('tag-description','Changed FC meaning.');assert.equal(h.button('Apply tag list').disabled,true);assert.match(h.app.textContent,/Save or cancel your edits/);
   await h.click('Edit tag PEMFC');assert.equal(h.button('Apply tag list').disabled,true,'The FC draft is still waiting');await h.click('Cancel');assert.equal(h.button('Apply tag list').disabled,true);
@@ -173,15 +219,15 @@ test('Apply waits for every unsaved edit, including drafts for another prepared 
 
 test('prepared Remove uses the domain action, preserves other drafts, and makes no native change',async t=>{
   const data=snapshot();data.tagPreparation=preparation();const native=structuredClone(data.papers);
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Edit tag PEMFC');h.change('tag-description','Unfinished PEMFC wording.');await h.click('Remove tag FC');
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Edit tag PEMFC');h.change('tag-description','Unfinished PEMFC wording.');await h.click('Remove tag FC');
   assert.deepEqual(h.actions[0],{action:'remove-prepared-tag',payload:{id:'prepared',tagId:'fc'}});assert.equal(data.tagPreparation.tags.some(tag=>tag.id==='fc'),false);
   assert.equal(h.doc.getElementById('tag-description').value,'Unfinished PEMFC wording.');assert.deepEqual(data.papers,native);assert.equal(data.tags.some(tag=>tag.id==='fc'),true);
 });
 
 test('failed prepared changes keep unsaved editor text and a successful removal closes the matching editor',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const failed=await harness(data,{page:'vocabulary',failAction:'edit-prepared-tag'});t.after(()=>failed.ui.destroy());
+  const data=snapshot();data.tagPreparation=preparation();const failed=await harness(data,{page:'cleanup',failAction:'edit-prepared-tag'});t.after(()=>failed.ui.destroy());
   await failed.click('Edit tag FC');failed.change('tag-description','Keep my unsaved words.');await failed.click('Save');assert.equal(failed.doc.getElementById('tag-description').value,'Keep my unsaved words.');assert.match(failed.app.textContent,/could not be saved/);
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Edit tag FC');await h.click('Remove tag FC');assert.equal(h.doc.getElementById('tag-name'),null);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Edit tag FC');await h.click('Remove tag FC');assert.equal(h.doc.getElementById('tag-name'),null);
 });
 
 test('Add tag preserves a DIY name and defaults to suggested matching',async t=>{
@@ -204,8 +250,8 @@ test('compact attention notices retain all records, affected-paper links and dis
 
 test('authentication and budget notices use helpful language without raw response codes',async t=>{
   const data=snapshot();data.warnings=[warning('auth',{message:'OpenAI HTTP 401 authentication failed'})];const h=await harness(data);t.after(()=>h.ui.destroy());
-  assert.match(h.app.textContent,/check your connection in Settings/);assert.doesNotMatch(h.app.textContent,/401|fact-extraction/);
-  data.warnings=[warning('budget',{message:'The next request exceeds the budget'})];await h.emitUpdate();assert.match(h.app.textContent,/usage or spending limit/);
+  assert.match(h.app.textContent,/check your connection in Connect AI/);assert.doesNotMatch(h.app.textContent,/401|fact-extraction/);
+  data.warnings=[warning('budget',{message:'The next request exceeds the budget'})];await h.emitUpdate();assert.match(h.app.textContent,/usage or spending limit/);assert.match(h.app.textContent,/Check Connect AI before continuing/);
 });
 
 test('Activity gives the next useful step without repeating tag questions or technical diagnostics',async t=>{
@@ -214,19 +260,19 @@ test('Activity gives the next useful step without repeating tag questions or tec
 });
 
 test('private analysis export stays in Settings and existing tags has a dedicated workspace',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.button('Export analysis with paper text…'),undefined);
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.equal(h.button('Export analysis with paper text…'),undefined);
   h.ui.navigate({page:'settings'});h.expand('Import, export, and previous tag lists');assert.match(h.app.textContent,/private export includes paper text and quotations/);await h.click('Export analysis with paper text…');assert.deepEqual(h.actions[0],{action:'export-tag-analysis',payload:{id:'prepared'}});
   await h.click('Manage existing tags');assert.equal(h.actions.length,1);assert.match(h.app.textContent,/Bring useful library tags into Smart Tags/);assert.equal(h.button('Apply reviewed tag changes'),undefined);
 });
 
 test('successful messages expire after four seconds through the same notification lifecycle',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.match(h.app.textContent,/Tag removed from this list/);
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.match(h.app.textContent,/Tag removed from this list/);
   const timer=[...h.timerDelays].find(([,delay])=>delay===4000)!;assert.ok(timer);const callback=h.timers.get(timer[0])!;h.timers.delete(timer[0]);h.timerDelays.delete(timer[0]);callback();assert.equal(h.app.textContent.includes('Tag removed from this list.'),false);
 });
 
 test('large tag and question lists stay bounded and maintain independent list/editor state',async t=>{
   const data=snapshot();data.tagPreparation={...preparation(Array.from({length:80},(_,i)=>tag(`tag${i}`,`Topic ${i}`))),status:'questions',canApply:false,questions:Array.from({length:25},(_,i)=>({id:`q${i}`,title:`Question ${i}`,description:'Choose the useful meaning.',paperIds:['a'],choices:[{id:'keep',label:'Keep this meaning',description:''}]}))};
-  const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row')).length,20);assert.equal(h.all().some(node=>node.localName==='blockquote'),false);assert.ok(h.all().length<3000);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.equal(h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row')).length,20);assert.equal(h.all().some(node=>node.localName==='blockquote'),false);assert.ok(h.all().length<3000);
   await h.click('Edit tag Topic 0');h.change('tag-description','Unfinished topic wording.');h.doc.getElementById('tag-list-scroll').scrollTop=250;await h.click('Next tags');await h.click('Previous tags');assert.equal(h.doc.getElementById('tag-list-scroll').scrollTop,250);assert.equal(h.doc.getElementById('tag-description').value,'Unfinished topic wording.');
   await h.click('Questions (25)');assert.equal(h.all().filter(node=>node.classList.contains('tag-question')).length,10);await h.click('Next questions');assert.match(h.app.textContent,/Question 10/);
 });
@@ -246,12 +292,12 @@ test('Explore search respects full names and Co/CO distinctions',async t=>{
 
 test('settings accepts a preferred count without a size blocker and protects provider keys',async t=>{
   const h=await harness(snapshot(),{page:'settings'});t.after(()=>h.ui.destroy());h.change('settings-coreConceptLimit','501');await h.click('Save settings');assert.equal(h.actions.length,0);h.change('settings-coreConceptLimit','500');await h.click('Save settings');assert.equal(h.actions[0].payload.settings.coreConceptLimit,500);
-  h.choose('settings-provider',2);assert.equal(h.doc.getElementById('settings-model').value,'');assert.equal(h.doc.getElementById('settings-inputPricePerMillion').value,'0');assert.equal(h.doc.getElementById('settings-deepseek-key').type,'password');h.change('settings-deepseek-key','test-private-key');await h.click('Save DeepSeek key');assert.deepEqual(h.actions[1],{action:'save-api-key',payload:{key:'test-private-key',provider:'deepseek'}});assert.equal(h.doc.getElementById('settings-deepseek-key').value,'');assert.equal(JSON.stringify(h.data).includes('test-private-key'),false);
+  await h.click('AI connection and budget');h.choose('settings-provider',2);assert.equal(h.doc.getElementById('settings-model').value,'');assert.equal(h.doc.getElementById('settings-inputPricePerMillion').value,'0');assert.equal(h.doc.getElementById('settings-deepseek-key').type,'password');h.change('settings-deepseek-key','test-private-key');await h.click('Save DeepSeek key');assert.deepEqual(h.actions[1],{action:'save-api-key',payload:{key:'test-private-key',provider:'deepseek'}});assert.equal(h.doc.getElementById('settings-deepseek-key').value,'');assert.equal(JSON.stringify(h.data).includes('test-private-key'),false);
 });
 
 test('ChatGPT offers a fresh account or workspace sign-in without saved accounts',async t=>{
   const data=snapshot();data.settings.provider='chatgpt';data.connection={apiKeyStored:false,chatgptSignedIn:false,accounts:[]};
-  const before=structuredClone(data);const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+  const before=structuredClone(data);const h=await harness(data,{page:'connection'});t.after(()=>h.ui.destroy());
   assert.equal(h.button('Use another account or workspace').disabled,false);
   assert.match(h.app.textContent,/workspace error, cancel the current attempt/);assert.match(h.app.textContent,/personal Pro workspace/);
   await h.click('Use another account or workspace');
@@ -260,7 +306,7 @@ test('ChatGPT offers a fresh account or workspace sign-in without saved accounts
 
 test('Continue with ChatGPT keeps its existing sign-in behavior and saved account selector',async t=>{
   const data=snapshot();data.settings.provider='chatgpt';data.connection={apiKeyStored:false,chatgptSignedIn:true,accounts:[{id:'personal',label:'Personal account'},{id:'other',label:'Other account'}],selectedAccountId:'personal'};
-  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+  const h=await harness(data,{page:'connection'});t.after(()=>h.ui.destroy());
   await h.click('Continue with ChatGPT');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:structuredClone(data.settings)}},{action:'sign-in',payload:undefined}]);
   const selector=h.doc.getElementById('settings-chatgpt-account');assert.ok(selector);h.choose('settings-chatgpt-account',1);await settle();
   assert.deepEqual(h.actions.at(-1),{action:'select-account',payload:{id:'other'}});
@@ -270,14 +316,14 @@ test('Continue with ChatGPT keeps its existing sign-in behavior and saved accoun
 
 test('a pending ChatGPT sign-in keeps Cancel available while other actions are busy',async t=>{
   const data=snapshot();data.settings.provider='chatgpt';let finishSnapshot:(value?:void)=>void=()=>{};
-  const h=await harness(data,{page:'settings',onSnapshot:call=>call===3?new Promise<void>(resolve=>{finishSnapshot=resolve;}):undefined});t.after(()=>h.ui.destroy());
+  const h=await harness(data,{page:'connection',onSnapshot:call=>call===3?new Promise<void>(resolve=>{finishSnapshot=resolve;}):undefined});t.after(()=>h.ui.destroy());
   await h.click('Use another account or workspace');assert.equal(h.button('Continue with ChatGPT').disabled,true);assert.equal(h.button('Cancel sign-in').disabled,false);
   await h.click('Cancel sign-in');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:structuredClone(data.settings)}},{action:'sign-in',payload:{newAccount:true}},{action:'cancel-sign-in',payload:undefined}]);
   finishSnapshot();await settle();assert.equal(h.button('Cancel sign-in'),undefined);
 });
 
 test('action notifications share one final refresh and later external changes remain visible',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
 });
 
 test('Settings shows the installed version and explicit native navigation/update controls',async t=>{
@@ -432,4 +478,12 @@ test('the builtin no_tag stays outside editable tags and DIY counts while Find p
 test('suggested no_tag remains a reviewed paper change with a clear future-exclusion label',async t=>{
   const data=snapshot();data.tags.push(tag('smart-tags:no-tag','no_tag',{builtin:'no_tag',custom:true,matchingMode:'manual'}));data.suggestions=[{id:'unmatched',paperId:'a',tagId:'smart-tags:no-tag',reason:'The completed analysis found no supported match.',confidence:'high',status:'accepted',evidence:[]}];
   const h=await harness(data,{page:'review'});t.after(()=>h.ui.destroy());assert.equal(h.actions.length,0);h.choose('review-filter',1);assert.match(h.app.textContent,/Exclude from tagging/);assert.doesNotMatch(h.app.textContent,/No supporting passage is available/);await h.click('Apply accepted…');assert.match(h.app.textContent,/Applying no_tag excludes the affected papers from future tagging/);assert.equal(h.actions.length,0);await h.click('Apply 1 tag changes');assert.deepEqual(h.actions,[{action:'apply-suggestions',payload:{ids:['unmatched']}}]);
+});
+
+test('tag counts distinguish papers in the build from papers already tagged in the library',async t=>{
+  const data=snapshot();data.tags[0].coverage=51;data.tags[0].currentlyTaggedCount=120;
+  data.tagPreparation=preparation([{...data.tags[0],retained:true,coverage:0},tag('new-topic','new topic',{coverage:3})]);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/120 papers tagged/);assert.match(h.app.textContent,/3 papers in this build/);
+  h.ui.navigate({page:'vocabulary'});assert.match(h.app.textContent,/120 papers tagged/);assert.doesNotMatch(h.app.textContent,/51 papers tagged|papers in this build/);assert.equal(h.actions.length,0);
 });
