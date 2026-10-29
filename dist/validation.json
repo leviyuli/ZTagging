@@ -1,19 +1,19 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.4.0",
-  "verifiedAt": "2026-10-28T13:13:08.406Z",
+  "version": "0.4.1",
+  "verifiedAt": "2026-10-29T04:00:17.247Z",
   "target": "Zotero 10.0.6 on Windows",
   "schemaVersion": 4,
   "consolidationProtocolVersion": 2,
   "preparationPolicyVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 496,
+    "passed": 503,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 81,
+    "passed": 83,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -338,100 +338,52 @@
       {
         "name": "v040QuestionChoiceFinishesPreparation",
         "passed": true
+      },
+      {
+        "name": "v041NewChatGPTConnectionUsesFreshRegistration",
+        "passed": true
+      },
+      {
+        "name": "v041ContinueRetainsSavedConnection",
+        "passed": true
       }
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "preparationWorkflow": {
-    "routineChecksAutomatic": true,
-    "extraModelRequestsMaximum": 3,
-    "attemptsPersistAcrossRestart": true,
-    "budgetRejectionBeforeDispatchDoesNotConsumeAttempt": true,
-    "incompleteRepliesDiagnosticOnly": true,
-    "explicitRetryRetainsSpentBudget": true,
-    "providerNeverChangesAutomatically": true,
-    "perSourceDecisions": true,
-    "protectedHumanAnswersAndEdits": true,
-    "removedTagsStayRemoved": true,
-    "softTarget": 60,
-    "previewAfterTagListApply": true,
-    "nativeBatchApplySeparateAndUndoable": true
-  },
-  "managerUI": {
-    "normalScreensHideEvidenceInternals": true,
-    "tagListPagination": true,
-    "independentEditorScroll": true,
-    "fixedSaveAndCancelFooter": true,
-    "narrowDrawer": true,
-    "dirtyEditorBlocksApply": true,
-    "noticeDurationMS": 4000,
-    "nativeSyntheticPapers": 51,
-    "nativeSyntheticSources": 428,
-    "largeRenderMS": 125,
-    "questionCount": 1
-  },
-  "privateReadOnlyReplay": {
-    "status": "passed",
-    "schemaVersion": 4,
-    "selectedPapers": 51,
-    "cachedFacts": 97,
-    "definitionsBefore": 107,
-    "definitionsAfter": 29,
-    "completedJobs": 51,
-    "extractionRequests": 0,
-    "preparationRequests": 0,
-    "modelTransport": "deterministic empty-repair fixture; no live AI request",
-    "nativeWrites": 0,
-    "exactByteBackup": true,
-    "sourceBytesUnchanged": true,
-    "quotesAndProvenanceUnchanged": true,
-    "snapshotRestrictedToSelectedPapers": true,
-    "proofsPreserved": true,
-    "restartAddedRequests": 0,
-    "initializeMs": 496,
-    "managerSnapshotMs": 2,
-    "preparationStatus": "ready"
+  "authenticationRecovery": {
+    "freshAction": "Use another account or workspace",
+    "freshRegistrationBypassesSavedAndPendingClients": true,
+    "oldAccountHintsOmitted": true,
+    "stableHostIdentityPreserved": true,
+    "oldCredentialsAndAccountsPreservedOnCancel": true,
+    "ordinaryContinueRetainsSelectedConnection": true,
+    "actionAvailableWithoutSavedAccounts": true,
+    "cancelRemainsAvailableDuringSignIn": true,
+    "realAuthenticationPerformed": false
   },
   "migration": {
-    "exactByteCollisionSafeBackup": true,
-    "noModelRequests": true,
-    "cachedFactsPreserved": true,
-    "historicalIdentityAndConfirmationCompatibility": true,
-    "referenceAwareLegacyDeletion": true,
-    "noSeparateLegacyArchive": true,
-    "newerSchemasAndDowngradeWritesRefused": true
-  },
-  "notices": {
-    "dismissalPersists": true,
-    "conditionSpecificResolution": true,
-    "completedMergeNoticesInHistory": true,
-    "cachedEmptyFactsRecheckPDF": true
+    "schemaUnchanged": true,
+    "noNewMigration": true
   },
   "deslopCleanup": {
     "applied": true,
-    "scope": "Focused diff review, unused exports/imports and redundant catch removal; retained native, budget, persistence and scientific input safeguards."
-  },
-  "testStructure": {
-    "skill": "codebase-design",
-    "module": "TagPreparation workflows through prepare, applyRepair and answer.",
-    "controller": "Persistence and side effects through invoke and restart.",
-    "manager": "Accessible controls through mountManager; obsolete technical review assertions replaced, no broad shared test harness."
+    "scope": "Shared sign-in handler and typed new error assertions; no provider or account-storage changes."
   },
   "rightItemAndInformationPaneSection": false,
   "workingLibraryModified": false,
   "publicArtifactPrivateDataScan": "passed",
-  "limits": "No live AI request or account authentication was performed. Native UI checks are programmatic; screenshots were not inspected. Timing measurements are specific to this environment.",
+  "limits": "Sign-in recovery was verified with synthetic authorization and native UI action capture. The user must complete real OpenAI authorization; workspace policy and plan eligibility are enforced by OpenAI. No private working-profile credentials were read or changed.",
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.4.0.xpi",
-      "bytes": 323729,
-      "sha256": "2c658f267213d387dfc8755b1d353ddcaa54c016a897b5d602c3ff6ac88689a5"
+      "file": "smart-tags-0.4.1.xpi",
+      "bytes": 324035,
+      "sha256": "b7ef3d501f58d4aebe020baad35409b866b93e561b61824be39ddb4b41ab2f77"
     },
     "source": {
-      "file": "smart-tags-0.4.0-source.zip",
-      "bytes": 334003,
-      "sha256": "c0a08c9a79f807e75354aeb0d391f232aea62a37cbf511db5f1e20db61a1b495"
+      "file": "smart-tags-0.4.1-source.zip",
+      "bytes": 335870,
+      "sha256": "0f8b22037d1698163986931241bcc9578bca081a2fd7d51a240db197a2dc5fd7"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

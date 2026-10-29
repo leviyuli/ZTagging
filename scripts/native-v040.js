@@ -16,7 +16,7 @@ export async function runNativeV040(app,check,config){
   check('v040IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v040IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
   check('v040StateSchema',app.state.schemaVersion===4);
-  const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldList=host.list,oldComplete=ai.completeJson,oldApply=host.apply;
+  const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldList=host.list,oldComplete=ai.completeJson,oldApply=host.apply,oldInvoke=app.invoke;
   const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),oldMode=navigator?.mode;
   const nativePaper=Object.values(before.papers).find(paper=>paper.title==='Smart Tags smoke: catalyst-layer resistance in PEM electrolysis');
   if(!nativePaper)throw new Error('V040QA requires the preceding synthetic electrolysis paper.');
@@ -91,15 +91,22 @@ export async function runNativeV040(app,check,config){
     button(doc,'Save').click();await until(()=>!doc.querySelector('.tag-editor')&&!button(doc,'Apply tag list').disabled,'editor saved');
     const toastStart=Date.now();await until(()=>!doc.querySelector('.toast'),'success notice clears',7000);const toastMS=Date.now()-toastStart;
     check('v040SuccessNoticeExpires',toastMS<6000,{milliseconds:toastMS});
-    button(doc,'Apply tag list').click();await until(()=>app.state.run?.kind==='tag','paper preview queued');await app.waitForIdle();await until(()=>doc.body.textContent.includes('Paper suggestions'),'paper suggestions view');
+    button(doc,'Apply tag list').click();await until(()=>app.state.run?.kind==='tag'&&app.state.run.status==='idle','paper preview completed');await app.waitForIdle();await until(()=>doc.body.textContent.includes('Paper suggestions'),'paper suggestions view');
     check('v040ApplyCreatesSeparatePaperPreview',app.state.suggestions.some(suggestion=>suggestion.paperId===nativePaper.id&&suggestion.status==='pending'&&!suggestion.applied)&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags&&!app.state.settings.autoAssign);
 
     phase='question';app.state.settings.coreConceptLimit=61;await app.invoke('prepare-tags',{scope:'selected'});await app.waitForIdle();
     check('v040OnlyUnresolvedScopeBecomesQuestion',app.state.tagPreparation?.status==='questions'&&app.state.tagPreparation.questions.length===1,{status:app.state.tagPreparation?.status,questions:app.state.tagPreparation?.questions.length,runMessage:app.state.run?.message,diagnostics:app.state.tagPreparation?.diagnostics});
     await open('vocabulary');button(doc,'Questions (1)').click();await until(()=>button(doc,'Catalyst-layer resistance'),'scientific choices');button(doc,'Catalyst-layer resistance').click();await until(()=>app.state.tagPreparation?.status==='ready'&&!button(doc,'Apply tag list').disabled,'question answered');
     check('v040QuestionChoiceFinishesPreparation',app.state.tagPreparation.questions.length===0&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags);
+    const signIns=[];
+    app.invoke=function(action,payload){if(action==='sign-in'){signIns.push(payload);return Promise.resolve();}return oldInvoke.call(this,action,payload);};
+    const settingsDoc=await open('settings');
+    button(settingsDoc,'Use another account or workspace').click();await until(()=>signIns.length===1&&!button(settingsDoc,'Continue with ChatGPT').disabled,'new ChatGPT connection action');
+    check('v041NewChatGPTConnectionUsesFreshRegistration',signIns[0]?.newAccount===true);
+    button(settingsDoc,'Continue with ChatGPT').click();await until(()=>signIns.length===2&&!button(settingsDoc,'Continue with ChatGPT').disabled,'saved ChatGPT connection action');
+    check('v041ContinueRetainsSavedConnection',!signIns[1]?.newAccount);
     return {largeRenderMS,largePapers:51,largeSources:428,meaningfulQuestions:1,syntheticAIRequests:requests,realAIRequests:0,nativeTagWrites:nativeWrites,independentEditor:true,narrowSaveVisible:true};
   }finally{
-    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();close();ai.completeJson=oldComplete;host.list=oldList;host.apply=oldApply;app.state=before;await app.save();await navigator?.refresh();if(oldMode)await navigator?.setMode(oldMode);
+    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();close();app.invoke=oldInvoke;ai.completeJson=oldComplete;host.list=oldList;host.apply=oldApply;app.state=before;await app.save();await navigator?.refresh();if(oldMode)await navigator?.setMode(oldMode);
   }
 }

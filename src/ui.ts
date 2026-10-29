@@ -732,13 +732,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }), 'Connection changes take effect when you save settings. There is no automatic paid fallback.'));
     connection.append(h('p', 'card-description', `Analysis sends selected paper metadata and, when needed, PDF text to ${providerName}.`));
     if (draft.provider === 'chatgpt') {
+      const startSignIn = async (newAccount = false) => {
+        await saveSettings();
+        signingIn = true;
+        try { await run('sign-in', newAccount ? { newAccount: true } : undefined, 'ChatGPT sign-in complete. Discover models and test the connection.'); }
+        finally { signingIn = false; render(); }
+      };
       connection.append(h('div', 'notice', h('strong', '', s.connection.chatgptSignedIn ? s.connection.accountLabel || 'ChatGPT account connected' : 'Use an eligible ChatGPT plan'), h('p', '', 'Sign-in requests permission to use your plan for AI analysis. Availability and limits depend on your account.')),
-        h('div', 'actions', button('Continue with ChatGPT', async () => {
-          await saveSettings();
-          signingIn = true;
-          try { await run('sign-in', undefined, 'ChatGPT sign-in complete. Discover models and test the connection.'); }
-          finally { signingIn = false; render(); }
-        }, 'primary'), button('Sign out', () => run('sign-out', undefined, 'ChatGPT account disconnected.'), '', !s.connection.chatgptSignedIn)));
+        h('div', 'actions', button('Continue with ChatGPT', () => startSignIn(), 'primary'), button('Use another account or workspace', () => startSignIn(true)), button('Sign out', () => run('sign-out', undefined, 'ChatGPT account disconnected.'), '', !s.connection.chatgptSignedIn)),
+        h('p', 'card-description', 'If OpenAI shows a workspace error, cancel the current attempt, then use “Use another account or workspace” and select your personal Pro workspace.'));
       if (s.connection.accounts && s.connection.accounts.length > 1) connection.append(h('div', 'section-gap', field('ChatGPT account', select('settings-chatgpt-account', s.connection.selectedAccountId || s.connection.accounts[0].id, s.connection.accounts.map(account => [account.id, account.label]), value => { void run('select-account', { id: value }, 'ChatGPT account selected.').catch(showError); }))));
     } else {
       const keyProvider = draft.provider;

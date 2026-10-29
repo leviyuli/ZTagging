@@ -235,13 +235,63 @@ test("returning sign-in retains registration/host and rejects a different return
   let calls = 0;
   const h = harness(() => { calls++; throw new Error("No exchange permitted"); }); seedAccount(h);
   h.metadata.set("chatgpt.hostId", "urn:uuid:11111111-1111-4111-8111-111111111111");
+  h.metadata.set("chatgpt.pendingClientId", "oaiapp_stale_other_workspace");
   const login = h.client.signIn(); const rejected = assert.rejects(login, /different client/);
   const auth = await waitForURL(h);
   assert.equal(auth.searchParams.get("client_id"), "oaiapp_test123");
   assert.equal(auth.searchParams.get("agent_name_hint"), null);
   assert.equal(auth.searchParams.get("id_token_hint"), "old-id-token");
+  assert.equal(auth.searchParams.get("login_hint"), "test@example.com");
   await h.callback({ state: auth.searchParams.get("state")!, code: "code", client_id: "oaiapp_wrong" });
   await rejected; assert.equal(calls, 0); assert.equal((await h.client.getSession()).email, "test@example.com");
+});
+
+test("adding a ChatGPT account starts fresh without changing saved connections when cancelled", async t => {
+  for (const hasActiveAccount of [true, false]) {
+    await t.test(hasActiveAccount ? "active registration and stale pending registration" : "stale pending registration only", async () => {
+      let calls = 0;
+      const h = harness(() => { calls++; throw new Error("No exchange permitted"); });
+      if (hasActiveAccount) seedAccount(h);
+      const hostId = "urn:uuid:11111111-1111-4111-8111-111111111111";
+      h.metadata.set("chatgpt.hostId", hostId);
+      h.metadata.set("chatgpt.pendingClientId", "oaiapp_stale_other_workspace");
+      const savedMetadata = new Map(h.metadata), savedCredentials = new Map(h.credentials);
+      const login = h.client.signIn({ newAccount: true });
+      const cancelled = assert.rejects(login, (error: unknown) => error instanceof ProviderError && error.category === "cancelled");
+      const auth = await waitForURL(h);
+      assert.equal(auth.searchParams.get("client_id"), "dynamic_agent_client");
+      assert.equal(auth.searchParams.get("agent_name_hint"), "Smart Tags for Zotero");
+      assert.equal(auth.searchParams.get("ext_agent_host_id"), hostId);
+      assert.equal(auth.searchParams.get("id_token_hint"), null);
+      assert.equal(auth.searchParams.get("login_hint"), null);
+      h.client.cancelSignIn(); await cancelled;
+      assert.deepEqual(h.metadata, savedMetadata);
+      assert.deepEqual(h.credentials, savedCredentials);
+      assert.equal((await h.client.getSession()).accountId, hasActiveAccount ? "oaiapp_test123" : null);
+      assert.equal(h.disposed(), 1); assert.equal(calls, 0);
+    });
+  }
+});
+
+test("ordinary Continue retries the pending issued registration when no account is selected", async () => {
+  let calls = 0;
+  const h = harness(() => { calls++; throw new Error("No exchange permitted"); });
+  seedAccount(h); h.metadata.delete("chatgpt.active");
+  const hostId = "urn:uuid:11111111-1111-4111-8111-111111111111";
+  h.metadata.set("chatgpt.hostId", hostId);
+  h.metadata.set("chatgpt.pendingClientId", "oaiapp_pending_workspace");
+  const savedMetadata = new Map(h.metadata), savedCredentials = new Map(h.credentials);
+  const login = h.client.signIn();
+  const cancelled = assert.rejects(login, (error: unknown) => error instanceof ProviderError && error.category === "cancelled");
+  const auth = await waitForURL(h);
+  assert.equal(auth.searchParams.get("client_id"), "oaiapp_pending_workspace");
+  assert.equal(auth.searchParams.get("ext_agent_host_id"), hostId);
+  assert.equal(auth.searchParams.get("agent_name_hint"), null);
+  assert.equal(auth.searchParams.get("id_token_hint"), null);
+  assert.equal(auth.searchParams.get("login_hint"), null);
+  h.client.cancelSignIn(); await cancelled;
+  assert.deepEqual(h.metadata, savedMetadata); assert.deepEqual(h.credentials, savedCredentials);
+  assert.equal(calls, 0);
 });
 
 test("OAuth access-denied and local cancellation remove callback listeners", async () => {

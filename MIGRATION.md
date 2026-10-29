@@ -1,4 +1,6 @@
-# Upgrading to Smart Tags 0.4.0
+# Upgrading to Smart Tags 0.4.x
+
+Version **0.4.1** adds a way to connect another ChatGPT account or workspace. It uses the existing schema 4 and requires no additional state migration. Install it over 0.4.0, cancel any pending sign-in, then use **Settings → Use another account or workspace** if OpenAI reports a workspace-access error. Saved accounts and paper analysis remain available; no credentials or registrations are removed by opening the new sign-in flow.
 
 Install the new XPI over the existing extension and open **Tools → Smart Tags…**. Startup upgrades local application state to **schema 4**. Consolidation continues to use ID-based protocol 2; terminology normalization is versioned separately. Migration performs no model requests and changes no native Zotero tags, collections, columns, or credentials.
 

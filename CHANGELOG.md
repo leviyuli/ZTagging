@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Added **Use another account or workspace** to ChatGPT settings, including when a previous sign-in never completed. It starts a fresh connection without reusing the earlier workspace or removing saved accounts.
+- Added guidance for OpenAI's workspace-access error. Ordinary **Continue with ChatGPT** still reconnects the selected saved account.
+- Verified fresh authorization omits earlier account hints, preserves the installation's host identity, and leaves existing credentials and registrations intact when canceled.
+
 ## 0.4.0
 
 - Replaced the technical vocabulary-review screen with a researcher-facing Tags workspace: prepare the list, edit names and definitions, answer scientific questions, then apply the list.

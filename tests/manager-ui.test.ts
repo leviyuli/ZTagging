@@ -248,6 +248,33 @@ test('settings accepts a preferred count without a size blocker and protects pro
   h.choose('settings-provider',2);assert.equal(h.doc.getElementById('settings-model').value,'');assert.equal(h.doc.getElementById('settings-inputPricePerMillion').value,'0');assert.equal(h.doc.getElementById('settings-deepseek-key').type,'password');h.change('settings-deepseek-key','test-private-key');await h.click('Save DeepSeek key');assert.deepEqual(h.actions[1],{action:'save-api-key',payload:{key:'test-private-key',provider:'deepseek'}});assert.equal(h.doc.getElementById('settings-deepseek-key').value,'');assert.equal(JSON.stringify(h.data).includes('test-private-key'),false);
 });
 
+test('ChatGPT offers a fresh account or workspace sign-in without saved accounts',async t=>{
+  const data=snapshot();data.settings.provider='chatgpt';data.connection={apiKeyStored:false,chatgptSignedIn:false,accounts:[]};
+  const before=structuredClone(data);const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Use another account or workspace').disabled,false);
+  assert.match(h.app.textContent,/workspace error, cancel the current attempt/);assert.match(h.app.textContent,/personal Pro workspace/);
+  await h.click('Use another account or workspace');
+  assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:before.settings}},{action:'sign-in',payload:{newAccount:true}}]);assert.deepEqual(structuredClone(data),before);
+});
+
+test('Continue with ChatGPT keeps its existing sign-in behavior and saved account selector',async t=>{
+  const data=snapshot();data.settings.provider='chatgpt';data.connection={apiKeyStored:false,chatgptSignedIn:true,accounts:[{id:'personal',label:'Personal account'},{id:'other',label:'Other account'}],selectedAccountId:'personal'};
+  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+  await h.click('Continue with ChatGPT');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:structuredClone(data.settings)}},{action:'sign-in',payload:undefined}]);
+  const selector=h.doc.getElementById('settings-chatgpt-account');assert.ok(selector);h.choose('settings-chatgpt-account',1);await settle();
+  assert.deepEqual(h.actions.at(-1),{action:'select-account',payload:{id:'other'}});
+  await h.click('Use another account or workspace');assert.deepEqual(h.actions.at(-1),{action:'sign-in',payload:{newAccount:true}});
+  assert.deepEqual(data.connection.accounts,[{id:'personal',label:'Personal account'},{id:'other',label:'Other account'}]);
+});
+
+test('a pending ChatGPT sign-in keeps Cancel available while other actions are busy',async t=>{
+  const data=snapshot();data.settings.provider='chatgpt';let finishSnapshot:(value?:void)=>void=()=>{};
+  const h=await harness(data,{page:'settings',onSnapshot:call=>call===3?new Promise<void>(resolve=>{finishSnapshot=resolve;}):undefined});t.after(()=>h.ui.destroy());
+  await h.click('Use another account or workspace');assert.equal(h.button('Continue with ChatGPT').disabled,true);assert.equal(h.button('Cancel sign-in').disabled,false);
+  await h.click('Cancel sign-in');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:structuredClone(data.settings)}},{action:'sign-in',payload:{newAccount:true}},{action:'cancel-sign-in',payload:undefined}]);
+  finishSnapshot();await settle();assert.equal(h.button('Cancel sign-in'),undefined);
+});
+
 test('action notifications share one final refresh and later external changes remain visible',async t=>{
   const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
 });
