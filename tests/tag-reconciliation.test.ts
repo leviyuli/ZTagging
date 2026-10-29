@@ -92,6 +92,13 @@ test('per-paper inferred meanings remain grounded and a group meaning appears on
   assert.throws(()=>applyReconciliationAnalysis(plan,response(plan,[{...first,evidence:[]}])) ,/passage/);
 });
 
+test('the no_tag marker cannot become a scientific replacement or a DIY definition',()=>{
+  const value=input(['no_tag']),plan=createReconciliationPlan(value),source=plan.groups[0];
+  assert.throws(()=>compileReconciliationChanges(plan,[{groupId:source.id,action:'replace',targetIds:['we']}],value),/built-in marker/);
+  assert.throws(()=>prepareDIYDefinitions(plan,[{groupId:source.id,description:'A reserved exclusion marker.'}],value),/built-in marker/);
+  assert.throws(()=>applyDIYDefinitions(plan,diyResponse(plan,source)),/built-in marker/);
+});
+
 test('reviewed source replacements compose simultaneously regardless of selection order',()=>{
   const definitions=[definition('fc','FC',{fullName:'fuel cell',aliases:['legacy fuel cell']}),definition('aem','AEMFC',{fullName:'anion exchange membrane fuel cell',broaderIds:['fc']})],value=input(['legacy fuel cell'],definitions);value.nativeTags['paper-0'].push({tag:'FC',type:1},{tag:'Manual project',type:0});
   const plan=createReconciliationPlan(value),legacy={groupId:group(plan,'legacy fuel cell').id,action:'replace' as const},refinement={groupId:group(plan,'FC').id,action:'replace' as const,targetId:'aem'},forward=compileReconciliationChanges(plan,[legacy,refinement],value),reverse=compileReconciliationChanges(plan,[refinement,legacy],value);

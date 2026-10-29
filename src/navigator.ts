@@ -57,6 +57,7 @@ export function searchNavigatorConcepts(definitions: DisplayTag[], query: string
 }
 
 export function conceptLocations(tag: DisplayTag, definitions: DisplayTag[]): string[] {
+  if (tag.builtin === 'no_tag') return ['Excluded from tagging › no_tag'];
   const byID = new Map(definitions.filter(value => value.status === 'approved').map(value => [value.id, value]));
   const paths = (id: string, visited = new Set<string>()): string[] => {
     const current = byID.get(id);
@@ -72,7 +73,7 @@ export function conceptLocations(tag: DisplayTag, definitions: DisplayTag[]): st
 
 /** Older DIY parent fields mean placement within a context, never inherited core membership. */
 function detailContextIds(tag: DisplayTag, definitions: DisplayTag[]): string[] {
-  const core = definitions.filter(value => value.status === 'approved' && !value.custom);
+  const core = definitions.filter(value => value.status === 'approved' && !value.custom && !value.builtin);
   const known = new Set(core.map(value => value.id));
   return [...new Set([...(tag.relatedIds || []), ...tag.broaderIds,
     ...core.filter(value => (value.relatedIds || []).includes(tag.id)).map(value => value.id)])].filter(id => known.has(id));
@@ -187,8 +188,8 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   function renderConcept(tag: DisplayTag, parent: HTMLElement, depth = 0, contextId?: string, ancestors = new Set<string>(), allowExpansion = true) {
     if (ancestors.has(tag.id)) return;
     const all = definitions();
-    const children = tag.custom || !allowExpansion ? [] : all.filter(child => !child.custom && child.broaderIds.includes(tag.id)).sort((a, b) => a.name.localeCompare(b.name));
-    const details = tag.custom || !allowExpansion ? [] : all.filter(child => child.custom && detailContextIds(child, all).includes(tag.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const children = tag.custom || tag.builtin || !allowExpansion ? [] : all.filter(child => !child.custom && !child.builtin && child.broaderIds.includes(tag.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const details = tag.custom || tag.builtin || !allowExpansion ? [] : all.filter(child => child.custom && !child.builtin && detailContextIds(child, all).includes(tag.id)).sort((a, b) => a.name.localeCompare(b.name));
     const branches = children.length + details.length;
     const row = el('div', 'smart-tags-concept-row');
     row.style.setProperty('--smart-tags-depth', String(depth));
@@ -272,26 +273,31 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     } else {
       for (const facet of Object.keys(CATEGORY_LABELS) as (keyof typeof CATEGORY_LABELS)[]) {
         const all = definitions();
-        const roots = all.filter(tag => !tag.custom && tag.facet === facet && !tag.broaderIds.some(id => all.some(value => value.id === id && !value.custom))).sort((a, b) => a.name.localeCompare(b.name));
+        const roots = all.filter(tag => !tag.custom && !tag.builtin && tag.facet === facet && !tag.broaderIds.some(id => all.some(value => value.id === id && !value.custom && !value.builtin))).sort((a, b) => a.name.localeCompare(b.name));
         if (!roots.length) continue;
         tree.append(el('h3', 'smart-tags-category', CATEGORY_LABELS[facet]));
         for (const tag of roots) renderConcept(tag, tree);
       }
-      const details = definitions().filter(tag => tag.custom).sort((a, b) => a.name.localeCompare(b.name));
+      const details = definitions().filter(tag => tag.custom && !tag.builtin).sort((a, b) => a.name.localeCompare(b.name));
       if (details.length) {
         const heading = button(`${detailExpanded ? '⌄' : '›'} Shared details`, () => { detailExpanded = !detailExpanded; render(); }, 'smart-tags-category smart-tags-detail-heading');
         heading.setAttribute('aria-expanded', String(detailExpanded)); tree.append(heading);
         if (detailExpanded) for (const tag of details) renderConcept(tag, tree);
       }
-      if (!definitions().length) tree.append(el('p', 'smart-tags-empty', 'Prepare and apply a tag list in Smart Tags to browse your papers here.'));
+      if (!definitions().some(tag => !tag.builtin)) tree.append(el('p', 'smart-tags-empty', 'Prepare and apply a tag list in Smart Tags to browse your papers here.'));
+      const noTag = definitions().find(tag => tag.builtin === 'no_tag');
+      if (noTag) {
+        tree.append(el('h3', 'smart-tags-category', 'Excluded from tagging'));
+        renderConcept(noTag, tree, 0, undefined, new Set(), false);
+      }
     }
     content.append(tree);
     const actions = el('div', 'smart-tags-actions');
-    const context = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.custom)).find(Boolean);
+    const context = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.custom && !tag.builtin)).find(Boolean);
     actions.append(button('＋ Create detail', () => {
       if (options.onCreateDetail) options.onCreateDetail(context?.id); else options.openManager?.();
     }));
-    const selectedDetail = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && tag.custom)).find(Boolean);
+    const selectedDetail = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && tag.custom && !tag.builtin)).find(Boolean);
     if (selectedDetail) {
       actions.append(el('div', 'smart-tags-detail-title', selectedDetail.name));
       actions.append(button('Assign to selected papers', async () => {

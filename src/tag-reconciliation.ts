@@ -4,6 +4,7 @@ import {descendantIds} from './concept-filter.ts';
 import {terminologyFor,terminologyKey} from './naming.ts';
 import type {NativeTag,TagPatch} from './platform.ts';
 import type {PaperFacts} from './taxonomy.ts';
+import {scientificDefinitions} from './tag-policy.ts';
 
 export interface ReconciliationDecision {locked?:boolean;rejected?:boolean}
 export interface ReconciliationInput {papers:PaperRecord[];nativeTags:Record<string,NativeTag[]>;definitions:TagDefinition[];facts:Record<string,PaperFacts>;decisions:Record<string,ReconciliationDecision>;vocabularyVersion:number;applied:boolean}
@@ -56,7 +57,7 @@ function updateGroup(group:ReconciliationGroup):void {
 /** The snapshot retains exact native labels; comparison keys never become write targets. */
 export function createReconciliationPlan(input:ReconciliationInput,previous?:ReconciliationPlan):ReconciliationPlan {
   const signature=inputFingerprint(input);if(previous?.fingerprint===signature)return clone(previous);
-  const snapshot=clone(input),approved=input.applied?input.definitions.filter(tag=>tag.status==='approved'):[],papers=new Map(input.papers.map(paper=>[paper.id,paper])),inventory=new Map<string,string[]>();
+  const snapshot=clone(input),approved=input.applied?scientificDefinitions(input.definitions).filter(tag=>tag.status==='approved'):[],papers=new Map(input.papers.map(paper=>[paper.id,paper])),inventory=new Map<string,string[]>();
   for(const [paperId,assignments] of Object.entries(input.nativeTags))if(papers.has(paperId))for(const label of new Set(assignments.map(value=>value.tag))){const ids=inventory.get(label)??[];ids.push(paperId);inventory.set(label,ids);}
   const groups:ReconciliationGroup[]=[];
   for(const [source,paperIds] of [...inventory].sort(([a],[b])=>a.localeCompare(b))){
@@ -131,6 +132,7 @@ export function compileReconciliationChanges(plan:ReconciliationPlan,selections:
   for(const selection of selections){
     const group=plan.groups.find(group=>group.id===selection.groupId);if(!group||seen.has(group.id))throw new Error('Choose each current native-tag group once.');seen.add(group.id);
     if(!['replace','remove','keep'].includes(selection.action))throw new Error('Choose keep, replace, or remove.');
+    if(group.source==='no_tag'&&selection.action==='replace')throw new Error('no_tag is a built-in marker. Use Include again instead of replacing it with a scientific tag.');
     const paperIds=selection.paperIds??group.paperIds;if(paperIds.some(id=>!group.paperIds.includes(id)))throw new Error('A selected paper is outside this native-tag group.');
     if(selection.action==='keep'){for(const paperId of new Set(paperIds)){const key=nativeTagDecisionKey(paperId,group.source),before=currentInput.decisions[key]??null;if(before?.locked)continue;result.beforeDecisions[key]=clone(before);result.afterDecisions[key]={...before,locked:true};}continue;}
     if(selection.paperTargets?.some(value=>!paperIds.includes(value.paperId)))throw new Error('A paper-level target is outside the reviewed paper selection.');
@@ -169,6 +171,7 @@ export function buildDIYDefinitionPrompt(plan:ReconciliationPlan,groupIds:readon
 export function applyDIYDefinitions(plan:ReconciliationPlan,raw:unknown):ReconciliationPlan {
   const next=clone(plan),data=responseFor(plan,raw);if(!Array.isArray(data.definitions))throw new Error('DIY analysis must return definitions.');const seen=new Set<string>();
   for(const value of data.definitions){const item=object(value),group=next.groups.find(group=>group.id===item?.groupId);if(!item||!group||seen.has(group.id))throw new Error('A DIY proposal refers to an unknown or duplicate native tag.');seen.add(group.id);
+    if(group.source==='no_tag')throw new Error('no_tag is a built-in marker and cannot become a DIY topic.');
     const question=text(item.question);if(question){group.diy.status='question';group.diy.question=question;continue;}
     const description=text(item.description);if(!description||!FACETS.includes(item.facet as Facet)||!Array.isArray(item.support))throw new Error('A DIY definition needs a scientific meaning, category, and validated support.');
     const sourceIdentity=identity(group.source),opposite=sourceIdentity==='Co'?'carbon monoxide':sourceIdentity==='CO'?'cobalt':undefined,own=sourceIdentity==='Co'?'cobalt':'carbon monoxide';
@@ -182,6 +185,7 @@ export function prepareDIYDefinitions(plan:ReconciliationPlan,choices:readonly D
   assertCurrent(plan,currentInput);const definitions:TagDefinition[]=[],questions:DIYDefinitionQuestion[]=[],seen=new Set<string>();
   for(const choice of choices){const group=plan.groups.find(value=>value.id===choice.groupId);if(!group||seen.has(group.id))throw new Error('Choose each current native tag once.');seen.add(group.id);
     const name=choice.name??group.source,description=choice.description??group.diy.description,facet=choice.facet??group.diy.facet;
+    if(name==='no_tag'||group.source==='no_tag')throw new Error('no_tag is a built-in marker and cannot become a DIY topic.');
     if(!name.trim()||name.length>80){questions.push({groupId:group.id,source:group.source,message:'Choose a DIY name of 1–80 characters; the existing native label will remain an alias.'});continue;}
     const shortenedReady=group.source.length>80&&!!choice.name&&!!group.diy.evidence.length;
     if(!description.trim()||description.length>2000||!FACETS.includes(facet)||group.diy.status!=='ready'&&!shortenedReady&&!choice.description){questions.push({groupId:group.id,source:group.source,message:group.diy.question??'Confirm the scientific meaning before creating this DIY tag.'});continue;}

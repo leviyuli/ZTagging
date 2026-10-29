@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.5.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.0.xpi).
+2. Select [`smart-tags-0.5.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.1.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Choose **Pilot · 50 papers** on Overview and click **Prepare tags**. Smart Tags reads the papers, brings related concepts together, and checks names, categories, and scientific meanings using your selected model.
@@ -19,7 +19,7 @@ The extension checks this repository's [update manifest](updates.json) for new v
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.5.0** adds **Existing tags** for reviewing names already assigned in Zotero, paper-information recovery in **Activity**, and bounded consolidation for larger libraries. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+Version **0.5.1** recovers routine relationship errors in saved consolidation replies and adds **Dismiss**, reviewed item exclusion, and the **no_tag** marker. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
 
 The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 
@@ -32,6 +32,16 @@ Paper analysis is cached independently of the tag list. Factual summaries, conce
 An unchanged rebuild reuses completed facts and saved consolidation output. You can prepare a new list over a paused, unapproved rebuild; it replaces the pending review while retaining cached paper analysis. Pause or close Zotero during a run, then resume from saved progress. Changed metadata or newly available PDF evidence refreshes affected papers.
 
 For larger libraries, consolidation processes bounded portions, reconciles their candidates, and produces one global proposal. Saved parts retain their original evidence IDs and resume without repeating completed paper extraction. Progress distinguishes **Reading papers**, **Organizing tags**, **Checking tag meanings**, and **Ready for review**. Reading every paper finishes the extraction phase; the global tag list still needs to be organized and checked. Consolidation requests are separate from the three additional preparation checks, and each uses the selected connection and budget controls.
+
+If a saved part stopped because of a routine relationship error, **Resume** first tries to recover its existing reply locally. Cross-category associations are kept as related links, and links to tags in other batches are retained for the global pass. Remaining invalid outputs can receive one bounded automatic correction per part generation; scientifically contradictory mappings remain blocked. An explicit Resume after an exhausted correction requests a new reply for that part while retaining completed parts and budget history.
+
+## Dismiss or exclude an item
+
+In **Activity**, **Dismiss** hides the current information notice. It does not repair the item or remove it from tagging. An unchanged local recheck or restart keeps the notice dismissed; changed information can make it appear again.
+
+**Exclude from tagging** previews adding the native **no_tag** marker. Applying the preview preserves the item's other tags, collections, attachments, and metadata, and skips that item in future builds and assignments. Use **Excluded from tagging → Include again** to preview removing only no_tag, or undo the change in History. **Exclude selected Zotero items…** also works for items outside the current build. These manual choices need no AI connection. A one-build **Skip** remains a separate option.
+
+For whole-list assignment, the model may suggest **no_tag** when readable evidence establishes that none of the approved scientific tags applies. This suggestion requires separate batch Apply and does not enable automation. Missing abstracts, unreadable PDFs, empty replies, and connection failures are not evidence of an outside-vocabulary item. A DIY-only preview cannot make this whole-list judgment. The built-in marker is searchable in the navigator, does not count toward the preferred tag target, and cannot be renamed or turned into a DIY topic.
 
 Prefer familiar abbreviations such as **FC**, **PEMFC**, and **AEMFC**. Full names, aliases, and definitions remain searchable. A subtype relation means “is a”; contextual links mean “related to.” A catalyst layer can be related to FC without becoming a type of FC. Scientific checks keep these relationships separate, reject contradictory meanings, and preserve chemical distinctions such as `Co` and `CO`.
 

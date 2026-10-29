@@ -1,4 +1,14 @@
-# Upgrading to Smart Tags 0.5.0
+# Upgrading to Smart Tags 0.5.1
+
+## Version 0.5.1
+
+This patch keeps state schema 5. Existing schema-5 profiles retain their current generation, cached extraction, evidence wording and IDs, settings, credentials, manual choices, and history. New dismissal and exclusion-preview fields are optional; no extraction or provider request runs during loading. Profiles upgrading from an earlier schema still use the exact-byte pre-v5 backup process below.
+
+Saved failed consolidation replies are rechecked locally when you Resume. Routine relationship recovery changes the proposed organization, not the original paper evidence or native tags. Correction attempts and replies are retained with the current part; explicit retry generations preserve earlier attempt history and spent budget. Incomplete provider replies remain diagnostic only.
+
+The built-in no_tag definition is supplied locally. Native no_tag assignments mean an item is excluded until you choose Include again or remove the marker. Existing reserved-name definitions and their historical IDs are preserved, and their remembered choices remain protected. Exclude/Include changes use the normal native-tag journal with stale checks and undo. Dismissals acknowledge a condition without marking its underlying information gap resolved.
+
+## Upgrading an older state to schema 5
 
 Install the new XPI over the existing extension and open **Tools → Smart Tags…**. Startup upgrades local application state to **schema 5**. Consolidation continues to use ID-based protocol 2; terminology normalization and factual extraction versions are unchanged by this migration. Migration performs no model requests and changes no native Zotero tags, metadata, collections, columns, or credentials.
 

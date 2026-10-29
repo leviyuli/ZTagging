@@ -18,12 +18,12 @@ async function sha256(bytes){return [...new Uint8Array(await crypto.subtle.diges
 
 async function verifyNativePackageUpgrade(check,config){
   const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
-  const id='smart-tags@zotero-local.org',expected='0.5.0',oldPath=PathUtils.join(config.root,'dist','smart-tags-0.4.1.xpi'),newPath=PathUtils.join(config.root,'dist','smart-tags-0.5.0.xpi');
+  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.5.0',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
   const oldManifest=packageManifest(oldPath),newManifest=packageManifest(newPath),oldSettings=oldManifest.applications.zotero,newSettings=newManifest.applications.zotero;
-  check('v050UpdatePackagesKeepStableIdentity',oldManifest.version==='0.4.1'&&newManifest.version===expected&&oldSettings.id===id&&newSettings.id===id);
+  check('v050UpdatePackagesKeepStableIdentity',oldManifest.version===oldVersion&&newManifest.version===expected&&oldSettings.id===id&&newSettings.id===id);
   check('v050UpdateURLRemainsSecureAndStable',newSettings.update_url.startsWith('https://')&&newSettings.update_url===oldSettings.update_url&&newSettings.strict_min_version==='10.0.6'&&newSettings.strict_max_version==='10.0.*');
   const feed=JSON.parse(await IOUtils.readUTF8(PathUtils.join(config.root,'updates.json'))),entry=feed.addons[id].updates.find(update=>update.version===expected),hash=await sha256(await IOUtils.read(newPath));
-  check('v050LocalUpdateManifestMatchesPackage',entry?.update_link==='https://raw.githubusercontent.com/leviyuli/ZTagging/main/dist/smart-tags-0.5.0.xpi'&&entry.update_hash==='sha256:'+hash);
+  check('v050LocalUpdateManifestMatchesPackage',entry?.update_link===`https://raw.githubusercontent.com/leviyuli/ZTagging/main/dist/smart-tags-${expected}.xpi`&&entry.update_hash==='sha256:'+hash);
   const main=Zotero.getMainWindow(),columns=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal]));
   const beforeColumns=columns(),beforeTags=JSON.stringify((await Zotero.Items.getAll(Zotero.Libraries.userLibraryID,true,false)).filter(item=>item.isRegularItem()&&!item.deleted).map(item=>[item.id,item.getTags()]));
   let addon=await AddonManager.getAddonByID(id),uninstalls=0;
@@ -42,8 +42,8 @@ async function verifyNativePackageUpgrade(check,config){
   try{
     await addon.disable();await until(()=>!Zotero.SmartTags,'test addon disabled');
     const statePath=PathUtils.join(config.profile,'smart-tags','state.json'),beforeState=await IOUtils.readUTF8(statePath);
-    // Keep schema4 code disabled while testing the native package upgrade over schema5 state.
-    addon=await install(oldPath,'0.4.1');
+    // Keep the old package disabled so it cannot rewrite state introduced by the new version.
+    addon=await install(oldPath,oldVersion);
     check('v050OldPackageStaysDisabled',addon.userDisabled&&!addon.isActive&&!Zotero.SmartTags);
     check('v050OldPackageCannotRewriteNewerState',await IOUtils.readUTF8(statePath)===beforeState);
     addon=await install(newPath,expected);check('v050NativePackageUpgradeWithoutUninstall',addon.userDisabled&&uninstalls===0);
@@ -52,7 +52,7 @@ async function verifyNativePackageUpgrade(check,config){
     check('v050NativeUpgradePreservesPluginState',JSON.stringify(current.state)===JSON.stringify(JSON.parse(beforeState)));
     const afterTags=JSON.stringify((await Zotero.Items.getAll(Zotero.Libraries.userLibraryID,true,false)).filter(item=>item.isRegularItem()&&!item.deleted).map(item=>[item.id,item.getTags()]));
     check('v050NativeUpgradePreservesLibraryAndColumns',afterTags===beforeTags&&columns()===beforeColumns);
-    return {from:'0.4.1',to:expected,method:'Native AddonManager.getInstallForFile',oldPackageDisabled:true,uninstallEvents:uninstalls,packageHash:hash,feedDiscovery:'Not tested before publication; local HTTPS feed metadata and package hash verified.'};
+    return {from:oldVersion,to:expected,method:'Native AddonManager.getInstallForFile',oldPackageDisabled:true,uninstallEvents:uninstalls,packageHash:hash,feedDiscovery:'Not tested before publication; local HTTPS feed metadata and package hash verified.'};
   }catch(error){
     try{addon=await AddonManager.getAddonByID(id);if(addon?.version!==expected)addon=await install(newPath,expected);if(addon.userDisabled)await addon.enable();await until(()=>Zotero.SmartTags?.version===expected,'restored production addon');}
     catch(recovery){throw new Error(String(error?.message??error)+' Production package restoration also failed: '+String(recovery?.message??recovery));}

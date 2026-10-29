@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- Fixed a large-library consolidation pause caused by cross-category subtype edges and relationship names outside the current batch. Routine structural mistakes are repaired locally; unresolved batch links are carried into the global pass instead of rejecting the whole response.
+- Reuse retained failed replies before requesting another response. Genuinely invalid parts receive one bounded correction through the selected provider and budget. Completed parts, original outputs, evidence IDs, and spent budget survive pauses and restarts.
+- Added per-item and batch **Dismiss**, **Exclude from tagging**, and **Include again** actions. Exclusion previews the exact native changes, preserves other tags and item data, and supports undo. Dismissal hides an unchanged condition without claiming it was repaired.
+- Added the protected **no_tag** marker and a standalone navigator filter. Manually excluded items are skipped by future tag building and assignment. Adequately evidenced outside-vocabulary results may suggest no_tag for separate batch Apply; missing information and failed requests never become no_tag automatically.
+- Preserved historical reserved-name IDs and their manual decisions. The built-in marker is excluded from scientific vocabulary targets, taxonomy generation, and the pilot's accepted-scientific-tag requirement.
+
 ## 0.5.0
 
 - Added **Existing tags** to inventory native tags, compare them with the applied vocabulary, review meanings per paper, and preview exact replacements, removals, or unchanged assignments before applying them.

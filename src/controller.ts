@@ -22,8 +22,9 @@ import {classifyPaperAttention,sameMetadata,reverseMetadataPatch} from './paper-
 import type {PaperInputAssessment,MetadataPreview,MetadataPatch} from './paper-recovery.ts';
 import {createReconciliationPlan,buildReconciliationPrompt,applyReconciliationAnalysis,compileReconciliationChanges,buildDIYDefinitionPrompt,applyDIYDefinitions,prepareDIYDefinitions} from './tag-reconciliation.ts';
 import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYDefinitionChoice,ReviewedReconciliationChanges} from './tag-reconciliation.ts';
-import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork} from './library-consolidation.ts';
+import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork,recoverConsolidationWork,noteConsolidationFailure,applyConsolidationCorrection,retryConsolidationTask} from './library-consolidation.ts';
 import type {ConsolidationWork} from './library-consolidation.ts';
+import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
 
 export type StoredSuggestion = Suggestion & { operation?:'add'|'remove'; applied?:boolean;definitionFingerprint?:string };
 type ProviderFailure = Partial<Pick<ProviderError,'category'|'rawText'|'completion'>>;
@@ -42,7 +43,7 @@ type Run = {
   preparationOnly?:boolean;
   skippedIds?:string[];
   preparation?:PreparationCheckpoint;
-  consolidation?:{protocolVersion:2;generationId:string;inputFingerprint:string;snapshot:RegistrySnapshot;candidateIds:Record<string,string>;value?:unknown;correctionValue?:unknown;correctionAttempts:0|1;phase:'generating'|'validating'|'correcting'|'needs-review'|'ready';failed?:boolean;diagnostics?:string[];responseIssue?:string;correctionIssue?:string;work?:ConsolidationWork;pendingResponse?:{requestId:string;raw:unknown}};
+  consolidation?:{protocolVersion:2;generationId:string;inputFingerprint:string;snapshot:RegistrySnapshot;candidateIds:Record<string,string>;value?:unknown;correctionValue?:unknown;correctionAttempts:0|1;phase:'generating'|'validating'|'correcting'|'needs-review'|'ready';failed?:boolean;diagnostics?:string[];responseIssue?:string;correctionIssue?:string;work?:ConsolidationWork;pendingResponse?:{requestId:string;raw:unknown;kind?:'initial'|'correction'}};
 };
 type History = {
   id:string;date:string;label:string;patches:TagPatch[];beforeOwnership:Ownership;afterOwnership:Ownership;
@@ -59,6 +60,7 @@ export interface MaintenanceTask {
   response?:{cursor:number;raw:unknown;applied:boolean};error?:string;
 }
 type ReconciliationPreview=ReviewedReconciliationChanges&{id:string;planId:string;selections:ReconciliationSelection[]};
+type PaperExclusionPreview={id:string;exclude:boolean;paperIds:string[];patches:TagPatch[]};
 type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string;validatedCount?:number};
 type TaxonomyReview=Pick<TaxonomyProposal,'mappingConfirmations'|'validatedEvidenceLinks'|'evidenceMeaningFingerprints'|'evidenceScientificIdentities'|'paperFingerprints'|'paperInputFingerprints'|'machineDecisions'|'preparationPolicyVersion'>;
 export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState};
@@ -88,6 +90,8 @@ export interface AppState {
   reconciliation?:ReconciliationPlan;
   reconciliationPreview?:ReconciliationPreview;
   maintenanceTasks?:MaintenanceTask[];
+  paperAttentionDismissals?:Record<string,string>;
+  paperExclusionPreview?:PaperExclusionPreview;
 }
 export interface ControllerEnvironment {
   host:LibraryHost; ai:Pick<ProviderClient,'hasApiKey'|'getSession'|'completeJson'|'testConnection'|'listModels'|'setApiKey'|'removeApiKey'|'signIn'|'cancelSignIn'|'signOut'|'selectAccount'>;
@@ -222,10 +226,12 @@ function validIdentifiedState(value:unknown,version:3|4|5):boolean {
     if(v.reconciliation!==undefined&&(!storedObject(v.reconciliation)||typeof v.reconciliation.id!=='string'||typeof v.reconciliation.fingerprint!=='string'||!Number.isInteger(v.reconciliation.vocabularyVersion)||typeof v.reconciliation.applied!=='boolean'||!Array.isArray(v.reconciliation.groups)||!storedObject(v.reconciliation.snapshot)||!stringList(v.reconciliation.diagnostics)))return false;
     if(v.reconciliationPreview!==undefined&&(!storedObject(v.reconciliationPreview)||typeof v.reconciliationPreview.id!=='string'||typeof v.reconciliationPreview.planId!=='string'||!Array.isArray(v.reconciliationPreview.selections)||!Array.isArray(v.reconciliationPreview.patches)||!Array.isArray(v.reconciliationPreview.aliases)||!storedObject(v.reconciliationPreview.beforeDecisions)||!storedObject(v.reconciliationPreview.afterDecisions)))return false;
     if(v.maintenanceTasks!==undefined&&(!Array.isArray(v.maintenanceTasks)||!v.maintenanceTasks.every(validMaintenanceTask)))return false;
+    if(v.paperAttentionDismissals!==undefined&&(!storedObject(v.paperAttentionDismissals)||!Object.values(v.paperAttentionDismissals).every(value=>typeof value==='string')))return false;
+    if(v.paperExclusionPreview!==undefined){const preview=v.paperExclusionPreview;if(!storedObject(preview)||typeof preview.id!=='string'||typeof preview.exclude!=='boolean'||!stringList(preview.paperIds)||!Array.isArray(preview.patches)||!preview.patches.every(patch=>storedObject(patch)&&typeof patch.paperId==='string'&&Number.isSafeInteger(patch.itemID)&&[patch.before,patch.after].every(tags=>Array.isArray(tags)&&tags.every(tag=>storedObject(tag)&&typeof tag.tag==='string'&&(tag.type===0||tag.type===1)))))return false;}
     for(const run of [v.run,...(v.maintenanceTasks??[]).map(task=>task.run)]){
       const checkpoint=run?.consolidation;if(!checkpoint)continue;
       if(checkpoint.work!==undefined&&!validConsolidationWork(checkpoint.work))return false;
-      if(checkpoint.pendingResponse!==undefined&&(!storedObject(checkpoint.pendingResponse)||typeof checkpoint.pendingResponse.requestId!=='string'||!Object.hasOwn(checkpoint.pendingResponse,'raw')))return false;
+      if(checkpoint.pendingResponse!==undefined&&(!storedObject(checkpoint.pendingResponse)||typeof checkpoint.pendingResponse.requestId!=='string'||!Object.hasOwn(checkpoint.pendingResponse,'raw')||checkpoint.pendingResponse.kind!==undefined&&!['initial','correction'].includes(checkpoint.pendingResponse.kind)))return false;
     }
   }
   return true;
@@ -380,7 +386,7 @@ export class AppController implements ManagerAPI {
   }
   private context(paperId:string) {
     const rejectedTagIds:string[]=[],lockedTagIds:string[]=[];
-    for(const tag of this.state.tags){const d=this.state.decisions[pair(paperId,tag.id)];if(d?.rejected)rejectedTagIds.push(tag.id);if(d?.locked)lockedTagIds.push(tag.id);}
+    for(const tag of [...this.allTags(),...this.state.tags.filter(isNoTagDefinition)]){const d=this.state.decisions[pair(paperId,tag.id)],id=isNoTagDefinition(tag)?NO_TAG_ID:tag.id;if(d?.rejected)rejectedTagIds.push(id);if(d?.locked)lockedTagIds.push(id);}
     return {vocabularyVersion:this.state.vocabularyVersion,rejectedTagIds,lockedTagIds};
   }
   async initialize() {
@@ -419,7 +425,7 @@ export class AppController implements ManagerAPI {
     return result;
   }
   private processingMessage(message:string):string {
-    if(/AI could not combine|tag-building part could not|selected papers.*changed|work was paused/i.test(message))return message;
+    if(/AI could not combine|tag-building part.*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
     if(/maximum context|context.length|too many tokens|request.*too large/i.test(message))return 'The tag-building request was too large. Resume to organize the saved analysis in smaller parts.';
     if(/comparison.*changed|preview.*(?:stale|out of date)|refresh.*comparison/i.test(message))return 'Paper information or tags changed. Refresh the comparison before applying it.';
     if(/tag-building part|consolidation response|one part/i.test(message))return 'One part of tag building could not finish. Resume to retry that part; completed paper analysis is saved.';
@@ -582,6 +588,59 @@ export class AppController implements ManagerAPI {
   private inputFallback(paper:PaperRecord):PaperInputAssessment {
     return {paperId:paper.id,itemID:paper.itemID,checkedAt:new Date().toISOString(),metadata:{title:!!paper.title,abstract:!!paper.abstract,keywords:!!paper.keywords.length},pdf:{status:paper.pdfText?'readable':'unknown',attachmentCount:0,localCount:0,characters:paper.pdfText?.length??0,rechecked:false}};
   }
+  private allTags() {
+    return [...scientificDefinitions(this.state.tags),getNoTagDefinition()];
+  }
+  private excluded(id:string) {
+    return isExcludedByNativeTag((this.state.nativeTags[id]??[]).map(tag=>tag.tag));
+  }
+  private attentionCondition(id:string) {
+    const paper=this.state.papers[id];if(!paper)return '';
+    const assessment=this.state.paperInputs?.[id]??this.inputFallback(paper),facts=this.state.facts[id],analysis=this.state.analyses[id];
+    const notice=this.state.warnings.filter(warning=>warning.code==='evidence-gap'&&warning.paperIds.includes(id)).at(-1);
+    const errors=[...new Set([...(this.state.run?.jobs??[]),...(this.state.maintenanceTasks??[]).filter(task=>task.status==='paused').flatMap(task=>task.run.jobs)].filter(job=>job.paperId===id&&job.error).map(job=>job.error))];
+    const {rechecked,...pdf}=assessment.pdf;
+    return fingerprint({input:paperFingerprint(paper),metadata:assessment.metadata,pdf,noticeId:notice?.id,facts:facts&&{input:facts.inputFingerprint,count:facts.concepts.length,needsPDF:facts.needsPDF},analysis:analysis&&{input:analysis.metadataFingerprint,count:analysis.validatedCount},errors});
+  }
+  private async dismissPaperAttention(ids:string[]) {
+    const available=new Set(this.paperAttentionDisplay().papers.filter(paper=>paper.canDismiss).map(paper=>paper.id));
+    const selected=new Set(ids.filter(id=>available.has(id)));
+    for(const id of selected)(this.state.paperAttentionDismissals??={})[id]=this.attentionCondition(id);
+    this.state.warnings=dismissWarnings(this.state.warnings,this.state.warnings.filter(warning=>warning.paperIds.some(id=>selected.has(id))&&warning.code==='evidence-gap').map(warning=>warning.id));
+    await this.save();
+  }
+  private async previewPaperExclusion(input:{ids?:string[];itemIDs?:number[];exclude?:boolean}) {
+    let papers:PaperRecord[];
+    if(input.ids){const ids=[...new Set(input.ids)];papers=ids.map(id=>this.state.papers[id]).filter(Boolean);if(papers.length!==ids.length)throw new Error('Some items are unavailable. Refresh the paper list.');}
+    else if(input.itemIDs)papers=(await Promise.all(input.itemIDs.map(id=>this.env.host.read(id)))).filter((paper):paper is PaperRecord=>!!paper);
+    else papers=await this.env.host.list('selected');
+    if(!papers.length)throw new Error('Select at least one personal-library item in Zotero first.');
+    const exclude=input.exclude!==false,patches:TagPatch[]=[];
+    for(const paper of new Map(papers.map(paper=>[paper.id,paper])).values()){
+      this.remember(paper);const before=await this.env.host.readTags(paper.itemID);this.state.nativeTags[paper.id]=copy(before);
+      const after=exclude?(isExcludedByNativeTag(before.map(tag=>tag.tag))?copy(before):[...copy(before),{tag:'no_tag',type:0}]):before.filter(tag=>tag.tag!=='no_tag');
+      if(!sameTags(before,after))patches.push({paperId:paper.id,itemID:paper.itemID,before,after});
+    }
+    this.state.paperExclusionPreview={id:uid('paper-exclusion'),exclude,paperIds:[...new Set(papers.map(paper=>paper.id))],patches};await this.save();
+  }
+  private async applyPaperExclusion(id:string) {
+    const preview=this.state.paperExclusionPreview;if(!preview||preview.id!==id)throw new Error('Review the items again before applying this choice.');
+    const beforeOwnership:Ownership={},afterOwnership:Ownership={},beforeDecisions:Record<string,Decision|null>={},afterDecisions:Record<string,Decision|null>={};
+    for(const patch of preview.patches){
+      beforeOwnership[patch.paperId]=copy(this.state.ownership[patch.paperId]??{});afterOwnership[patch.paperId]=copy(beforeOwnership[patch.paperId]);
+      if(!preview.exclude)delete afterOwnership[patch.paperId][NO_TAG_ID];
+      const key=pair(patch.paperId,NO_TAG_ID);beforeDecisions[key]=copy(this.state.decisions[key]??null);afterDecisions[key]=preview.exclude?{...this.state.decisions[key],locked:true}:{...this.state.decisions[key],locked:false};
+    }
+    const addDefinition=preview.exclude&&!this.state.tags.some(tag=>tag.id===NO_TAG_ID);
+    if(preview.patches.length)await this.commit({id:uid('paper-choice'),date:new Date().toISOString(),label:preview.exclude?'Exclude items from tagging (no_tag)':'Include items in tagging again',patches:copy(preview.patches),beforeOwnership,afterOwnership,beforeDecisions,afterDecisions,suggestionIds:[],status:'prepared',...(addDefinition?{beforeDefinitions:{[NO_TAG_ID]:null},afterDefinitions:{[NO_TAG_ID]:getNoTagDefinition()}}:{})});
+    if(preview.exclude)this.state.suggestions=this.state.suggestions.filter(suggestion=>suggestion.applied||!preview.paperIds.includes(suggestion.paperId));
+    const run=this.state.run;
+    if(run&&run.jobs.some(job=>preview.paperIds.includes(job.paperId))){
+      run.vocabFinished=false;run.preparationOnly=false;
+      if(run.status==='running'){run.status='paused';run.message='Your tagging selection changed. Resume to use the updated selection.';this.abort?.abort();}
+    }
+    delete this.state.paperExclusionPreview;await this.save();
+  }
   private async inspectPaperInputs(id:string,recheck=false) {
     const paper=this.state.papers[id];if(!paper)throw new Error('This paper is no longer available.');
     const assessment=this.env.host.inspectInputs?await this.env.host.inspectInputs(paper.itemID,recheck):this.inputFallback(paper);
@@ -589,7 +648,7 @@ export class AppController implements ManagerAPI {
   }
   private paperAttentionDisplay():NonNullable<ManagerSnapshot['paperAttention']> {
     const tasks=(this.state.maintenanceTasks??[]).filter(task=>task.kind==='retry'&&task.status!=='completed');
-    const ids=new Set([...Object.keys(this.state.facts),...Object.keys(this.state.analyses),...Object.keys(this.state.paperInputs??{}),...this.state.warnings.filter(warning=>warning.code==='evidence-gap').flatMap(warning=>warning.paperIds),...(this.state.run?.jobs.filter(job=>job.error).map(job=>job.paperId)??[]),...tasks.flatMap(task=>task.paperIds)]);
+    const ids=new Set([...Object.keys(this.state.facts),...Object.keys(this.state.analyses),...Object.keys(this.state.paperInputs??{}),...this.state.warnings.filter(warning=>warning.code==='evidence-gap').flatMap(warning=>warning.paperIds),...(this.state.run?.jobs.filter(job=>job.error).map(job=>job.paperId)??[]),...tasks.flatMap(task=>task.paperIds),...Object.keys(this.state.nativeTags).filter(id=>this.excluded(id))]);
     const papers:NonNullable<ManagerSnapshot['paperAttention']>['papers']=[];
     for(const id of ids){
       const paper=this.state.papers[id];if(!paper)continue;
@@ -600,10 +659,12 @@ export class AppController implements ManagerAPI {
       let supported=facts?.concepts.length??0,needsPDF=facts?.needsPDF??false;
       if(!facts&&analysis){try{const raw=normalizeAnalysis(analysis.raw);supported=analysis.validatedCount??validateSuggestions(paper,this.state.tags,analysis.raw,this.context(id)).suggestions.length;needsPDF=raw.needsPDF;}catch{/* The failed job supplies the actionable processing status. */}}
       const attention=classifyPaperAttention(assessment,{validatedConcepts:supported,needsPDF});
-      const skipped=!!this.state.run?.skippedIds?.includes(id),queued=tasks.some(task=>task.paperIds.includes(id));
-      const acknowledged=notice?.status==='dismissed'&&!supported&&facts?.inputFingerprint===paperFingerprint(paper);
-      if(acknowledged&&!queued&&!skipped)continue;
-      papers.push({id,title:paper.title,status:skipped?'skipped':job?.error?'failed':attention.status==='usable'?'usable':'needsInformation',message:skipped?'Skipped for this build. Existing tags are unchanged.':job?.error?this.processingMessage(job.error):attention.message,phase,queued,canLookupMetadata:attention.canLookupMetadata,canRecheck:attention.canRecheck,canRetry:attention.canRetry,canSkip:!!originalJob&&!skipped});
+      const excluded=this.excluded(id),skipped=!!this.state.run?.skippedIds?.includes(id),queued=tasks.some(task=>task.paperIds.includes(id));
+      const acknowledged=!this.state.paperAttentionDismissals?.[id]&&notice?.status==='dismissed'&&!supported&&facts?.inputFingerprint===paperFingerprint(paper);
+      const dismissed=this.state.paperAttentionDismissals?.[id]===this.attentionCondition(id);
+      if((acknowledged||dismissed)&&!queued&&!skipped&&!excluded)continue;
+      const status=excluded?'excluded':skipped?'skipped':job?.error?'failed':attention.status==='usable'?'usable':'needsInformation';
+      papers.push({id,title:paper.title,status,message:excluded?'Marked no_tag. This item is excluded from tag building and assignment until you include it again.':skipped?'Skipped for this build. Existing tags are unchanged.':job?.error?this.processingMessage(job.error):attention.message,phase,queued,canLookupMetadata:!excluded&&attention.canLookupMetadata,canRecheck:!excluded&&attention.canRecheck,canRetry:!excluded&&attention.canRetry,canSkip:!!originalJob&&!skipped&&!excluded,canDismiss:status==='needsInformation'||status==='failed'});
     }
     return {papers,queued:new Set(tasks.flatMap(task=>task.paperIds)).size};
   }
@@ -615,7 +676,7 @@ export class AppController implements ManagerAPI {
     const preview=this.state.metadataPreview;if(!preview||preview.id!==id||preview.status!=='ready'||!preview.patch)throw new Error('Look up the missing metadata again before applying it.');
     await this.commit({id:uid('metadata'),date:new Date().toISOString(),label:'Fill missing paper information',patches:[],metadataPatches:[copy(preview.patch)],beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'prepared'});
     const paperId=preview.paperId;delete this.state.metadataPreview;await this.inspectPaperInputs(paperId);
-    if(!this.state.facts[paperId]&&!this.state.analyses[paperId])await this.queueMaintenance('retry',{paperIds:[paperId]},true);
+    if(!this.excluded(paperId)&&!this.state.facts[paperId]&&!this.state.analyses[paperId])await this.queueMaintenance('retry',{paperIds:[paperId]},true);
   }
   private async skipPaperAnalysis(ids:string[]) {
     const run=this.state.run;if(!run)throw new Error('There is no active build to skip papers from.');
@@ -632,8 +693,9 @@ export class AppController implements ManagerAPI {
     if(kind!=='retry'&&!this.state.reconciliation)await this.refreshExistingTags();
     const plan=this.state.reconciliation;
     if(kind==='reconcile'&&!plan?.applied)throw new Error('Apply your tag list before comparing existing tags.');
-    const paperIds=[...new Set(input.paperIds??[])].filter(id=>!!this.state.papers[id]);
+    const paperIds=[...new Set(input.paperIds??[])].filter(id=>!!this.state.papers[id]&&!this.excluded(id));
     const groupIds=[...new Set(input.groupIds??plan?.groups.filter(group=>kind==='diy'?false:group.status!=='match').map(group=>group.id)??[])];
+    if(kind!=='retry'&&plan?.groups.some(group=>groupIds.includes(group.id)&&group.source==='no_tag'))throw new Error('no_tag is a built-in marker. Use Include again in Activity to remove it from an item.');
     if(kind==='retry'&&!paperIds.length||kind!=='retry'&&!groupIds.length)throw new Error('Select papers or existing tags first.');
     const matches=(task:MaintenanceTask)=>task.kind===kind&&fingerprint([...task.paperIds].sort())===fingerprint([...paperIds].sort())&&fingerprint([...task.groupIds].sort())===fingerprint([...groupIds].sort())&&fingerprint(task.choices??[])===fingerprint(input.choices??[])&&task.planId===(kind==='retry'?undefined:plan?.id);
     const active=this.state.maintenanceTasks?.find(task=>matches(task)&&(task.status==='queued'||task.status==='running'));
@@ -669,6 +731,8 @@ export class AppController implements ManagerAPI {
             if(this.shuttingDown)throw new Error('Interrupted by Zotero closing.');
             const job=task.run.jobs[task.cursor],id=job.paperId;
             if(job.status==='completed')continue;
+            const paper=this.state.papers[id];if(paper)this.state.nativeTags[id]=await this.env.host.readTags(paper.itemID);
+            if(this.excluded(id)){job.status='completed';delete job.error;continue;}
             if(task.run.kind==='rebuild'){
               const old=this.state.facts[id];if(old){(this.state.factHistory??=[]).push({date:new Date().toISOString(),reason:'Explicit paper retry',facts:copy(old)});delete this.state.facts[id];}
               await this.extractFacts(job,task.run);
@@ -711,18 +775,19 @@ export class AppController implements ManagerAPI {
     const library=this.env.librarySnapshot?await this.env.librarySnapshot():null;
     const nativeTags=library?.nativeTags??this.state.nativeTags;
     const papers=library?library.papers.map(p=>({...p,summary:this.state.papers[p.id]?.summary??'',concepts:this.state.papers[p.id]?.concepts??[],pdfText:this.state.papers[p.id]?.pdfText})):Object.values(this.state.papers);
-    const coverage=new Map<string,Set<string>>(this.state.tags.map(t=>[t.id,new Set<string>()]));
+    const definitions=this.allTags();
+    const coverage=new Map<string,Set<string>>(definitions.map(t=>[t.id,new Set<string>()]));
     const nativeEntries=Object.entries(nativeTags),nativePaperIds=nativeEntries.map(([id])=>id);
     let papersByNativeName:Map<string,Set<string>>|undefined;
-    for(const tag of this.state.tags){
-      const compiled=compileConceptFilter(this.state.tags,{mode:'all',selections:[{conceptId:tag.id}]});
+    for(const tag of definitions){
+      const compiled=compileConceptFilter(definitions,{mode:'all',selections:[{conceptId:tag.id}]});
       if(compiled.empty)continue;
       // These counts select one global concept, so its approved descendants/aliases are
       // one alternative-name group. Canonicalize each native assignment once per snapshot.
       if(!papersByNativeName){papersByNativeName=new Map();for(const [paperId,native] of nativeEntries)for(const assignment of native){const key=canonicalTagKey(assignment.tag),ids=papersByNativeName.get(key)??new Set<string>();ids.add(paperId);papersByNativeName.set(key,ids);}}
       for(const name of compiled.clauses[0]?.groups[0]??[])for(const paperId of papersByNativeName.get(canonicalTagKey(name))??[])coverage.get(tag.id)!.add(paperId);
     }
-    const tags=this.state.tags.map(tag=>{
+    const tags=definitions.map(tag=>{
       const matches=coverage.get(tag.id)??new Set<string>();
       const support=this.state.taxonomySupport[tag.id];
       return {...tag,coverage:support?.paperIds.length,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...(matches.size?nativePaperIds.filter(id=>matches.has(id)):[]),...(support?.paperIds??[])])].slice(0,3)};
@@ -730,7 +795,7 @@ export class AppController implements ManagerAPI {
     const run=this.state.run;
     const metadata=this.state.metadataPreview;
     const metadataDisplay=metadata?{id:metadata.id,paperId:metadata.paperId,itemID:metadata.itemID,status:metadata.status,message:metadata.message,changes:metadata.changes,identifier:metadata.identifier?.value}:undefined;
-    const attention=this.paperAttentionDisplay(),skipped=run?.skippedIds?.length??0;
+    const attention=this.paperAttentionDisplay(),skipped=run?run.jobs.filter(job=>run.skippedIds?.includes(job.paperId)||this.excluded(job.paperId)).length:0;
     const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(this.state.tagPreparation?'checking':'organizing'):'reading';
     const stage=run?.consolidation?.work;
     const phaseProgress=phase==='organizing'&&stage?{completed:stage.tasks.filter(task=>task.completed).length,total:stage.tasks.length,label:'Parts organized'}:phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
@@ -740,6 +805,7 @@ export class AppController implements ManagerAPI {
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,
       existingTags:this.existingTagDisplay(),paperAttention:attention,metadataPreview:metadataDisplay,
+      paperExclusionPreview:this.state.paperExclusionPreview?{id:this.state.paperExclusionPreview.id,exclude:this.state.paperExclusionPreview.exclude,changes:this.state.paperExclusionPreview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Item',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined,
       tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
       analyzedPaperCount:Object.keys(this.state.papers).length,taxonomyReady:this.state.taxonomyReady,tagPreparation:this.preparationDisplay(),
       taxonomyArchives:this.state.taxonomyArchives.map(a=>({id:a.id,date:a.date,version:a.version,reason:a.reason,count:a.tags.length})),
@@ -774,6 +840,10 @@ export class AppController implements ManagerAPI {
       case 'inspect-paper-inputs':case 'recheck-paper-inputs': await this.inspectPaperInputs(String(payload.id),action==='recheck-paper-inputs');break;
       case 'retry-papers': return this.queueMaintenance('retry',{paperIds:payload.ids});
       case 'skip-paper-analysis': await this.skipPaperAnalysis(payload.ids??[]);break;
+      case 'dismiss-paper-attention': await this.dismissPaperAttention(payload.ids??[]);break;
+      case 'preview-paper-exclusion': await this.previewPaperExclusion(payload);break;
+      case 'apply-paper-exclusion': await this.applyPaperExclusion(String(payload.previewId));break;
+      case 'cancel-paper-exclusion': delete this.state.paperExclusionPreview;await this.save();break;
       case 'preview-metadata': await this.previewMetadata(String(payload.id),payload.identifier);break;
       case 'apply-metadata': await this.applyMetadataPreview(String(payload.previewId));break;
       case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot');break;
@@ -853,12 +923,15 @@ export class AppController implements ManagerAPI {
         if(this.state.run.consolidation?.work?.status==='failed'){
           this.rememberPreparation();delete this.state.run.consolidation;delete this.state.run.preparation;delete this.state.tagPreparation;this.state.taxonomyProposal=null;
         }
+        const saved=this.state.run.consolidation;
+        const failedPart=saved?.work?.tasks.find(task=>!task.completed&&task.validationError&&(task.correctionAttempts??0)>=1);
+        if(saved?.work&&failedPart&&!saved.pendingResponse)saved.work=retryConsolidationTask(saved.work,failedPart.id);
         this.state.run.status='running';this.state.run.message='Resuming…';
         for(const task of this.state.maintenanceTasks??[])if(task.status==='paused'){task.status='queued';task.run.status='running';task.run.settings=copy(this.state.settings);delete task.error;}
         await this.save();this.launch();break;
       }
       case 'save-tag': {this.saveTag(payload.tag);if(payload.tag.custom&&this.state.taxonomyProposal){const saved=this.state.tags.find(tag=>tag.id===payload.tag.id);if(saved)this.state.taxonomyProposal.tags=this.state.taxonomyProposal.tags.map(tag=>tag.id===saved.id?copy(saved):tag);}this.refreshPreparation();await this.save();break;}
-      case 'delete-tag': {const old=this.state.tags.find(t=>t.id===payload.id);this.state.tags=this.state.tags.filter(t=>t.id!==payload.id);for(const tag of this.state.tags){tag.broaderIds=tag.broaderIds.filter(id=>id!==payload.id);tag.relatedIds=(tag.relatedIds??[]).filter(id=>id!==payload.id);}if(old?.custom)this.detailChanged(payload.id);else this.vocabularyChanged();await this.save();break;}
+      case 'delete-tag': {const old=this.state.tags.find(t=>t.id===payload.id);if(payload.id===NO_TAG_ID||old&&isNoTagDefinition(old))throw new Error('no_tag is a built-in marker. Use Include again to remove it from an item.');this.state.tags=this.state.tags.filter(t=>t.id!==payload.id);for(const tag of this.state.tags){tag.broaderIds=tag.broaderIds.filter(id=>id!==payload.id);tag.relatedIds=(tag.relatedIds??[]).filter(id=>id!==payload.id);}if(old?.custom)this.detailChanged(payload.id);else this.vocabularyChanged();await this.save();break;}
       case 'approve-vocabulary': {
         const ids=new Set<string>(payload.ids??[]);let changed=false;
         const next=this.state.tags.map(tag=>ids.has(tag.id)?{...tag,status:'approved' as const}:tag);
@@ -896,7 +969,13 @@ export class AppController implements ManagerAPI {
       case 'preview-cleanup': await this.previewCleanup();break;
       case 'apply-cleanup': await this.applyCleanup(payload.ids??[]);break;
       case 'show-paper': {const p=this.state.papers[payload.id];if(p)await this.env.host.show(p.itemID);break;}
-      case 'save-search': {const filter:ConceptFilter=payload.filter??{mode:'all',selections:(payload.tagIds??[]).map((conceptId:string)=>({conceptId}))};if(!filter.selections?.length)throw new Error('Select at least one concept before saving a search.');if(this.env.host.saveConceptSearch)await this.env.host.saveConceptSearch(String(payload.name??''),filter,this.state.tags);else await this.env.host.saveSearch(String(payload.name??''),this.state.tags.filter(t=>(payload.tagIds??[]).includes(t.id)).map(t=>t.name));break;}
+      case 'save-search': {
+        const filter:ConceptFilter=payload.filter??{mode:'all',selections:(payload.tagIds??[]).map((conceptId:string)=>({conceptId}))};
+        if(!filter.selections?.length)throw new Error('Select at least one tag before saving a search.');
+        if(this.env.host.saveConceptSearch)await this.env.host.saveConceptSearch(String(payload.name??''),filter,this.allTags());
+        else await this.env.host.saveSearch(String(payload.name??''),this.allTags().filter(tag=>(payload.tagIds??[]).includes(tag.id)).map(tag=>tag.name));
+        break;
+      }
       case 'undo': await this.undo(payload.id);break;
       case 'save-settings': {
         const v=payload.settings??{};const previous=this.state.settings;
@@ -926,7 +1005,7 @@ export class AppController implements ManagerAPI {
         if(this.state.run?.scope!=='pilot'||this.state.run.kind!=='tag'||this.state.run.status!=='idle'||this.state.run.jobs.some(j=>j.status!=='completed')||this.state.run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Finish the tagging pilot for the current vocabulary before marking it reviewed.');
         const pending=this.state.suggestions.filter(s=>ids.has(s.paperId)&&s.vocabularyVersion===this.state.vocabularyVersion&&s.status==='pending');
         if(pending.length)throw new Error(`Review the ${pending.length} pending pilot suggestions first.`);
-        if(!this.state.suggestions.some(s=>ids.has(s.paperId)&&s.vocabularyVersion===this.state.vocabularyVersion&&s.status==='accepted'))throw new Error('The pilot needs at least one accepted, evidence-backed suggestion.');
+        if(!this.state.suggestions.some(s=>ids.has(s.paperId)&&s.vocabularyVersion===this.state.vocabularyVersion&&s.status==='accepted'&&s.tagId!==NO_TAG_ID))throw new Error('The pilot needs at least one accepted, evidence-backed scientific tag suggestion.');
         this.state.pilotReviewed=true;this.state.pilotVersion=this.state.vocabularyVersion;await this.save();break;
       }
       case 'dismiss-warning': this.state.warnings=dismissWarnings(this.state.warnings,[String(payload.id)]);await this.save();break;
@@ -1045,7 +1124,7 @@ export class AppController implements ManagerAPI {
     // Previously approved identities and remembered choices remain authoritative even while edited.
     const definitions=new Map(this.state.tags.map(tag=>[tag.id,!tag.custom&&tag.status!=='approved'&&protectedIds.has(tag.id)?{...tag,status:'approved' as const,aliases:[...new Set(trustedNames.get(tag.id)??[])]}:tag]));
     for(const tag of this.state.taxonomyProposal?.tags??[])if((this.state.userEditedTagIds??[]).includes(tag.id))definitions.set(tag.id,{...copy(tag),status:'approved'});
-    return [...definitions.values()];
+    return scientificDefinitions([...definitions.values()]);
   }
   private async discardInvalidMerges(id:string) {
     const proposal=this.requireProposal(id);if(!proposal.unresolvedMerges?.length)return;
@@ -1118,15 +1197,15 @@ export class AppController implements ManagerAPI {
       }
     }
     // Historical IDs and assignment journals remain immutable; native renames are separate cleanup.
-    this.state.tags=tags;this.state.taxonomySupport=copy(proposal.support);this.state.taxonomyEvidence=proposal.evidenceSnapshot?copy(proposal.evidenceSnapshot):null;this.state.taxonomyProposal=null;this.state.taxonomyReady=tags.length>0;
+    this.state.tags=[...scientificDefinitions(tags),...this.state.tags.filter(isNoTagDefinition)];this.state.taxonomySupport=copy(proposal.support);this.state.taxonomyEvidence=proposal.evidenceSnapshot?copy(proposal.evidenceSnapshot):null;this.state.taxonomyProposal=null;this.state.taxonomyReady=scientificDefinitions(tags).length>0;
     this.state.taxonomyReview=copy({mappingConfirmations:proposal.mappingConfirmations,machineDecisions:proposal.machineDecisions,validatedEvidenceLinks:proposal.validatedEvidenceLinks,evidenceMeaningFingerprints:proposal.evidenceMeaningFingerprints,evidenceScientificIdentities:proposal.evidenceScientificIdentities,paperFingerprints:proposal.paperFingerprints,paperInputFingerprints:proposal.paperInputFingerprints,preparationPolicyVersion:proposal.preparationPolicyVersion});
     this.state.suggestions=this.state.suggestions.filter(s=>s.applied);
     this.vocabularyChanged();
     const facts=proposal.paperIds.map(id=>this.state.facts[id]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
-    if(facts.length===proposal.paperIds.length)this.state.approvedTaxonomyInput=fingerprint({protocolVersion:2,facts,existing:this.state.tags,limit:this.state.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
+    if(facts.length===proposal.paperIds.length)this.state.approvedTaxonomyInput=fingerprint({protocolVersion:2,facts,existing:scientificDefinitions(this.state.tags),limit:this.state.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
     await this.save();
   }
-  private detailFingerprint(definitions=this.state.tags) {return fingerprint(definitions.filter(t=>t.custom).map(t=>({id:t.id,name:t.name,fullName:t.fullName,description:t.description,aliases:t.aliases,inclusions:t.inclusions,exclusions:t.exclusions,matchingMode:t.matchingMode,status:t.status})));}
+  private detailFingerprint(definitions=this.state.tags) {return fingerprint(scientificDefinitions(definitions).filter(t=>t.custom).map(t=>({id:t.id,name:t.name,fullName:t.fullName,description:t.description,aliases:t.aliases,inclusions:t.inclusions,exclusions:t.exclusions,matchingMode:t.matchingMode,status:t.status})));}
   private definitionFingerprint(tag:TagDefinition) {return fingerprint({id:tag.id,name:tag.name,fullName:tag.fullName,description:tag.description,aliases:tag.aliases,inclusions:tag.inclusions,exclusions:tag.exclusions,matchingMode:tag.matchingMode,status:tag.status});}
   private detailChanged(id:string) {
     this.state.suggestions=this.state.suggestions.filter(s=>s.tagId!==id||s.applied);
@@ -1169,6 +1248,7 @@ export class AppController implements ManagerAPI {
     if(this.state.run?.status==='running'){this.state.run.status='paused';this.state.run.message='Vocabulary changed. Resume to refresh affected results.';this.abort?.abort();}
   }
   private saveTag(value:any) {
+    if(value&&isNoTagDefinition(value))throw new Error('no_tag is a built-in marker. Use Exclude from tagging or Include again to manage it.');
     if(!value||typeof value.name!=='string'||typeof value.description!=='string')throw new Error('A tag needs a name and a definition.');
     const name=value.name.trim(),description=value.description.trim();
     if(!name||name.length>80||!description||description.length>2000)throw new Error('Use a name of 1–80 characters and a definition of 1–2,000 characters.');
@@ -1217,16 +1297,16 @@ export class AppController implements ManagerAPI {
     if(this.worker||this.maintenanceWorker||this.state.run?.status==='running')throw new Error('Pause or finish the current run first.');
     if(this.state.run?.status==='paused'&&!replacePausedRebuild)throw new Error('Resume or cancel the paused run before starting another analysis.');
     this.checkConnectionSettings();
-    if(kind==='tag'&&!this.state.tags.some(t=>t.status==='approved'))throw new Error('Approve a vocabulary or a custom tag before assigning tags.');
+    if(kind==='tag'&&!scientificDefinitions(this.state.tags).some(t=>t.status==='approved'))throw new Error('Approve a vocabulary or a custom tag before assigning tags.');
     const papers=provided??await this.scan(scope);
     if(!papers.length)throw new Error('No eligible papers were found in this scope.');
-    for(const p of papers)if(!this.state.papers[p.id])this.remember(p);
+    for(const p of papers){if(!this.state.papers[p.id])this.remember(p);this.state.nativeTags[p.id]=await this.env.host.readTags(p.itemID);}
     const checkpoint=kind==='rebuild'&&this.state.run?.kind==='rebuild'?this.state.run.consolidation:undefined;
     if(kind==='rebuild'){this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;}
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reviewing paper metadata for vocabulary discovery…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
     if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}
-    if(scope==='pilot'&&kind==='tag'&&!detailId){this.state.pilotIds=[];this.state.pilotExpected=papers.length;this.state.pilotReviewed=false;}
+    if(scope==='pilot'&&kind==='tag'&&!detailId){this.state.pilotIds=[];this.state.pilotExpected=papers.filter(paper=>!this.excluded(paper.id)).length;this.state.pilotReviewed=false;}
     await this.save();this.launch();
   }
   private providerSettings(settings:ManagerSettings):ProviderSettings {return {mode:settings.provider,model:settings.model,maxOutputTokens:settings.maxOutputTokens,timeoutMs:120000,inputCostPerMillion:settings.inputPricePerMillion,outputCostPerMillion:settings.outputPricePerMillion};}
@@ -1237,11 +1317,11 @@ export class AppController implements ManagerAPI {
     if(!paidProvider(run.settings.provider))return 0;
     const maintenance=this.state.maintenanceTasks?.find(task=>task.run===run);
     if(maintenance&&maintenance.kind!=='retry')return run.spentUSD;
-    const pending=run.jobs.filter(j=>j.status!=='completed').reduce((sum,j)=>{const paper=this.state.papers[j.paperId];return sum+(paper?this.estimate(run.kind==='rebuild'?buildFactExtractionPrompt(paper):buildAnalysisPrompt(paper,this.state.tags),run.settings):0);},0);
+    const pending=run.jobs.filter(j=>j.status!=='completed'&&!this.excluded(j.paperId)).reduce((sum,j)=>{const paper=this.state.papers[j.paperId];return sum+(paper?this.estimate(run.kind==='rebuild'?buildFactExtractionPrompt(paper):buildAnalysisPrompt(paper,this.state.tags),run.settings):0);},0);
     if(maintenance)return run.spentUSD+pending;
     const work=run.consolidation?.work;
     if(work){const next=nextConsolidationRequest(work);return run.spentUSD+pending+(next?this.estimate(next.prompt,run.settings)*work.tasks.filter(task=>!task.completed).length:0);}
-    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
+    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
     const snapshot=run.consolidation?.snapshot??(run.kind==='rebuild'?createRegistrySnapshot(copy(facts),copy(this.state.evidenceCatalog)):undefined);
     const consolidation=run.kind==='rebuild'&&!run.vocabFinished&&run.consolidation?.value===undefined?this.estimate(buildConsolidationPrompt(facts,this.state.tags,run.settings.coreConceptLimit??60,snapshot),run.settings):0;
     return run.spentUSD+pending+consolidation;
@@ -1272,6 +1352,8 @@ export class AppController implements ManagerAPI {
     try {
       for(const job of run.jobs) {
         if(run.status!=='running'||this.shuttingDown)return;
+        const stored=this.state.papers[job.paperId];if(stored)this.state.nativeTags[job.paperId]=await this.env.host.readTags(stored.itemID);
+        if(this.excluded(job.paperId)){job.status='completed';delete job.error;continue;}
         if(run.skippedIds?.includes(job.paperId)){job.status='completed';continue;}
         if(job.status==='completed'&&run.kind==='rebuild'){
           const cached=this.state.facts[job.paperId],original=this.state.papers[job.paperId];
@@ -1291,7 +1373,7 @@ export class AppController implements ManagerAPI {
       await this.drainMaintenance();this.refreshAfterMaintenance=false;
       if(run.status!=='running'||this.shuttingDown)return;
       if(run.kind==='rebuild'){
-        const proposal=this.state.taxonomyProposal,facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
+        const proposal=this.state.taxonomyProposal,facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
         const sameInputs=proposal&&facts.length===proposal.paperIds.length&&facts.every(fact=>proposal.paperFingerprints?.[fact.paperId]===fact.metadataFingerprint&&proposal.paperInputFingerprints?.[fact.paperId]===fact.inputFingerprint);
         if(run.preparationOnly&&sameInputs&&proposal?.evidenceSnapshot&&!validateSnapshotAgainstFacts(proposal.evidenceSnapshot,facts).length)await this.prepareRun(run);
         else{run.preparationOnly=false;await this.consolidateRun(run);}
@@ -1303,7 +1385,7 @@ export class AppController implements ManagerAPI {
     }
   }
   private async consolidateRun(run:Run) {
-    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).sort((a,b)=>a?.paperId.localeCompare(b?.paperId??'')??0);
+    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).sort((a,b)=>a?.paperId.localeCompare(b?.paperId??'')??0);
     if(!facts.length){run.vocabFinished=true;run.message='All papers were skipped for this build. Your existing tag list is unchanged.';return;}
     if(facts.some(fact=>!fact))throw new Error('A selected paper needs fresh factual extraction. Resume to process its saved job.');
     ensureFactConceptIds(facts);
@@ -1318,28 +1400,33 @@ export class AppController implements ManagerAPI {
     const invalidSnapshot=validateSnapshotAgainstFacts(checkpoint.snapshot,facts);
     if(invalidSnapshot.length)throw new Error('The saved evidence snapshot changed. Start a new rebuild to create a current proposal.');
     if(checkpoint.value===undefined&&(checkpoint.work||new TextEncoder().encode(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60,checkpoint.snapshot)).length>100_000)){
-      checkpoint.work??=createConsolidationWork(facts,existing,checkpoint.snapshot,run.settings.coreConceptLimit??60);await this.save();
+      checkpoint.work??=createConsolidationWork(facts,existing,checkpoint.snapshot,run.settings.coreConceptLimit??60);
+      if(checkpoint.pendingResponse)this.applyConsolidationReply(checkpoint);
+      checkpoint.work=recoverConsolidationWork(checkpoint.work);
+      checkpoint.failed=!!checkpoint.work.tasks.find(task=>!task.completed)?.validationError;await this.save();
       for(let request=nextConsolidationRequest(checkpoint.work);request;request=nextConsolidationRequest(checkpoint.work)){
         if(run.status!=='running'||this.shuttingDown)return;
-        run.message=`Organizing your tag list: ${request.phase==='final'?'global merge':request.phase==='reduce'?'combining topics':'part '+(request.completed+1)+' of '+request.total}…`;await this.save();
-        if(!checkpoint.pendingResponse){
-          try{const response=await this.request(request.prompt,run);checkpoint.pendingResponse={requestId:request.id,raw:response.value};await this.save();}
-          catch(error){
-            const failure=error as ProviderFailure|null;
-            if(failure?.category==='invalid-response'&&typeof failure.rawText==='string'){
-              const task=checkpoint.work.tasks.find(task=>task.id===request.id);if(task)task.raw=failure.rawText;
-              checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];checkpoint.failed=true;await this.save();
-            }
-            throw error;
+        run.message=request.kind==='correction'?'Repairing one part of your tag list…':`Organizing your tag list: ${request.phase==='final'?'global merge':request.phase==='reduce'?'combining topics':'part '+(request.completed+1)+' of '+request.total}…`;await this.save();
+        try{
+          const response=await this.request(request.prompt,run,request.kind==='correction'?()=>{
+            const task=checkpoint.work!.tasks.find(task=>task.id===request!.id)!,before=task.correctionAttempts??0;
+            task.correctionAttempts=before+1;task.correctionPending=false;
+            return ()=>{task.correctionAttempts=before;task.correctionPending=true;};
+          }:undefined);
+          checkpoint.pendingResponse={requestId:request.id,raw:response.value,kind:request.kind};await this.save();
+        }catch(error){
+          const failure=error as ProviderFailure|null;
+          if(failure?.category==='invalid-response'&&typeof failure.rawText==='string'){
+            checkpoint.work=noteConsolidationFailure(checkpoint.work,request.id,failure.rawText,this.message(error),request.kind,!failure.completion);
+            checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];checkpoint.failed=true;await this.save();continue;
           }
+          throw error;
         }
         if(run.status!=='running'||this.shuttingDown)return;
-        try{checkpoint.work=acceptConsolidationResult(checkpoint.work,checkpoint.pendingResponse.requestId,checkpoint.pendingResponse.raw);}
-        catch(error){checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];const task=checkpoint.work.tasks.find(task=>task.id===checkpoint.pendingResponse!.requestId);if(task)task.raw=checkpoint.pendingResponse.raw;delete checkpoint.pendingResponse;checkpoint.failed=true;await this.save();throw new Error('One tag-building part could not be used. Resume to retry that part.');}
-        delete checkpoint.pendingResponse;checkpoint.failed=false;await this.save();
+        this.applyConsolidationReply(checkpoint);await this.save();
       }
       checkpoint.value=finishedConsolidation(checkpoint.work);
-      if(checkpoint.value===undefined){checkpoint.failed=true;await this.save();throw new Error(checkpoint.work.status==='failed'?'The AI could not combine these topics into a compact list. Resume to organize the saved paper analysis again.':'One tag-building part could not finish. Resume to retry it.');}
+      if(checkpoint.value===undefined){checkpoint.failed=true;await this.save();throw new Error(checkpoint.work.status==='failed'?'The AI could not combine these topics into a compact list. Resume to organize the saved paper analysis again.':'One tag-building part still needs repair. Resume to request a new reply for that part; completed paper analysis is saved.');}
       checkpoint.phase='validating';await this.save();
     }
     if(checkpoint.value===undefined){
@@ -1366,6 +1453,12 @@ export class AppController implements ManagerAPI {
     checkpoint.phase=this.state.tagPreparation?.status==='ready'?'ready':'needs-review';
     await this.save();
   }
+  private applyConsolidationReply(checkpoint:NonNullable<Run['consolidation']>) {
+    const reply=checkpoint.pendingResponse!;
+    try{checkpoint.work=reply.kind==='correction'?applyConsolidationCorrection(checkpoint.work!,reply.requestId,reply.raw):acceptConsolidationResult(checkpoint.work!,reply.requestId,reply.raw);checkpoint.failed=false;}
+    catch(error){checkpoint.work=noteConsolidationFailure(checkpoint.work!,reply.requestId,reply.raw,this.message(error),reply.kind);checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];checkpoint.failed=true;}
+    delete checkpoint.pendingResponse;
+  }
   private message(error:unknown) {return error instanceof Error?error.message:String(error);}
   private async extractFacts(job:Job,run:Run):Promise<PaperFacts> {
     const original=this.state.papers[job.paperId];if(!original)throw new Error('Paper is no longer available.');
@@ -1375,6 +1468,7 @@ export class AppController implements ManagerAPI {
     if(!paper.abstract||cached&&!cached.concepts.length||(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint!==metadataFingerprint))paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);
     if(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===paperFingerprint(paper)){this.updateEvidenceWarning(paper,'facts',!cached.concepts.length,run);return cached;}
     let result=normalizeFacts((await this.request(buildFactExtractionPrompt(paper,!!paper.pdfText),run)).value,paper,run.settings.provider,run.settings.model);
+    if(this.excluded(paper.id))return cached??result;
     if(!result.concepts.length&&!paper.pdfText){paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);if(paper.pdfText)result=normalizeFacts((await this.request(buildFactExtractionPrompt(paper,true),run)).value,paper,run.settings.provider,run.settings.model);}
     if(run.status!=='running')throw new Error('Fact extraction was paused. Completed records remain cached.');
     const latest=await this.fresh(original);
@@ -1394,7 +1488,8 @@ export class AppController implements ManagerAPI {
   private async analyze(job:Job,run:Run) {
     const original=this.state.papers[job.paperId];if(!original)throw new Error('Paper is no longer available.');
     const paper=await this.fresh(original);
-    const definitions=run.detailId?this.state.tags.filter(t=>t.id===run.detailId):this.state.tags;
+    const definitions=scientificDefinitions(run.detailId?this.state.tags.filter(t=>t.id===run.detailId):this.state.tags);
+    const context={...this.context(paper.id),allowNoTag:!run.detailId};
     const detailFingerprint=this.detailFingerprint(definitions);
     const metadataFingerprint=paperFingerprint(paper),cached=this.state.analyses[paper.id];
     let raw:unknown,pdfProbed=false;
@@ -1407,11 +1502,12 @@ export class AppController implements ManagerAPI {
       raw=cached!.raw;if(paper.pdfText)paper.fingerprint=paperFingerprint(paper);
     } else {
       const includedPDF=!!paper.pdfText;
-      raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:includedPDF}),run)).value;
+      raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:includedPDF,allowNoTag:!run.detailId}),run)).value;
+      if(this.excluded(paper.id))return;
       const first=normalizeAnalysis(raw);
-      if(!validateSuggestions(paper,definitions,raw,this.context(paper.id)).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)) {
+      if(!validateSuggestions(paper,definitions,raw,context).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)) {
         if(!pdfProbed)paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
-        if(paper.pdfText){paper.fingerprint=paperFingerprint(paper);if(!includedPDF)raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:true}),run)).value;}
+        if(paper.pdfText){paper.fingerprint=paperFingerprint(paper);if(!includedPDF)raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:true,allowNoTag:!run.detailId}),run)).value;}
       }
       if(run.status!=='running')throw new Error('Paper analysis was paused. Completed results are saved.');
       if(run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Vocabulary changed during analysis. Resume to refresh results.');
@@ -1421,12 +1517,14 @@ export class AppController implements ManagerAPI {
       if(paperFingerprint(latest)!==paperFingerprint(paper))throw new Error('Paper information changed during analysis. Retry this paper with its updated information.');
       this.state.analyses[paper.id]={metadataFingerprint,vocabularyVersion:this.state.vocabularyVersion,provider:run.settings.provider,model:run.settings.model,raw,detailFingerprint,pdfFingerprint:fingerprint(paper.pdfText??'')};
     }
-    const result=validateSuggestions(paper,definitions,raw,this.context(paper.id));
+    const result=validateSuggestions(paper,definitions,raw,context);
+    if(result.suggestions.some(suggestion=>suggestion.tagId===NO_TAG_ID)&&!this.state.tags.some(tag=>tag.id===NO_TAG_ID))this.state.tags.push(getNoTagDefinition());
     paper.fingerprint=paperFingerprint(paper);
     if(this.state.analyses[paper.id])this.state.analyses[paper.id].validatedCount=result.suggestions.length;
     this.updateEvidenceWarning(paper,`assignment:${run.detailId??'core'}`,!result.suggestions.length&&(result.needsPDF||!paper.abstract&&!paper.pdfText),run);
     paper.summary=result.summary;paper.concepts=result.concepts;this.state.papers[paper.id]=paper;
     this.state.nativeTags[paper.id]=await this.env.host.readTags(paper.itemID);
+    if(this.excluded(paper.id))return;
     if(run.kind==='tag') {
       this.state.suggestions=this.state.suggestions.filter(s=>s.paperId!==paper.id||s.applied||!!run.detailId&&s.tagId!==run.detailId);
       for(const next of result.suggestions) {
@@ -1461,11 +1559,14 @@ export class AppController implements ManagerAPI {
       beforeOwnership[paperId]=copy(this.state.ownership[paperId]??{});afterOwnership[paperId]=copy(beforeOwnership[paperId]);
       const current=await this.fresh(stored,!!stored.pdfText);
       const before=await this.env.host.readTags(stored.itemID),after=copy(before);
+      if(isExcludedByNativeTag(before.map(tag=>tag.tag))&&selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId!==NO_TAG_ID))throw new Error('This item is excluded from tagging. Include it again before applying paper tags.');
+      if(selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId===NO_TAG_ID)&&selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId!==NO_TAG_ID&&suggestion.operation!=='remove'))throw new Error('Apply either no_tag or scientific tags for this item, not both.');
       for(const s of selected.filter(s=>s.paperId===paperId)) {
         if(s.vocabularyVersion!==this.state.vocabularyVersion||s.inputFingerprint!==current.fingerprint)throw new Error('Paper content or vocabulary changed. Rerun suggestions before applying this preview.');
         const tag=this.state.tags.find(t=>t.id===s.tagId&&t.status==='approved');if(!tag)throw new Error('A tag definition needs approval.');
         if(tag.custom&&s.definitionFingerprint&&s.definitionFingerprint!==this.definitionFingerprint(tag))throw new Error('This detail definition changed. Rerun its matching preview.');
         const decision=this.state.decisions[pair(paperId,tag.id)];
+        if(isNoTagDefinition(tag)&&this.state.tags.filter(isNoTagDefinition).some(legacy=>legacy.id!==tag.id&&(this.state.decisions[pair(paperId,legacy.id)]?.rejected||this.state.decisions[pair(paperId,legacy.id)]?.locked)))throw new Error('An earlier no_tag choice protects this item. Review that choice before applying the marker.');
         if(decision?.locked)throw new Error('This assignment is locked. Unlock it before applying a change.');
         if(decision?.rejected&&s.operation!=='remove')throw new Error('This assignment was rejected. Clear the rejection before applying it.');
         if(s.operation==='remove') {

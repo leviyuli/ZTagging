@@ -77,10 +77,10 @@ test('large library snapshot canonicalizes each native assignment once for cover
   const refreshed = await controller.snapshot(); assert.equal(refreshed.tags[0].currentlyTaggedCount, 15); assert.equal(refreshed.tags[59].currentlyTaggedCount, 16); assert.equal(libraryCalls, 2);
 });
 
-test('draft-only snapshots skip coverage work without reading every native assignment per definition', async () => {
+test('draft snapshots inspect the built-in marker at constant cost, without per-draft coverage scans', async () => {
   const state = initialState(); state.tags = Array.from({ length: 107 }, (_, i) => tag(`draft-${i}`, `Draft ${i}`, { status: 'draft' }));
   state.papers.one = paper('one'); let reads = 0;
   state.nativeTags.one = [{ get tag() { reads++; return 'Draft 1'; }, type: 0 }];
   const snapshot = await harness(state).snapshot();
-  assert.ok(snapshot.tags.every(value => value.currentlyTaggedCount === 0)); assert.equal(reads, 1, 'only native-tag display reads the assignment');
+  assert.ok(snapshot.tags.every(value => value.currentlyTaggedCount === 0)); assert.equal(reads, 3, 'one coverage pass, one exclusion check and one display read, independent of draft count');
 });

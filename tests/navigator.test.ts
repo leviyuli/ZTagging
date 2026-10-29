@@ -166,6 +166,11 @@ test('Smart Tags remains discoverable with no approved list and readiness covers
   await navigator.destroy();const delayed=h.nodes().find(node=>node.id==='zotero-tag-selector-container')!;delayed.remove();assert.equal(navigatorReady(h.win),false);h.sidebar.append(delayed);assert.equal(navigatorReady(h.win),true);
 });
 
+test('builtin no_tag is a standalone searchable filter without DIY matching or editing actions',async()=>{
+  const builtin=tag('smart-tags:no-tag','no_tag',{builtin:'no_tag',custom:true,matchingMode:'manual',description:'Papers excluded from tagging.'}),h=harness(false);h.setSnapshot({tags:[builtin],taxonomyReady:false});h.items.find(value=>value.id===4)!.getTags=()=>[{tag:'RCL',type:0},{tag:'no_tag',type:0}];
+  const navigator=mountNavigator(h.win,h.api,{onEditTag(){throw new Error('Builtin tags are not editable.');}});await navigator.refresh();await navigator.setMode('tags');assert.ok(h.label('no_tag'));assert.equal(h.label('no_tag')!.textContent,'no_tag1');assert.match(h.sidebar.textContent,/Excluded from tagging/);assert.doesNotMatch(h.sidebar.textContent,/Shared details/);h.label('no_tag')!.fire('click');await h.flush();assert.deepEqual(navigator.filter.selections,[{conceptId:'smart-tags:no-tag'}]);assert.equal(h.text('Assign to selected papers'),undefined);assert.equal(h.text('Preview matches'),undefined);assert.equal(h.text('Edit definition'),undefined);assert.deepEqual(searchNavigatorConcepts([builtin],'no_tag').map(value=>value.id),[builtin.id]);assert.deepEqual(conceptLocations(builtin,[builtin]),['Excluded from tagging › no_tag']);await navigator.destroy();
+});
+
 test('unsupported native interfaces display a fallback and preserve Collections', async () => {
   const h = harness(true, false); const navigator = mountNavigator(h.win, h.api); await navigator.refresh();
   await navigator.setMode('tags');

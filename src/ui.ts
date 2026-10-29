@@ -73,6 +73,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let attentionFilter = 'attention';
   let attentionQuery = '';
   let attentionPage = 0;
+  let paperExclusionPage = 0;
   const selectedAttentionPapers = new Set<string>();
   let metadataIdentifier = '';
   let modalPage = 0;
@@ -294,7 +295,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     return card('Warning history', 'Resolved, dismissed, and imported historical notices remain available for review.', body);
   }
-  function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved'); }
+  function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved' && !tag.builtin); }
   function pagination(total: number, pageIndex: number, change: (next: number) => void, pageSize = PAGE_SIZE, noun = '') {
     const pages = Math.max(1, Math.ceil(total / pageSize));
     return h('div', 'inline between', h('span', 'muted', total ? `${pageIndex * pageSize + 1}–${Math.min(total, (pageIndex + 1) * pageSize)} of ${total}` : '0 results'),
@@ -346,7 +347,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function renderOverview() {
     const s = currentState();
     const stats = h('div', 'stats');
-    for (const [count, label] of [[approvedTags().length, 'tags ready'], [s.analyzedPaperCount ?? s.papers.length, 'papers read'], [s.suggestions.filter(item => item.status === 'pending' && !item.applied).length, 'paper suggestions'], [s.tags.filter(tag => tag.custom).length, 'your topics']] as [number, string][]) {
+    for (const [count, label] of [[approvedTags().length, 'tags ready'], [s.analyzedPaperCount ?? s.papers.length, 'papers read'], [s.suggestions.filter(item => item.status === 'pending' && !item.applied).length, 'paper suggestions'], [s.tags.filter(tag => tag.custom && !tag.builtin).length, 'your topics']] as [number, string][]) {
       stats.append(h('div', 'stat', h('strong', '', count.toLocaleString()), h('span', '', label)));
     }
     const steps = h('ol', 'step-list');
@@ -371,6 +372,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function copyTag(tag: DisplayTag): DisplayTag { return { ...tag, aliases: [...tag.aliases], inclusions: [...tag.inclusions], exclusions: [...tag.exclusions], examples: [...tag.examples], broaderIds: [...tag.broaderIds], relatedIds: [...(tag.relatedIds || [])] }; }
   function rememberEditorDraft() { if (editorTag) editorDrafts.set(`${editorPreparationId}:${editorTag.id || 'new'}`, copyTag(editorTag)); }
   function editTag(tag: DisplayTag, preparationId = '', shouldRender = true) {
+    if (tag.builtin) return;
     rememberEditorDraft();
     editorPreparationId = preparationId;
     relationQueries.clear();
@@ -388,7 +390,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (shouldRender) render();
   }
   function relationshipPicker(tag: DisplayTag, key: 'broaderIds' | 'relatedIds', label: string, description: string) {
-    const choices = (editorPreparationId ? currentState().tagPreparation?.tags || [] : currentState().tags).filter(other => other.id !== tag.id && !other.custom);
+    const choices = (editorPreparationId ? currentState().tagPreparation?.tags || [] : currentState().tags).filter(other => other.id !== tag.id && !other.custom && !other.builtin);
     const query = relationQueries.get(key) || '';
     const selected = tag[key] || [];
     const list = h('div', 'concept-picker-list');
@@ -455,7 +457,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const cancel = () => { editorDrafts.delete(`${preparationId}:${tag.id || 'new'}`);editorTag = null;editorPreparationId = '';render(); };
     return h('section', 'card editor tag-editor', h('div', 'card-header', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag')), form, h('div', 'card-footer editor-footer', button('Save', save, 'primary'), button('Cancel', cancel, 'quiet')));
   }
-  function workingTags() { return currentState().tagPreparation?.tags || currentState().tags.filter(tag => tag.status === 'approved' || tag.custom); }
+  function workingTags() { return (currentState().tagPreparation?.tags || currentState().tags.filter(tag => tag.status === 'approved' || tag.custom)).filter(tag => !tag.builtin); }
   function hasUnsavedPreparedChanges() {
     const preparation = state?.tagPreparation;
     if (!preparation) return false;
@@ -571,14 +573,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     else if (!rows.length) list.append(empty('No matching tags', 'Try another search or group.'));
     for (const row of visible) {
       const status = row.status === 'match' ? 'Matched' : row.status === 'choice' ? 'Needs your choice' : 'Other tag';
-      const targetChoices = currentState().tags.filter(tag => row.targetNames.includes(tag.name)).map(tag => [tag.id, tag.name] as [string,string]);
+      const targetChoices = currentState().tags.filter(tag => !tag.builtin && row.targetNames.includes(tag.name)).map(tag => [tag.id, tag.name] as [string,string]);
       const article = h('article', 'existing-tag-row', checkbox(`existing-${row.id}`, selectedExistingTags.has(row.id), row.name, checked => { checked ? selectedExistingTags.add(row.id) : selectedExistingTags.delete(row.id);render(); }), h('div', 'inline', badge(status), h('span', 'muted', `${row.affectedCount} papers · ${row.manualCount} manual`)), row.meaning ? h('p', '', `${row.meaningInferred ? 'Inferred meaning' : 'Meaning'}: ${row.meaning}`) : null, row.targetNames.length ? h('p', '', `Smart Tags: ${row.targetNames.join(', ')}`) : null, row.status === 'choice' && !row.assignments && targetChoices.length ? select(`existing-target-${row.id}`, existingTagTargets.get(row.id) || '', [['', 'Choose a matching tag'], ...targetChoices], value => { existingTagTargets.set(row.id, value);render(); }, `Matching tag for ${row.name}`) : null, h('p', 'card-description', row.diyQuestion || row.reason));
       if (row.assignments?.length && (row.status !== 'match' || row.assignments.some(assignment => assignment.conflict))) {
         article.append(button(`${expandedExistingGroups.has(row.id) ? 'Hide' : 'Review'} paper matches`, () => { expandedExistingGroups.has(row.id) ? expandedExistingGroups.delete(row.id) : expandedExistingGroups.add(row.id);render(); }, 'small'));
         const paperPage = Math.min(existingPaperPages.get(row.id) || 0, Math.max(0, Math.ceil(row.assignments.length / 30) - 1));
         if (expandedExistingGroups.has(row.id)) for (const assignment of row.assignments.slice(paperPage * 30, (paperPage + 1) * 30)) {
           const key = `${row.id}:${assignment.paperId}`;
-          const choices = currentState().tags.filter(tag => tag.status === 'approved').map(tag => [tag.id, tag.name] as [string,string]);
+          const choices = currentState().tags.filter(tag => tag.status === 'approved' && !tag.builtin).map(tag => [tag.id, tag.name] as [string,string]);
           article.append(h('div', 'existing-paper-choice', paperButton(assignment.paperId), assignment.meaning ? h('p', '', `Inferred meaning: ${assignment.meaning}`) : null, h('p', 'card-description', assignment.status === 'match' ? `Matched: ${assignment.targetNames.join(', ')}` : assignment.reason), assignment.status !== 'match' ? h('div', 'toolbar', checkbox(`existing-paper-${row.id}-${assignment.paperId}`, selectedExistingPapers.has(key), 'Use my selected match', checked => { checked ? selectedExistingPapers.add(key) : selectedExistingPapers.delete(key);render(); }), select(`existing-paper-target-${row.id}-${assignment.paperId}`, existingPaperTargets.get(key) || '', [['', 'Leave unchanged'], ...choices], value => { value ? existingPaperTargets.set(key, value) : existingPaperTargets.delete(key);render(); }, `Matching tag for ${paperTitle(assignment.paperId)}`)) : null, assignment.conflict ? h('div', 'section-gap', h('p', 'card-description', 'An earlier manual choice protects this paper. It stays unchanged unless you replace that choice.'), checkbox(`existing-override-${row.id}-${assignment.paperId}`, overriddenExistingPapers.has(key), 'Replace my earlier choice for this paper', checked => { checked ? overriddenExistingPapers.add(key) : overriddenExistingPapers.delete(key);render(); })) : null));
         }
         if (expandedExistingGroups.has(row.id)) article.append(pagination(row.assignments.length, paperPage, next => { existingPaperPages.set(row.id, next); }, 30, `paper matches for ${row.name}`));
@@ -606,14 +608,40 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     attentionPage = Math.min(attentionPage, Math.max(0, Math.ceil(papers.length / 25) - 1));
     const visible = papers.slice(attentionPage * 25, (attentionPage + 1) * 25);
     const selected = all.filter(paper => selectedAttentionPapers.has(paper.id));
+    const dismissible = (paper: typeof all[number]) => paper.canDismiss ?? (paper.status === 'needsInformation' || paper.status === 'failed');
+    const dismiss = async (ids: string[]) => { await run('dismiss-paper-attention', { ids }, 'Current notices dismissed.');for (const id of ids) selectedAttentionPapers.delete(id);render(); };
+    const previewExclusion = (ids: string[], exclude: boolean) => { paperExclusionPage = 0;return run('preview-paper-exclusion', { ids, exclude }); };
     const list = h('div', 'paper-attention-list');
-    list.append(h('div', 'toolbar', input('attention-search', attentionQuery, value => { attentionQuery = value;attentionPage = 0;render(); }, 'Find a paper…', 'search'), select('attention-status', attentionFilter, [['attention', 'Needs attention'], ['all', 'All checked papers'], ['usable', 'Ready to use'], ['needsInformation', 'Needs information'], ['failed', 'Analysis failed'], ['skipped', 'Skipped']], value => { attentionFilter = value;attentionPage = 0;render(); }, 'Paper information status')));
-    list.append(h('div', 'actions', button('Select this page', () => { for (const paper of visible) selectedAttentionPapers.add(paper.id);render(); }), button('Clear selection', () => { selectedAttentionPapers.clear();render(); }, 'quiet'), button('Retry selected', () => run('retry-papers', { ids: selected.filter(paper => paper.canRetry).map(paper => paper.id) }, 'Selected papers queued.'), '', !selected.some(paper => paper.canRetry)), button('Skip selected for this build', () => run('skip-paper-analysis', { ids: selected.filter(paper => paper.canSkip).map(paper => paper.id) }, 'Selected papers skipped for this build.'), 'quiet', !selected.some(paper => paper.canSkip))));
+    list.append(h('div', 'toolbar', input('attention-search', attentionQuery, value => { attentionQuery = value;attentionPage = 0;render(); }, 'Find a paper…', 'search'), select('attention-status', attentionFilter, [['attention', 'Needs attention'], ['all', 'All checked papers'], ['usable', 'Ready to use'], ['needsInformation', 'Needs information'], ['failed', 'Analysis failed'], ['skipped', 'Skipped'], ['excluded', 'Excluded from tagging']], value => { attentionFilter = value;attentionPage = 0;render(); }, 'Paper information status')));
+    list.append(h('p', 'card-description', 'Dismiss hides the current notice. Exclude adds no_tag for future builds.'));
+    list.append(h('div', 'actions', button('Select this page', () => { for (const paper of visible) selectedAttentionPapers.add(paper.id);render(); }), button('Clear selection', () => { selectedAttentionPapers.clear();render(); }, 'quiet'), button('Dismiss selected', () => dismiss(selected.filter(dismissible).map(paper => paper.id)), 'quiet', !selected.some(dismissible)), button('Exclude selected from tagging', () => previewExclusion(selected.filter(paper => paper.status !== 'excluded').map(paper => paper.id), true), '', !selected.some(paper => paper.status !== 'excluded')), selected.some(paper => paper.status === 'excluded') ? button('Include selected again', () => previewExclusion(selected.filter(paper => paper.status === 'excluded').map(paper => paper.id), false)) : null, button('Retry selected', () => run('retry-papers', { ids: selected.filter(paper => paper.canRetry && paper.status !== 'excluded').map(paper => paper.id) }, 'Selected papers queued.'), '', !selected.some(paper => paper.canRetry && paper.status !== 'excluded')), button('Skip selected for this build', () => run('skip-paper-analysis', { ids: selected.filter(paper => paper.canSkip && paper.status !== 'excluded').map(paper => paper.id) }, 'Selected papers skipped for this build.'), 'quiet', !selected.some(paper => paper.canSkip && paper.status !== 'excluded'))));
     if (!papers.length) list.append(empty('No papers in this view', 'Completed papers remain available in your library.'));
-    const labels = { usable: 'Ready to use', needsInformation: 'Needs information', failed: 'Analysis failed', skipped: 'Skipped for this build' };
-    for (const paper of visible) list.append(h('article', 'paper-attention-row', checkbox(`attention-${paper.id}`, selectedAttentionPapers.has(paper.id), paper.title, checked => { checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); }), h('div', 'inline', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message)), h('div', 'actions', button('Open in Zotero', () => openPaper(paper.id), 'small'), paper.canLookupMetadata ? button('Find metadata', () => { metadataIdentifier = '';return run('preview-metadata', { id: paper.id }); }, 'small') : null, paper.canRecheck ? button('Recheck PDF', () => run('recheck-paper-inputs', { id: paper.id }, 'Local paper information checked.'), 'small') : null, paper.canRetry ? button('Retry analysis', () => run('retry-papers', { ids: [paper.id] }, 'Paper queued.'), 'small') : null, paper.canSkip ? button('Skip for this build', () => run('skip-paper-analysis', { ids: [paper.id] }, 'Paper skipped for this build.'), 'small quiet') : null)));
+    const labels = { usable: 'Ready to use', needsInformation: 'Needs information', failed: 'Analysis failed', skipped: 'Skipped for this build', excluded: 'Excluded from tagging' };
+    for (const paper of visible) {
+      const actions = h('div', 'actions', button('Open in Zotero', () => openPaper(paper.id), 'small'));
+      if (paper.status === 'excluded') actions.append(button('Include again', () => previewExclusion([paper.id], false), 'small'));
+      else {
+        if (dismissible(paper)) actions.append(button('Dismiss', () => dismiss([paper.id]), 'small quiet'));
+        actions.append(button('Exclude from tagging', () => previewExclusion([paper.id], true), 'small'));
+        if (paper.canLookupMetadata) actions.append(button('Find metadata', () => { metadataIdentifier = '';return run('preview-metadata', { id: paper.id }); }, 'small'));
+        if (paper.canRecheck) actions.append(button('Recheck PDF', () => run('recheck-paper-inputs', { id: paper.id }, 'Local paper information checked.'), 'small'));
+        if (paper.canRetry) actions.append(button('Retry analysis', () => run('retry-papers', { ids: [paper.id] }, 'Paper queued.'), 'small'));
+        if (paper.canSkip) actions.append(button('Skip for this build', () => run('skip-paper-analysis', { ids: [paper.id] }, 'Paper skipped for this build.'), 'small quiet'));
+      }
+      list.append(h('article', 'paper-attention-row', checkbox(`attention-${paper.id}`, selectedAttentionPapers.has(paper.id), paper.title, checked => { checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); }), h('div', 'inline', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message)), actions));
+    }
     list.append(pagination(papers.length, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
     return list;
+  }
+
+  function paperExclusionReview() {
+    const preview = currentState().paperExclusionPreview;
+    if (!preview) return null;
+    paperExclusionPage = Math.min(paperExclusionPage, Math.max(0, Math.ceil(preview.changes.length / 50) - 1));
+    const body = h('div', 'paper-exclusion-preview');
+    for (const change of preview.changes.slice(paperExclusionPage * 50, (paperExclusionPage + 1) * 50)) body.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
+    body.append(pagination(preview.changes.length, paperExclusionPage, next => { paperExclusionPage = next; }, 50, 'exclusion changes'));
+    return card(preview.exclude ? 'Mark no_tag and exclude from tagging' : 'Include papers in tagging again', preview.exclude ? 'Apply this mark to leave the reviewed papers out of future builds and assignments. Undo is available in Activity.' : 'Remove no_tag from the reviewed papers so future builds can include them.', body, h('div', 'actions', button(preview.exclude ? 'Apply no_tag and exclude' : 'Apply inclusion', async () => { await run('apply-paper-exclusion', { previewId: preview.id }, preview.exclude ? 'Papers excluded from tagging.' : 'Papers included in tagging again.');selectedAttentionPapers.clear();render(); }, 'primary', !preview.changes.length), button('Cancel exclusion change', () => run('cancel-paper-exclusion'), 'quiet')));
   }
 
   function metadataReview() {
@@ -633,9 +661,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     check.disabled = busy || !!suggestion.applied || suggestion.status === 'rejected';
     check.setAttribute('aria-label', `Select ${tag?.name || suggestion.tagId} for ${paperTitle(suggestion.paperId)}`);
     check.addEventListener('change', () => { check.checked ? selectedSuggestions.add(suggestion.id) : selectedSuggestions.delete(suggestion.id); render(); });
-    const body = h('div', '', h('div', 'suggestion-header', h('div', '', paperButton(suggestion.paperId), h('div', 'inline section-gap', h('strong', '', tag?.name || suggestion.tagId), suggestion.operation === 'remove' ? badge('remove managed tag', 'removal') : badge('add tag'), badge(suggestion.confidence, suggestion.confidence), tag?.custom ? badge('custom', 'custom') : null, suggestion.applied ? badge('applied', 'approved') : badge(suggestion.status, suggestion.status === 'accepted' ? 'approved' : suggestion.status === 'pending' ? 'draft' : ''))), suggestion.locked ? badge('locked') : null), h('p', 'suggestion-reason', suggestion.reason));
+    const body = h('div', '', h('div', 'suggestion-header', h('div', '', paperButton(suggestion.paperId), h('div', 'inline section-gap', h('strong', '', tag?.name || suggestion.tagId), suggestion.operation === 'remove' ? badge('remove managed tag', 'removal') : badge('add tag'), badge(suggestion.confidence, suggestion.confidence), tag?.builtin === 'no_tag' ? badge('Exclude from tagging') : tag?.custom ? badge('custom', 'custom') : null, suggestion.applied ? badge('applied', 'approved') : badge(suggestion.status, suggestion.status === 'accepted' ? 'approved' : suggestion.status === 'pending' ? 'draft' : ''))), suggestion.locked ? badge('locked') : null), h('p', 'suggestion-reason', suggestion.reason));
     for (const evidence of suggestion.evidence) body.append(h('blockquote', 'evidence', h('cite', '', evidence.source), evidence.text));
-    if (!suggestion.evidence.length) body.append(h('p', 'card-description', 'No supporting passage is available. Inspect this paper before accepting.'));
+    if (!suggestion.evidence.length) body.append(h('p', 'card-description', tag?.builtin === 'no_tag' ? 'Review the completed analysis before excluding this paper from future tagging.' : 'No supporting passage is available. Inspect this paper before accepting.'));
     body.append(h('div', 'actions',
       !suggestion.applied && suggestion.status !== 'accepted' && suggestion.status !== 'rejected' ? button('Accept', () => run('accept-suggestion', { id: suggestion.id }, 'Suggestion accepted. Apply reviewed suggestions to write native tags.'), 'small primary') : null,
       !suggestion.applied && suggestion.status !== 'rejected' ? button('Reject', () => run('reject-suggestion', { id: suggestion.id }, 'Rejected. This choice will be remembered.'), 'small') : null,
@@ -758,6 +786,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       allDetails.append(detailList); filters.append(allDetails);
     }
     if (!coreTags.length && !details.length) filters.append(empty('No tags ready yet', 'Prepare a tag list, or add a topic of your own.'));
+    const noTag = s.tags.find(tag => tag.builtin === 'no_tag');
+    if (noTag) filters.append(h('div', 'section-gap', h('h3', '', 'Excluded from tagging'), h('div', 'concept-tree-row', checkbox('explore-builtin-no-tag', isConceptSelected(noTag.id), 'no_tag', () => toggleConcept(noTag.id)), h('span', 'concept-count', String(count(noTag.id))))));
     const selections = h('div', 'selected-concepts');
     for (const selection of conceptFilter.selections) selections.append(h('div', 'selected-concept', h('span', '', `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`), button('Remove', () => toggleConcept(selection.conceptId, selection.contextId), 'quiet small')));
     const filterCard = card('Browse tags', 'A broader tag includes its narrower topics. An additional topic chosen inside a tag requires both. Match all your selections or any selection.', h('div', '', filters, selections), button('Clear filters', () => { conceptFilter = { ...conceptFilter, selections: [] }; libraryPage = 0; render(); }, 'quiet small', !conceptFilter.selections.length));
@@ -801,7 +831,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && warning.code !== 'evidence-gap');
     const notices = active.length ? card('Needs attention', '', h('div', '', ...active.map(warning => warningEntry(warning, true)))) : null;
-    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention ? `${s.paperAttention.queued} papers queued. Each paper appears once.` : '', paperAttention()), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention ? `${s.paperAttention.queued} papers queued. Each paper appears once.` : '', paperAttention(), button('Exclude selected Zotero items…', () => { paperExclusionPage = 0;return run('preview-paper-exclusion', { exclude: true }); })), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
   function renderSettings() {
@@ -903,6 +933,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       title = 'Review native tag changes';
       applyLabel = `Apply ${suggestions.length} tag changes`;
       body.append(h('p', '', 'Review the additions and removals below. Removals apply only to obsolete tags owned by Smart Tags. Existing manual tags are preserved. Stale proposals are checked again before writing.'));
+      if (suggestions.some(item => tagById(item.tagId)?.builtin === 'no_tag')) body.append(h('p', 'notice', 'Applying no_tag excludes the affected papers from future tagging. Their other tags stay in place.'));
       const table = h('table', 'section-gap', h('thead', '', h('tr', '', h('th', '', 'Paper'), h('th', '', 'Change'), h('th', '', 'Tag'), h('th', '', 'Evidence'))));
       const tbody = h('tbody');
       for (const item of suggestions.slice(modalPage * PAGE_SIZE, (modalPage + 1) * PAGE_SIZE)) tbody.append(h('tr', '', h('td', '', paperTitle(item.paperId)), h('td', '', badge(item.operation === 'remove' ? 'Remove' : 'Add', item.operation === 'remove' ? 'removal' : 'approved')), h('td', '', h('strong', '', tagName(item.tagId))), h('td', '', item.evidence[0]?.text || 'Review manually')));
