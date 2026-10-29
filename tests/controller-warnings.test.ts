@@ -35,18 +35,20 @@ class MemoryHost implements LibraryHost {
   async saveSearch() {}
 }
 
-type Call = { kind: 'facts' | 'taxonomy' | 'assignment' | 'correction'; data: any; settings: ProviderSettings };
+type Call = { kind: 'facts' | 'taxonomy' | 'mapping' | 'assignment' | 'correction'; data: any; settings: ProviderSettings };
 class AI {
   calls: Call[] = [];
   failure?: Error;
   async completeJson(_system: string, prompt: string, settings: ProviderSettings): Promise<CompletionResult> {
     const marker = 'INPUT_DATA_JSON:\n', at = prompt.indexOf(marker); assert.ok(at >= 0);
     const data = JSON.parse(prompt.slice(at + marker.length));
-    const kind = data.permittedRegistry ? 'correction' : data.protocolVersion === 2 ? 'taxonomy' : data.approvedVocabulary ? 'assignment' : 'facts';
+    const kind = data.selectionPhase==='mapping'?'mapping':data.permittedRegistry ? 'correction' : data.protocolVersion === 2 ? 'taxonomy' : data.approvedVocabulary ? 'assignment' : 'facts';
     this.calls.push({ kind, data, settings: copy(settings) });
     if (this.failure) throw this.failure;
     let value: unknown;
-    if (kind === 'taxonomy') {
+    if(kind==='mapping'){
+      value={judgements:data.sources.map((source:any)=>({tagId:data.tags.find((tag:any)=>tag.name==='EIS').id,registryId:source.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The provided PDF passage establishes impedance spectroscopy.'})),outside:[]};
+    }else if (kind === 'taxonomy') {
       const ids = (data.conceptRegistry as any[]).filter(entry => entry.sources.some((source: any) => source.label === 'Electrochemical impedance spectroscopy')).map(entry => entry.registryId);
       value = { tags: ids.length ? [{ key: 'eis', name: 'EIS', fullName: 'Electrochemical impedance spectroscopy',
         description: 'Electrochemical impedance spectroscopy measurements.', facet: 'method', aliases: [],
@@ -84,6 +86,7 @@ function gaps(h: Harness, context?: string) { return h.state.warnings.filter(rec
 test('evidence gaps identify each affected paper and preserve independent factual and assignment phases', async () => {
   const h = harness(2); await run(h);
   const factRunId = h.state.run!.id;
+  assert.equal(h.ai.calls.filter(call=>call.kind==='taxonomy'||call.kind==='mapping').length,0,'missing source evidence must not trigger paid vocabulary planning');
   assert.deepEqual(gaps(h, 'facts').map(record => record.paperIds), [['1:WARNING1'], ['1:WARNING2']]);
   assert.ok(gaps(h, 'facts').every(record => record.status === 'active' && record.runIds.includes(factRunId)));
   await run(h, 'tag');
@@ -188,13 +191,13 @@ test('Resume requeues only completed factual jobs whose formerly missing local P
   const h = harness(2); await run(h);
   const unchangedFacts = JSON.stringify(h.state.facts['1:WARNING2']);
   const priorFactRequests = h.ai.calls.filter(call => call.kind === 'facts').length;
-  const oldGeneration = h.state.run!.consolidation!.generationId;
+  const oldGeneration = h.state.run!.selection?.id;
   await h.controller.invoke('pause'); h.host.pdfs.set(1, PDF);
   await h.controller.invoke('resume'); await h.controller.waitForIdle();
   assert.equal(h.state.run!.status, 'idle', h.state.run!.message);
   assert.equal(h.ai.calls.filter(call => call.kind === 'facts').length, priorFactRequests + 1);
   assert.equal(h.state.facts['1:WARNING1'].needsPDF, false); assert.equal(JSON.stringify(h.state.facts['1:WARNING2']), unchangedFacts);
-  assert.notEqual(h.state.run!.consolidation!.generationId, oldGeneration);
+  assert.ok(h.state.run!.selection);assert.notEqual(h.state.run!.selection!.id, oldGeneration);
   assert.equal(gaps(h, 'facts').find(record => record.paperIds.includes('1:WARNING1'))!.status, 'resolved');
   assert.equal(gaps(h, 'facts').find(record => record.paperIds.includes('1:WARNING2'))!.status, 'active');
   assert.ok(h.state.run!.jobs.every(job => job.status === 'completed')); assert.equal(h.host.writes.length, 0);

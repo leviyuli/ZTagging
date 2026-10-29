@@ -3,11 +3,12 @@ import type {Facet,TagDefinition} from './core.ts';
 import {preferredCoreNaming,preferredTechnologyFacet,terminologyFor,terminologyKey} from './naming.ts';
 import {validateRegistrySnapshot} from './evidence.ts';
 import type {FactSource} from './evidence.ts';
-import {conceptMeaningFingerprint,createProposalIssueEvaluator,createTaxonomyProposal,refreshProposalEvidence,semanticDecisionKey} from './taxonomy.ts';
+import {conceptMeaningFingerprint,conceptMappingFingerprint,confirmedSourceRelation,validMappedSourceDecision,createProposalIssueEvaluator,createTaxonomyProposal,refreshProposalEvidence,semanticDecisionKey} from './taxonomy.ts';
 import type {MachineEvidenceDecision,TaxonomyProposal,PaperFacts,ProposalValidationIssue} from './taxonomy.ts';
 import {reconcileExtensionProposal} from './vocabulary-extension.ts';
 
 export const PREPARATION_POLICY_VERSION=2;
+const preparationPolicy=(proposal:TaxonomyProposal):2|3=>proposal.mappingPolicyVersion===3?3:PREPARATION_POLICY_VERSION;
 export const PREPARATION_REQUEST_BYTE_LIMIT=100_000;
 export type SourceJudgement=MachineEvidenceDecision;
 export interface PreparationChoice {id:string;label:string;description:string;meaning?:Partial<Pick<TagDefinition,'name'|'fullName'|'description'|'facet'>>;exclude?:boolean;action?:'separate-reaction'}
@@ -27,28 +28,33 @@ export function validTagPreparationState(value:unknown):value is TagPreparationS
 }
 function protectedIds(options:PreparationOptions,proposal:TaxonomyProposal):Set<string> {
   const answered=Object.values(proposal.machineDecisions??{}).filter(value=>value.origin==='researcher'&&value.snapshotId===proposal.evidenceSnapshot?.id&&proposal.tags.some(tag=>tag.id===value.tagId&&conceptMeaningFingerprint(tag)===value.meaningFingerprint)).map(value=>value.tagId);
-  return new Set([...(options.protectedTagIds??[]),...(options.existingDefinitions??[]).filter(tag=>tag.custom||tag.status==='approved').map(tag=>tag.id),...(proposal.extension?.baseline.definitions??[]).map(tag=>tag.id),...answered]);
+  return new Set([...(options.protectedTagIds??[]),...(proposal.mappingPolicyVersion===3?proposal.retainedDefinitionIds??[]:[]),...(options.existingDefinitions??[]).filter(tag=>tag.custom||tag.status==='approved').map(tag=>tag.id),...(proposal.extension?.baseline.definitions??[]).map(tag=>tag.id),...answered]);
 }
 function sourcesFor(proposal:TaxonomyProposal,tagId:string):{registryId:string;source:FactSource}[] {
   const snapshot=proposal.evidenceSnapshot;if(!snapshot)return [];
+  if(proposal.mappingPolicyVersion===3){
+    const permitted=new Set([...(proposal.mappedSourceIds?.[tagId]??[]),...(proposal.inheritanceReviewSourceIds?.[tagId]??[])]);
+    return Object.values(snapshot.entries).flatMap(entry=>entry.sourceIds.flatMap(id=>permitted.has(id)&&snapshot.sources[id]?[{registryId:entry.registryId,source:snapshot.sources[id]}]:[]));
+  }
   return (proposal.support[tagId]?.registryIds??[]).flatMap(registryId=>(Object.hasOwn(snapshot.entries,registryId)?snapshot.entries[registryId].sourceIds:[]).flatMap(id=>Object.hasOwn(snapshot.sources,id)?[{registryId,source:snapshot.sources[id]}]:[]));
 }
 function contextFor(proposal:TaxonomyProposal,tagId:string,sourceIds:readonly string[]):string {
-  return fingerprint({snapshot:proposal.evidenceSnapshot?.id,meaning:proposal.tags.find(tag=>tag.id===tagId),sources:sourceIds.map(id=>proposal.evidenceSnapshot?.sources[id]),policyVersion:PREPARATION_POLICY_VERSION});
+  return fingerprint({snapshot:proposal.evidenceSnapshot?.id,meaning:proposal.tags.find(tag=>tag.id===tagId),sources:sourceIds.map(id=>proposal.evidenceSnapshot?.sources[id]),policyVersion:preparationPolicy(proposal)});
 }
 function judgement(proposal:TaxonomyProposal,tag:TagDefinition,registryId:string,source:FactSource,relation:SourceJudgement['relation'],reason:string,origin:SourceJudgement['origin'],options:PreparationOptions):SourceJudgement {
-  return {tagId:tag.id,sourceId:source.factConceptId,registryId,snapshotId:proposal.evidenceSnapshot!.id,meaningFingerprint:conceptMeaningFingerprint(tag),sourceFingerprint:fingerprint(source),policyVersion:PREPARATION_POLICY_VERSION,relation,reason,origin,...(options.provider?{provider:options.provider}:{}),...(options.model?{model:options.model}:{})};
+  return {tagId:tag.id,sourceId:source.factConceptId,registryId,snapshotId:proposal.evidenceSnapshot!.id,meaningFingerprint:conceptMeaningFingerprint(tag),sourceFingerprint:fingerprint(source),policyVersion:preparationPolicy(proposal),...(proposal.mappingPolicyVersion===3?{tagFingerprint:conceptMappingFingerprint(tag)}:{}),relation,reason,origin,...(options.provider?{provider:options.provider}:{}),...(options.model?{model:options.model}:{})};
 }
 function remember(proposal:TaxonomyProposal,state:TagPreparationState,value:SourceJudgement) {
   const key=semanticDecisionKey(value.tagId,value.sourceId),existing=proposal.machineDecisions?.[key],tag=proposal.tags.find(tag=>tag.id===value.tagId),source=proposal.evidenceSnapshot?.sources[value.sourceId];
-  if(value.origin!=='researcher'&&existing?.origin==='researcher'&&tag&&source&&existing.snapshotId===proposal.evidenceSnapshot!.id&&existing.meaningFingerprint===conceptMeaningFingerprint(tag)&&existing.sourceFingerprint===fingerprint(source))return;
+  if(value.origin!=='researcher'&&existing?.origin==='researcher'&&tag&&source&&existing.snapshotId===proposal.evidenceSnapshot!.id&&existing.meaningFingerprint===conceptMeaningFingerprint(tag)&&existing.sourceFingerprint===fingerprint(source)&&(proposal.mappingPolicyVersion!==3||existing.policyVersion===3&&existing.tagFingerprint===conceptMappingFingerprint(tag)))return;
   state.judgements[key]=value;(proposal.machineDecisions??={})[key]=clone(value);
 }
 function removeCandidate(proposal:TaxonomyProposal,state:TagPreparationState,tagId:string,reason:string) {
   const tag=proposal.tags.find(tag=>tag.id===tagId);if(!tag)return;
   if(!state.excluded.some(value=>value.tagId===tagId))state.excluded.push({tagId,name:tag.name,reason,origin:'ai'});proposal.excluded.push({name:tag.name,reason});proposal.tags=proposal.tags.filter(tag=>tag.id!==tagId);
   for(const other of proposal.tags){other.broaderIds=other.broaderIds.filter(id=>id!==tagId);other.relatedIds=(other.relatedIds??[]).filter(id=>id!==tagId);}
-  proposal.merges=proposal.merges.filter(merge=>merge.toId!==tagId);delete proposal.support[tagId];state.questions=state.questions.filter(question=>question.tagId!==tagId);
+  proposal.merges=proposal.merges.filter(merge=>merge.toId!==tagId);delete proposal.support[tagId];delete proposal.mappedSourceIds?.[tagId];delete proposal.inheritanceReviewSourceIds?.[tagId];state.questions=state.questions.filter(question=>question.tagId!==tagId);
+  if(proposal.retainedDefinitionIds)proposal.retainedDefinitionIds=proposal.retainedDefinitionIds.filter(id=>id!==tagId);
 }
 function respectResearcherExclusions(proposal:TaxonomyProposal,state:TagPreparationState) {
   const excluded=state.excluded.filter(value=>value.origin==='researcher');
@@ -63,11 +69,12 @@ function contextGroundsName(source:FactSource,name:string):boolean {
   });
 }
 function freshDecision(proposal:TaxonomyProposal,tag:TagDefinition,source:FactSource):SourceJudgement|undefined {
+  if(proposal.mappingPolicyVersion===3)return validMappedSourceDecision(proposal,tag,source.factConceptId);
   const decision=proposal.machineDecisions?.[semanticDecisionKey(tag.id,source.factConceptId)];
   return decision&&decision.snapshotId===proposal.evidenceSnapshot!.id&&decision.policyVersion===PREPARATION_POLICY_VERSION&&decision.meaningFingerprint===conceptMeaningFingerprint(tag)&&decision.sourceFingerprint===fingerprint(source)&&(proposal.support[tag.id]?.registryIds??[]).includes(decision.registryId)&&proposal.evidenceSnapshot!.entries[decision.registryId]?.sourceIds.includes(source.factConceptId)?decision:undefined;
 }
 function pendingEvidence(proposal:TaxonomyProposal):{tagId:string;registryId:string;source:FactSource}[] {
-  const isBlocking=createProposalIssueEvaluator(proposal),affected=new Set((proposal.validationIssues??[]).filter(issue=>isBlocking(issue)&&['uncertain-meaning','scientific-contradiction','unsupported-concept'].includes(issue.code)).map(issue=>issue.tagId));
+  const isBlocking=createProposalIssueEvaluator(proposal),affected=new Set((proposal.validationIssues??[]).filter(issue=>isBlocking(issue)&&['uncertain-meaning','scientific-contradiction','unsupported-concept','unvalidated-source'].includes(issue.code)).map(issue=>issue.tagId));
   return proposal.tags.filter(tag=>!tag.custom&&affected.has(tag.id)).flatMap(tag=>sourcesFor(proposal,tag.id).filter(({source})=>!freshDecision(proposal,tag,source)).map(value=>({tagId:tag.id,...value})));
 }
 function addContextChecks(proposal:TaxonomyProposal) {
@@ -87,6 +94,8 @@ function recoverInvalidMerges(proposal:TaxonomyProposal,state:TagPreparationStat
   const next=createTaxonomyProposal(raw,facts,options.existingDefinitions,{snapshot,candidateIds:clone(proposal.candidateIds??{}),generationId:proposal.id,baseVersion:proposal.baseVersion,createdAt:proposal.createdAt,limit:proposal.coreLimit});
   if(proposal.extension)next.extension=clone(proposal.extension);
   const byKey=new Map(Object.entries(next.candidateKeys??{}).map(([id,key])=>[key,id])),redirect=(id:string)=>byKey.get(keys[id])??id;
+  if(proposal.retainedDefinitionIds)next.retainedDefinitionIds=proposal.retainedDefinitionIds.map(redirect);
+  if(proposal.mappingPolicyVersion===3){next.mappingPolicyVersion=3;next.mappedSourceIds=Object.fromEntries(Object.entries(proposal.mappedSourceIds??{}).map(([id,sources])=>[redirect(id),clone(sources)]));if(proposal.inheritanceReviewSourceIds)next.inheritanceReviewSourceIds=Object.fromEntries(Object.entries(proposal.inheritanceReviewSourceIds).map(([id,sources])=>[redirect(id),clone(sources)]));}
   for(const [oldId,key] of Object.entries(keys)){
     const id=byKey.get(key);if(!id)continue;
     if(id===oldId&&proposal.mappingConfirmations?.[oldId])(next.mappingConfirmations??={})[id]=clone(proposal.mappingConfirmations[oldId]);
@@ -132,18 +141,25 @@ function makeQuestion(proposal:TaxonomyProposal,tag:TagDefinition,sourceIds:stri
 
 export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,options:PreparationOptions={}):PreparationResult {
   let proposal=input.extension?reconcileExtensionProposal(input,input.extension.baseline):clone(input);const snapshot=proposal.evidenceSnapshot;
-  const compatible=previous?.proposalId===proposal.id&&previous.snapshotId===snapshot?.id&&previous.policyVersion===PREPARATION_POLICY_VERSION;
-  const state:TagPreparationState=compatible?clone(previous!):{id:allocateOpaqueId('preparation'),proposalId:proposal.id,snapshotId:snapshot?.id??'',policyVersion:PREPARATION_POLICY_VERSION,status:'checking',judgements:{},questions:[],answers:{},diagnostics:[],excluded:[]};
+  const policy=preparationPolicy(proposal),compatible=previous?.proposalId===proposal.id&&previous.snapshotId===snapshot?.id&&previous.policyVersion===policy;
+  const state:TagPreparationState=compatible?clone(previous!):{id:allocateOpaqueId('preparation'),proposalId:proposal.id,snapshotId:snapshot?.id??'',policyVersion:policy,status:'checking',judgements:{},questions:[],answers:{},diagnostics:[],excluded:[]};
   state.provider=options.provider??state.provider;state.model=options.model??state.model;
   if(!snapshot||validateRegistrySnapshot(snapshot).length){state.status='failed';state.diagnostics.push('The selected evidence snapshot is unavailable or invalid. Rebuild using the retained paper facts.');return {proposal,state,repairRequest:false,diagnostics:state.diagnostics};}
   respectResearcherExclusions(proposal,state);
   proposal=recoverInvalidMerges(proposal,state,options);
-  if(proposal.preparationPolicyVersion!==PREPARATION_POLICY_VERSION&&(snapshot.normalizationVersion??1)===1)proposal.validatedEvidenceLinks={};
-  proposal.preparationPolicyVersion=PREPARATION_POLICY_VERSION;
-  for(const value of Object.values(state.judgements))remember(proposal,state,value);
+  if(policy===2&&proposal.preparationPolicyVersion!==PREPARATION_POLICY_VERSION&&(snapshot.normalizationVersion??1)===1)proposal.validatedEvidenceLinks={};
+  proposal.preparationPolicyVersion=policy;
+  for(const value of Object.values(state.judgements)){
+    if(policy===2){remember(proposal,state,value);continue;}
+    const key=semanticDecisionKey(value.tagId,value.sourceId),tag=proposal.tags.find(tag=>tag.id===value.tagId),current=tag?validMappedSourceDecision(proposal,tag,value.sourceId):undefined;
+    if(current&&(value.origin!=='researcher'||current.origin==='researcher')){state.judgements[key]=clone(current);continue;}
+    if(tag&&validMappedSourceDecision(proposal,tag,value.sourceId,value))remember(proposal,state,value);
+    else if(current)state.judgements[key]=clone(current);
+    else delete state.judgements[key];
+  }
   for(const tag of proposal.tags)for(const {source} of sourcesFor(proposal,tag.id)){const value=freshDecision(proposal,tag,source);if(value)state.judgements[semanticDecisionKey(tag.id,source.factConceptId)]=clone(value);}
   if(options.targetCount!==undefined)proposal.coreLimit=options.targetCount;
-  normalizeGenerated(proposal,state,options);refreshProposalEvidence(proposal);addContextChecks(proposal);
+  if(policy===2)normalizeGenerated(proposal,state,options);refreshProposalEvidence(proposal);addContextChecks(proposal);
   const protectedTags=protectedIds(options,proposal),attempts=options.repairAttempts??0,maxRepairs=options.maxRepairs??3;
   for(let pass=0;pass<proposal.tags.length+1;pass++){
     const unsupported=proposal.tags.filter(tag=>!tag.custom&&!protectedTags.has(tag.id)&&(proposal.validationIssues??[]).some(issue=>issue.tagId===tag.id&&issue.code==='unsupported-concept')
@@ -155,15 +171,15 @@ export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,opt
     &&(!(proposal.validationIssues??[]).some(issue=>issue.tagId===question.tagId&&issue.code==='scientific-contradiction'))
     &&((protectedTags.has(question.tagId)&&(question.kind==='category'||question.kind==='protected-conflict'))||question.sourceIds.some(id=>state.judgements[semanticDecisionKey(question.tagId!,id)]?.relation==='needs-context')));
   const needsContext=new Map<string,string[]>();
-  for(const value of Object.values(state.judgements))if(value.relation==='needs-context'&&snapshot.sources[value.sourceId]&&proposal.tags.some(tag=>tag.id===value.tagId)&&value.snapshotId===snapshot.id&&value.sourceFingerprint===fingerprint(snapshot.sources[value.sourceId])&&value.meaningFingerprint===conceptMeaningFingerprint(proposal.tags.find(tag=>tag.id===value.tagId)!)&&!(proposal.validationIssues??[]).some(issue=>issue.tagId===value.tagId&&issue.code==='scientific-contradiction')){
+  for(const value of Object.values(state.judgements))if(value.relation==='needs-context'&&snapshot.sources[value.sourceId]&&proposal.tags.some(tag=>tag.id===value.tagId)&&value.snapshotId===snapshot.id&&value.sourceFingerprint===fingerprint(snapshot.sources[value.sourceId])&&value.meaningFingerprint===conceptMeaningFingerprint(proposal.tags.find(tag=>tag.id===value.tagId)!)&&(policy===2||freshDecision(proposal,proposal.tags.find(tag=>tag.id===value.tagId)!,snapshot.sources[value.sourceId])?.relation==='needs-context')&&!(proposal.validationIssues??[]).some(issue=>issue.tagId===value.tagId&&issue.code==='scientific-contradiction')){
     const ids=needsContext.get(value.tagId)??[];ids.push(value.sourceId);needsContext.set(value.tagId,ids);
   }
   for(const [tagId,sourceIds] of needsContext)if(!state.questions.some(question=>question.tagId===tagId)){const tag=proposal.tags.find(tag=>tag.id===tagId)!;state.questions.push(makeQuestion(proposal,tag,[...new Set(sourceIds)]));}
   const pending=pendingEvidence(proposal),pendingTags=new Set(pending.map(value=>value.tagId)),questionTags=new Set(state.questions.map(question=>question.tagId)),unresolved=(proposal.validationIssues??[]).filter(issue=>!issue.tagId||!questionTags.has(issue.tagId)||pendingTags.has(issue.tagId));
-  const deliberatelyEmpty=state.excluded.some(value=>value.origin==='researcher'),hasBlocking=proposal.issues.length>0||Boolean(proposal.unresolvedMerges?.length),missingCore=!proposal.tags.some(tag=>!tag.custom)&&!proposal.extension?.baseline.definitions.some(tag=>!tag.custom),repairRequest=(hasBlocking&&(unresolved.length>0||Boolean(proposal.externalIssues?.length)||Boolean(proposal.unresolvedMerges?.length))||missingCore&&!deliberatelyEmpty&&Object.keys(snapshot.sources).length>0)&&attempts<maxRepairs;
+  const deliberatelyEmpty=state.excluded.some(value=>value.origin==='researcher'),hasBlocking=proposal.issues.length>0||Boolean(proposal.unresolvedMerges?.length),missingCore=!proposal.tags.some(tag=>!tag.custom)&&!proposal.extension?.baseline.definitions.some(tag=>!tag.custom),repairRequest=policy===2&&(hasBlocking&&(unresolved.length>0||Boolean(proposal.externalIssues?.length)||Boolean(proposal.unresolvedMerges?.length))||missingCore&&!deliberatelyEmpty&&Object.keys(snapshot.sources).length>0)&&attempts<maxRepairs;
   state.status=repairRequest?'checking':state.questions.length?'questions':hasBlocking?'failed':'ready';
-  const result={proposal,state,repairRequest,diagnostics:state.diagnostics},scope=repairRequest||pending.length?repairScope(result,pending):undefined;state.contextTruncated=scope?.truncated??false;state.pendingSourceCount=pending.length;
-  if(pending.length&&attempts>=maxRepairs){state.status='failed';if(scope?.truncated)state.diagnostics.push('Some source contexts remain unchecked because this run reached its bounded request limit. Retry automatic checks to continue with the retained judgements.');}
+  const result={proposal,state,repairRequest,diagnostics:state.diagnostics},scope=policy===2&&(repairRequest||pending.length)?repairScope(result,pending):undefined;state.contextTruncated=scope?.truncated??false;state.pendingSourceCount=pending.length;
+  if(policy===2&&pending.length&&attempts>=maxRepairs){state.status='failed';if(scope?.truncated)state.diagnostics.push('Some source contexts remain unchecked because this run reached its bounded request limit. Retry automatic checks to continue with the retained judgements.');}
   if(missingCore&&!deliberatelyEmpty&&!repairRequest){state.status='failed';state.diagnostics.push('The selected papers do not yet support a reusable core vocabulary.');}
   state.diagnostics=[...new Set(state.diagnostics)];return {proposal,state,repairRequest,diagnostics:state.diagnostics};
 }
@@ -209,9 +225,11 @@ export function applyRepair(raw:unknown,current:PreparationResult,options:Prepar
   if(!proposal.tags.some(tag=>!tag.custom)&&Array.isArray(data.tags)&&data.tags.length){
     const snapshot=proposal.evidenceSnapshot!,facts=(options.facts??[]).filter(fact=>snapshot.paperIds.includes(fact.paperId));
     if(facts.length!==snapshot.paperIds.length){state.diagnostics.push('Full candidate recovery requires the retained selected paper facts.');return prepare(proposal,state,options);}
-    const exclusions=proposal.excluded,extension=proposal.extension;
+    const exclusions=proposal.excluded,extension=proposal.extension,mappingPolicyVersion=proposal.mappingPolicyVersion,mappedSourceIds=clone(proposal.mappedSourceIds??{}),inheritanceReviewSourceIds=proposal.inheritanceReviewSourceIds?clone(proposal.inheritanceReviewSourceIds):undefined,retainedDefinitionIds=proposal.retainedDefinitionIds?[...proposal.retainedDefinitionIds]:undefined;
     proposal=createTaxonomyProposal(data,facts,options.existingDefinitions??current.proposal.tags.filter(tag=>tag.custom),{snapshot,candidateIds:proposal.candidateIds??{},generationId:proposal.id,baseVersion:proposal.baseVersion,limit:proposal.coreLimit,createdAt:proposal.createdAt});
     if(extension)proposal.extension=clone(extension);
+    if(retainedDefinitionIds)proposal.retainedDefinitionIds=retainedDefinitionIds;
+    if(mappingPolicyVersion===3){proposal.mappingPolicyVersion=3;proposal.mappedSourceIds=mappedSourceIds;if(inheritanceReviewSourceIds)proposal.inheritanceReviewSourceIds=inheritanceReviewSourceIds;}
     proposal.excluded=[...new Map([...exclusions,...proposal.excluded].map(value=>[fingerprint(value),value])).values()];respectResearcherExclusions(proposal,state);
     proposal.inputFingerprint=current.proposal.inputFingerprint;
   }
@@ -254,9 +272,10 @@ export function answer(current:PreparationResult,questionId:string,choiceId:stri
     let reaction=proposal.tags.find(value=>value.id===id);
     if(!reaction){reaction={id,name:'water splitting',fullName:'water splitting',description:'The reaction splitting water into hydrogen and oxygen, including electrochemical and other pathways.',facet:'phenomenon',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'draft',broaderIds:[],relatedIds:[tag.id],matchingMode:'auto'};proposal.tags.push(reaction);(proposal.candidateKeys??={})[id]=key;(proposal.evidenceMeaningFingerprints??={})[id]=conceptMeaningFingerprint(reaction);}
     tag.relatedIds=[...new Set([...(tag.relatedIds??[]),id])];proposal.support[id]={paperIds:[],registryIds:[...new Set(sourcesFor(proposal,tag.id).filter(value=>question.sourceIds.includes(value.source.factConceptId)).map(value=>value.registryId))]};
+    if(proposal.mappingPolicyVersion===3)(proposal.mappedSourceIds??={})[id]=question.sourceIds.filter(sourceId=>(proposal.mappedSourceIds?.[tag.id]??[]).includes(sourceId));
     for(const {registryId,source} of sourcesFor(proposal,id))remember(proposal,state,judgement(proposal,reaction,registryId,source,question.sourceIds.includes(source.factConceptId)?'equivalent':'unrelated',`Researcher chose separate technology and reaction concepts: ${choice.label}.`,'researcher',options));
   }
   if(choice.meaning)Object.assign(tag,choice.meaning);
-  for(const {registryId,source} of sourcesFor(proposal,tag.id).filter(value=>question.sourceIds.includes(value.source.factConceptId)))remember(proposal,state,judgement(proposal,tag,registryId,source,choice.exclude||choice.action==='separate-reaction'?'unrelated':'equivalent',`Researcher chose: ${choice.label}.`,'researcher',options));
+  for(const {registryId,source} of sourcesFor(proposal,tag.id).filter(value=>question.sourceIds.includes(value.source.factConceptId)))remember(proposal,state,judgement(proposal,tag,registryId,source,choice.exclude||choice.action==='separate-reaction'?'unrelated':confirmedSourceRelation(tag,source.name),`Researcher chose: ${choice.label}.`,'researcher',options));
   state.answers[question.id]=choice.id;state.questions=state.questions.filter(value=>value.id!==question.id);return prepare(proposal,state,options);
 }

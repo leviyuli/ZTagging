@@ -139,8 +139,21 @@ export interface ManagerSnapshot {
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
     kind?: 'rebuild' | 'tag';
-    phase?: 'reading' | 'organizing' | 'checking' | 'ready';
+    phase?: 'reading' | 'organizing' | 'choosing' | 'mapping' | 'checking' | 'ready';
     phaseProgress?: { completed: number; total: number; label: string };
+    selection?: {
+      failed?: boolean;
+      sourceCompleted: number;
+      sourceTotal: number;
+      completedRequests: number;
+      queuedRequests: number;
+      correctionsUsed: number;
+      correctionAllowance: number;
+      semanticRepairsUsed?: number;
+      semanticRepairAllowance?: number;
+      mappingCorrectionsUsed?: number;
+      mappingCorrectionAllowance?: number;
+    };
     needsInformation?: number;
     skipped?: number;
     provider?: ManagerSettings['provider'];

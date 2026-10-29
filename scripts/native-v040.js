@@ -15,7 +15,7 @@ const completed=value=>({value,usageKnown:true,usage:{inputTokens:100,outputToke
 export async function runNativeV040(app,check,config){
   check('v040IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v040IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
-  check('v040StateSchema',app.state.schemaVersion===5);
+  check('v040StateSchema',app.state.schemaVersion===6);
   const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldList=host.list,oldComplete=ai.completeJson,oldApply=host.apply,oldInvoke=app.invoke;
   const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),oldMode=navigator?.mode;
   const nativePaper=Object.values(before.papers).find(paper=>paper.title==='Smart Tags smoke: catalyst-layer resistance in PEM electrolysis');
@@ -41,14 +41,16 @@ export async function runNativeV040(app,check,config){
         return completed({tags,merges:[],excluded:[]});
       }
       if(prompt.startsWith('Prepare a scientific tag vocabulary')){
-        const data=inputData(prompt),technology=data.tags.find(value=>value.name==='PEMWE'),technologySource=data.sources.find(value=>value.name==='proton exchange membrane water electrolysis');
-        const technologyId=technologySource.sourceId??technologySource.factConceptId,technologyEntry=data.permittedRegistry.find(value=>value.sourceIds.includes(technologyId));
-        const judgements=[{tagId:technology.id,registryId:technologyEntry.registryId,sourceIds:[technologyId],relation:'equivalent',reason:'The actual quotation explicitly studies PEM water electrolysis, grounding this established technology.'}];
-        const tag=data.tags.find(value=>value.name==='local resistance');
-        if(!tag)return completed({judgements,questions:[]});
-        const source=data.sources.find(value=>value.name==='catalyst-layer resistance'),sourceId=source.sourceId??source.factConceptId,entry=data.permittedRegistry.find(value=>value.sourceIds.includes(sourceId));
-        judgements.push({tagId:tag.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'needs-context',reason:'The source cannot choose the researcher’s preferred scope.'});
-        return completed({judgements,questions:[{tagId:tag.id,sourceIds:[sourceId],kind:'scope',title:'Which resistance measurements should this tag include?',description:'Choose whether this topic follows catalyst-layer resistance or a broader set of transport losses.',choices:[{id:'layer',label:'Catalyst-layer resistance',description:'Use this tag for resistance inside the catalyst layer.',meaning:{description:'Resistance within the catalyst layer.'}},{id:'leave-out',label:'Leave these matches out',description:'Decide on a broader topic later.',exclude:true}]}]});
+        const data=inputData(prompt),judgements=[],outside=[],questions=[];
+        for(const source of data.sources){
+          const sourceId=source.sourceId??source.factConceptId,entry=data.permittedRegistry.find(value=>value.sourceIds.includes(sourceId)),technology=data.tags.find(value=>value.name==='PEMWE'),tag=data.tags.find(value=>value.name==='local resistance');
+          if(source.name==='proton exchange membrane water electrolysis'&&technology)judgements.push({tagId:technology.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'equivalent',reason:'The actual quotation explicitly studies PEM water electrolysis, grounding this established technology.'});
+          else if(source.name==='catalyst-layer resistance'&&tag){
+            judgements.push({tagId:tag.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'needs-context',reason:'The source cannot choose the researcher’s preferred scope.'});
+            questions.push({tagId:tag.id,sourceIds:[sourceId],kind:'scope',title:'Which resistance measurements should this tag include?',description:'Choose whether this topic follows catalyst-layer resistance or a broader set of transport losses.',choices:[{id:'layer',label:'Catalyst-layer resistance',description:'Use this tag for resistance inside the catalyst layer.',meaning:{description:'Resistance within the catalyst layer.'}},{id:'leave-out',label:'Leave these matches out',description:'Decide on a broader topic later.',exclude:true}]});
+          }else outside.push({sourceIds:[sourceId],disposition:'outside-core',reason:'This separate finding is outside the selected technology tag.'});
+        }
+        return completed({judgements,outside,questions});
       }
       if(prompt.startsWith('You classify scientific papers')){
         const tag=app.state.tags.find(value=>value.name==='PEMWE');
@@ -98,7 +100,7 @@ export async function runNativeV040(app,check,config){
 
     phase='question';app.state.settings.coreConceptLimit=61;await app.invoke('prepare-tags',{scope:'selected',mode:'replace'});await app.waitForIdle();
     check('v040OnlyUnresolvedScopeBecomesQuestion',app.state.tagPreparation?.status==='questions'&&app.state.tagPreparation.questions.length===1,{status:app.state.tagPreparation?.status,questions:app.state.tagPreparation?.questions.length,runMessage:app.state.run?.message,diagnostics:app.state.tagPreparation?.diagnostics});
-    await open('cleanup');button(doc,'Questions (1)').click();await until(()=>button(doc,'Catalyst-layer resistance'),'scientific choices');button(doc,'Catalyst-layer resistance').click();await until(()=>app.state.tagPreparation?.status==='ready'&&!button(doc,'Apply tag list').disabled,'question answered');
+    await open('cleanup');button(doc,'Questions (1)').click();const answerLabel=app.state.tagPreparation.questions[0].choices.find(choice=>!choice.exclude).label;await until(()=>button(doc,answerLabel),'scientific choices');button(doc,answerLabel).click();await until(()=>app.state.tagPreparation?.status==='ready'&&!button(doc,'Apply tag list').disabled,'question answered');
     check('v040QuestionChoiceFinishesPreparation',app.state.tagPreparation.questions.length===0&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags);
     const signIns=[];
     app.invoke=function(action,payload){if(action==='sign-in'){signIns.push(payload);return Promise.resolve();}return oldInvoke.call(this,action,payload);};

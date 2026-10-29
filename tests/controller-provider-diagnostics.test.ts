@@ -7,6 +7,8 @@ import { ProviderClient } from '../src/providers.ts';
 import { paperFingerprint } from '../src/core.ts';
 import type { PaperRecord } from '../src/core.ts';
 import type { LibraryHost, NativeTag, TagPatch } from '../src/platform.ts';
+import {normalizeFacts,createTaxonomyProposal,buildConsolidationPrompt} from '../src/taxonomy.ts';
+import {createRegistrySnapshot} from '../src/evidence.ts';
 
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const QUOTE = 'Electrochemical impedance spectroscopy measures catalyst-layer transport resistance.';
@@ -66,30 +68,32 @@ async function harness(handler: Handler) {
 }
 type Harness = Awaited<ReturnType<typeof harness>>;
 async function run(h: Harness, kind = 'rebuild') { await h.controller.invoke(kind, { scope: 'library' }); await h.controller.waitForIdle(); }
+async function legacyReview(h:Harness){
+  await h.controller.invoke('scan',{scope:'library'});const paper=(await h.host.read(1))!,fact=normalizeFacts(facts(),paper,'deepseek','historical-model'),snapshot=createRegistrySnapshot([fact],h.state.evidenceCatalog),data=JSON.parse(buildConsolidationPrompt([fact],h.state.tags,60,snapshot).split('INPUT_DATA_JSON:\n')[1]),raw=taxonomy(data,true),proposal=createTaxonomyProposal(raw,[fact],h.state.tags,{snapshot,baseVersion:h.state.vocabularyVersion});
+  h.state.facts[paper.id]=fact;h.state.taxonomyProposal=proposal;h.state.run={id:'historical-diagnostics',kind:'rebuild',scope:'library',automatic:false,status:'idle',jobs:[{id:'historical-job',paperId:paper.id,status:'completed'}],vocabCursor:1,vocabFinished:false,message:'A saved proposal awaits reference checks.',spentUSD:2*REQUEST_COST,settings:copy(h.state.settings),vocabularyVersion:h.state.vocabularyVersion,preparationOnly:true,consolidation:{protocolVersion:2,generationId:proposal.id,inputFingerprint:proposal.inputFingerprint,snapshot,candidateIds:copy(proposal.candidateIds??{}),value:raw,correctionAttempts:0,phase:'needs-review'}};
+  await h.controller.initialize();await h.controller.invoke('resume');await h.controller.waitForIdle();
+}
 function assertSafe(h: Harness) {
   assert.equal(h.writes.length, 0); assert.deepEqual(h.native(), [{ tag: 'Manual project', type: 0 }]);
   assert.ok(h.persisted.every(value => !value.includes(KEY)), 'credentials remain only in the credential store');
 }
 
-test('completed malformed consolidation remains reviewable and billed by actual usage without repeated requests on Resume', async t => {
+test('completed malformed chooser replies retain diagnostics and actual usage without repeating exhausted requests on Resume', async t => {
   const h = await harness(call => call.kind === 'facts' ? completion(facts()) : completion(MALFORMED));
   t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); });
-  await run(h); const checkpoint = h.state.run!.consolidation!, proposal = h.state.taxonomyProposal!;
-  assert.equal(h.state.run!.status, 'idle'); assert.equal(h.state.run!.jobs[0].status, 'completed');
-  assert.equal(checkpoint.phase, 'needs-review'); assert.equal(checkpoint.value, MALFORMED); assert.equal(checkpoint.correctionAttempts, 0);
-  assert.ok(proposal.issues.some(issue => /malformed|JSON/i.test(issue))); assert.equal(proposal.rawResponse, MALFORMED);
-  assert.ok(checkpoint.diagnostics!.some(issue => /not valid JSON/i.test(issue)));
-  assert.equal(h.state.run!.preparation!.attempts, 3);assert.equal(h.state.run!.preparation!.responses.length, 3);
+  await run(h); const work=h.state.run!.selection!,task=work.tasks.find(task=>task.kind==='plan')!;
+  assert.equal(h.state.run!.status, 'paused'); assert.equal(h.state.run!.jobs[0].status, 'completed');
+  assert.equal(work.status,'failed');assert.equal(task.invalidResponses,4);assert.equal(task.attempts.length,4);assert.ok(task.attempts.every(attempt=>attempt.raw===MALFORMED&&/not valid JSON/i.test(attempt.error??'')));assert.equal(h.state.taxonomyProposal,null);
   assert.ok(Math.abs(h.state.run!.spentUSD - 5 * REQUEST_COST) < 1e-12, 'initial and bounded repair replies retain their actual token usage');
-  const snapshot = await h.controller.snapshot(); assert.equal(snapshot.queue.consolidation, undefined);assert.equal(snapshot.tagPreparation!.status,'failed');assert.ok(!JSON.stringify(snapshot).includes(MALFORMED));
+  const snapshot = await h.controller.snapshot(); assert.equal(snapshot.queue.consolidation, undefined);assert.equal(snapshot.queue.selection!.failed,true);assert.ok(!JSON.stringify(snapshot).includes(MALFORMED));
   assert.equal(validState(h.state), true); assertSafe(h);
   const count = h.calls.length, restored: AppState = copy(h.state);
   restored.run!.status = 'paused'; restored.run!.vocabFinished = false; restored.taxonomyProposal = null;
   const restarted = new AppController(restored, h.env); t.after(async () => { await restarted.shutdown(); });
   await restarted.initialize(); await restarted.invoke('resume'); await restarted.waitForIdle();
-  assert.equal(restored.run!.status, 'idle'); assert.equal(h.calls.length, count); assert.equal(restored.run!.consolidation!.value, MALFORMED);
+  assert.equal(restored.run!.status, 'paused'); assert.equal(h.calls.length, count);assert.deepEqual(restored.run!.selection!.tasks.find(task=>task.id===work.tasks[0].id)!.attempts,task.attempts);
   assert.ok(Math.abs(restored.run!.spentUSD - 5 * REQUEST_COST) < 1e-12);
-  assert.ok(restored.taxonomyProposal!.issues.length); await assert.rejects(restarted.invoke('approve-taxonomy', { id: restored.taxonomyProposal!.id }), /malformed|JSON|review|evidence/i);
+  assert.equal(restored.taxonomyProposal,null);await assert.rejects(restarted.invoke('approve-taxonomy', { id: work.id }), /changed|proposal/i);
 });
 
 test('malformed assignment output pauses before suggestions or native writes while retaining actual completed-request cost', async t => {
@@ -103,7 +107,7 @@ test('malformed assignment output pauses before suggestions or native writes whi
 test('malformed preparation repairs preserve candidate identities and valid evidence until an explicit edit', async t => {
   const badCorrection = 'A completed reference correction with malformed JSON: }';
   const h = await harness(call => call.kind === 'facts' ? completion(facts()) : call.kind === 'taxonomy' ? completion(taxonomy(call.data, true)) : completion(badCorrection));
-  t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await run(h);
+  t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await legacyReview(h);
   const checkpoint = h.state.run!.consolidation!, proposal = h.state.taxonomyProposal!, tag = proposal.tags.find(tag => tag.name === 'EIS')!;
   assert.equal(h.state.run!.status, 'idle'); assert.equal(checkpoint.phase, 'needs-review'); assert.equal(checkpoint.correctionAttempts, 0);
   assert.equal(h.state.run!.preparation!.attempts,3);assert.ok(h.state.run!.preparation!.responses.every(reply=>reply.raw===badCorrection));assert.ok(h.state.tagPreparation!.diagnostics.some(issue=>/read|JSON/i.test(issue)));
@@ -115,7 +119,7 @@ test('malformed preparation repairs preserve candidate identities and valid evid
   assert.ok(Math.abs(h.state.run!.spentUSD - 5 * REQUEST_COST) < 1e-12); assertSafe(h);
   const snapshot = await h.controller.snapshot(); assert.equal(snapshot.queue.consolidation, undefined);assert.ok(!JSON.stringify(snapshot).includes(badCorrection));
   const restored = copy(h.state), requestsBeforeRestart = h.calls.length;
-  restored.run!.status = 'paused'; restored.run!.vocabFinished = false; restored.taxonomyProposal = null;
+  restored.run!.status = 'paused'; restored.run!.vocabFinished = false;
   const restarted = new AppController(restored, h.env); t.after(async () => { await restarted.shutdown(); });
   await restarted.initialize(); await restarted.invoke('resume'); await restarted.waitForIdle();
   assert.equal(h.calls.length, requestsBeforeRestart, 'reparsing a completed malformed correction cannot send another automatic attempt');
@@ -136,13 +140,9 @@ test('malformed preparation repairs preserve candidate identities and valid evid
 test('truncated provider output cannot be approved even if its partial assistant text is valid taxonomy JSON', async t => {
   const h = await harness(call => call.kind === 'facts' ? completion(facts()) : call.kind==='taxonomy'?completion(taxonomy(call.data), 'length'):completion(MALFORMED));
   t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await run(h);
-  const checkpoint = h.state.run!.consolidation!, proposal = h.state.taxonomyProposal!;
-  assert.equal(h.state.run!.status, 'idle'); assert.equal(typeof checkpoint.value, 'string');
-  assert.match(checkpoint.responseIssue!, /partial|completed|regenerate/i); assert.equal(checkpoint.correctionAttempts, 0);
-  assert.ok(proposal.tags.some(tag => tag.name === 'EIS'), 'valid-looking partial content is available for diagnostics');
-  assert.ok(proposal.issues.some(issue => /partial|completed|regenerate/i.test(issue)));
-  await assert.rejects(h.controller.invoke('approve-taxonomy', { id: proposal.id }), /partial|completed|regenerate/i);
-  assert.equal(h.calls.filter(call => call.kind === 'correction').length, 3);assert.equal(h.state.run!.preparation!.attempts,3); assertSafe(h);
+  const work=h.state.run!.selection!,task=work.tasks.find(task=>task.kind==='plan')!;
+  assert.equal(h.state.run!.status,'paused');assert.equal(work.status,'failed');assert.equal(task.attempts.length,4);assert.ok(task.attempts.every(attempt=>attempt.diagnosticOnly&&typeof attempt.raw==='string'&&JSON.parse(attempt.raw).tags.some((tag:any)=>tag.name==='EIS')),'valid-looking partial text stays available only as retained diagnostics');
+  assert.equal(work.plan,undefined);assert.equal(h.state.taxonomyProposal,null);await assert.rejects(h.controller.invoke('approve-taxonomy',{id:work.id}),/proposal|changed/i);assert.equal(h.calls.filter(call=>call.kind==='taxonomy').length,4);assertSafe(h);
 });
 
 test('HTTP authentication bodies never become model diagnostics or leak credentials into checkpoints and snapshots', async t => {
@@ -152,7 +152,7 @@ test('HTTP authentication bodies never become model diagnostics or leak credenti
   }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
   t.after(async () => { await h.controller.shutdown(); await h.ai.dispose(); }); await run(h);
   assert.equal(h.state.run!.status, 'paused'); assert.match(h.state.run!.message, /authentication denied/i);
-  const checkpoint = h.state.run!.consolidation!; assert.equal(checkpoint.value, undefined); assert.equal(checkpoint.correctionValue, undefined);
+  const task=h.state.run!.selection!.tasks.find(task=>task.kind==='plan')!;assert.ok(task.transportPaused);assert.ok(task.attempts.every(attempt=>attempt.raw===null));assert.equal(h.state.run!.selectionReplies?.length??0,0);
   assert.equal(h.state.taxonomyProposal, null); assert.equal(h.state.run!.jobs[0].status, 'completed');
   const snapshot = await h.controller.snapshot(), serialized = JSON.stringify({ state: h.state, snapshot, persisted: h.persisted });
   assert.ok(!serialized.includes(KEY)); assert.ok(!serialized.includes(bodyMarker));

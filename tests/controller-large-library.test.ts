@@ -3,153 +3,115 @@ import assert from 'node:assert/strict';
 import {AppController,initialState,validState} from '../src/controller.ts';
 import type {AppState,ControllerEnvironment} from '../src/controller.ts';
 import {fingerprint,paperFingerprint} from '../src/core.ts';
-import type {PaperRecord} from '../src/core.ts';
+import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import {ensureFactConceptIds,createRegistrySnapshot} from '../src/evidence.ts';
 import type {PaperFacts} from '../src/taxonomy.ts';
 import type {CompletionResult,ProviderSettings} from '../src/providers.ts';
 import {ProviderError} from '../src/providers.ts';
-import {CONSOLIDATION_REQUEST_BYTE_LIMIT,createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult} from '../src/library-consolidation.ts';
+import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult} from '../src/library-consolidation.ts';
+import {nextSelectionRequests,resumeTagSelection,SELECTION_MAX_REQUESTS} from '../src/tag-selection.ts';
 
-const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
-interface InputCandidate {registryId?:string;candidateId?:string;name?:string;sources?:{label:string}[]}
-interface StageInput {requestId:string;consolidationStage:'map'|'reduce'|'final';conceptRegistry?:InputCandidate[];candidates?:InputCandidate[];preparationPolicyVersion?:number;consolidationRepair?:boolean;failedResponse?:{tags?:{key:string;facet:string}[]}|string;permittedInputs?:{id?:string;candidateId?:string;labels?:{label:string}[];name?:string}[]}
-function retainedLibrary(papers=64,conceptsPerPaper=4):AppState {
+const clone=<T>(value:T):T=>structuredClone(value);
+interface Source {sourceId:string;registryId:string;name:string}
+interface Input {requestId:string;selectionPhase:'choosing'|'mapping';conceptRegistry?:{registryId:string;sources:{label:string;facet:string}[]}[];tags?:TagDefinition[];sources?:Source[]}
+function library(total=64,concepts=4):AppState {
   const state=initialState();state.settings.model='synthetic-model';
-  for(let index=0;index<papers;index++){
-    const quotations=Array.from({length:conceptsPerPaper},(_,concept)=>`Synthetic phenomenon ${index*conceptsPerPaper+concept} is established by this experiment. ${'The supporting scientific measurement is reported in the supplied abstract. '.repeat(20)}`),paper:PaperRecord={id:`1:P${index}`,itemID:index+1,libraryID:1,key:`P${index}`,title:`Synthetic experiment ${index}`,abstract:quotations.join(' '),keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);
-    const facts:PaperFacts={paperId:paper.id,metadataFingerprint:paper.fingerprint,inputFingerprint:paper.fingerprint,provider:'retained-provider',model:'retained-model',extractionVersion:1,summary:'A retained validated scientific synopsis. '.repeat(30),needsPDF:false,concepts:quotations.map((quote,concept)=>({name:`synthetic phenomenon ${index*conceptsPerPaper+concept}`,facet:'phenomenon',evidence:[{source:'abstract',text:quote}]}))};state.papers[paper.id]=paper;state.facts[paper.id]=facts;state.nativeTags[paper.id]=[{tag:'Manual project',type:0}];
+  for(let index=0;index<total;index++){
+    const quotations=Array.from({length:concepts},(_,concept)=>`Synthetic phenomenon ${index*concepts+concept} is established by the measurements in this experiment.`),paper:PaperRecord={id:`1:P${index}`,itemID:index+1,libraryID:1,key:`P${index}`,title:`Synthetic experiment ${index}`,abstract:quotations.join(' '),keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);
+    const fact:PaperFacts={paperId:paper.id,metadataFingerprint:paper.fingerprint,inputFingerprint:paper.fingerprint,provider:'retained-provider',model:'retained-model',extractionVersion:1,summary:'Retained scientific measurements.',needsPDF:false,concepts:quotations.map((text,concept)=>({name:`synthetic phenomenon ${index*concepts+concept}`,facet:'phenomenon',evidence:[{source:'abstract',text}]}))};state.papers[paper.id]=paper;state.facts[paper.id]=fact;state.nativeTags[paper.id]=[{tag:'Manual project',type:0}];
   }
   ensureFactConceptIds(Object.values(state.facts));
-  state.run={id:'completed-library-extraction',kind:'rebuild',scope:'library',automatic:false,status:'paused',jobs:Object.keys(state.papers).map(paperId=>({id:`job-${paperId}`,paperId,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Resume retained consolidation.',spentUSD:0.15,settings:clone(state.settings),vocabularyVersion:state.vocabularyVersion};return state;
+  state.run={id:'retained-run',kind:'rebuild',scope:'library',automatic:false,status:'paused',jobs:Object.keys(state.papers).map(paperId=>({id:`job-${paperId}`,paperId,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Retained analysis.',spentUSD:0.15,settings:clone(state.settings),vocabularyVersion:state.vocabularyVersion};return state;
 }
-function stageResponse(data:StageInput) {
-  if(data.consolidationRepair){
-    if(typeof data.failedResponse==='object'&&Array.isArray(data.failedResponse?.tags))return {repairs:data.failedResponse.tags.filter(tag=>tag.facet==='invalid-category').map(tag=>({key:tag.key,facet:'phenomenon'}))};
-    const registry=data.permittedInputs?.some(entry=>entry.labels);return stageResponse({...data,consolidationRepair:false,...(registry?{conceptRegistry:data.permittedInputs!.map(entry=>({registryId:entry.id,sources:entry.labels}))}:{candidates:data.permittedInputs!.map(entry=>({candidateId:entry.candidateId??entry.id,name:entry.name}))})});
-  }
-  const registry=!!data.conceptRegistry,entries=data.conceptRegistry??data.candidates??[];
-  return {tags:entries.map((entry,index)=>{const name=registry?entry.sources![0].label:entry.name!;return {key:`output-${index}`,name,fullName:name,description:`The experimentally established scientific scope of ${name}.`,facet:'phenomenon',aliases:[],parentKeys:[],relatedKeys:[],...(registry?{supportRegistryIds:[entry.registryId]}:{supportCandidateIds:[entry.candidateId]})};}),merges:[],excluded:[]};
+function reply(data:Input){
+  if(data.selectionPhase==='choosing')return {tags:data.conceptRegistry!.slice(0,2).map((entry,index)=>({key:`chosen-${index}`,name:entry.sources[0].label,fullName:entry.sources[0].label,description:`Scientific scope of ${entry.sources[0].label}.`,facet:entry.sources[0].facet,aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[entry.registryId]})),merges:[],excluded:[]};
+  const judgements:{tagId:string;registryId:string;sourceIds:string[];relation:string;reason:string}[]=[],outside:{sourceIds:string[];disposition:string;reason:string}[]=[];
+  for(const source of data.sources!){const tag=data.tags!.find(tag=>tag.name===source.name);if(tag)judgements.push({tagId:tag.id,registryId:source.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The original quotation directly establishes this selected phenomenon.'});else outside.push({sourceIds:[source.sourceId],disposition:'outside-core',reason:'This retained detail is outside the compact chosen core.'});}
+  return {judgements,outside};
 }
-interface HarnessOptions {
-  failRequest?:number;interruptReturned?:boolean;malformedRequest?:number;verbose?:boolean;invalidFacetRequest?:number;blockCorrectionBudget?:boolean;authCorrection?:boolean;interruptCorrection?:boolean;
-  respond?:(data:StageInput,request:number,settings:ProviderSettings,signal?:AbortSignal)=>ReturnType<typeof stageResponse>|undefined|Promise<ReturnType<typeof stageResponse>|undefined>;
-  costUSD?:number;interruptWhen?:(state:AppState)=>boolean;onSaved?:(state:AppState)=>void;
-}
-function harness(state:AppState,options:HarnessOptions={}) {
-  const calls:{id:string;phase:string;bytes:number;kind:'initial'|'correction';provider:ProviderSettings['mode'];generation:number}[]=[],saved:AppState[]=[];let writes=0,pdfReads=0,interrupted=false,verbose=options.verbose??false,persistedReturned=false;
-  const ai:ControllerEnvironment['ai']={async completeJson(_system:string,prompt:string,settings:ProviderSettings,signal?:AbortSignal):Promise<CompletionResult>{
-    assert.equal(settings.model,'synthetic-model');const data:StageInput=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);assert.ok(data.consolidationStage,'Completed factual extraction must not call the extractor or unrelated provider workflows');assert.equal(data.preparationPolicyVersion,undefined,'These exact factual names need no semantic repair');const count=new TextEncoder().encode(prompt).length;assert.ok(count<=CONSOLIDATION_REQUEST_BYTE_LIMIT);calls.push({id:data.requestId,phase:data.consolidationStage,bytes:count,kind:data.consolidationRepair?'correction':'initial',provider:settings.mode,generation:state.run?.consolidation?.work?.tasks.find(task=>task.id===data.requestId)?.requestGeneration??0});if(calls.length===options.failRequest)throw new Error('Synthetic interrupted provider connection');if(data.consolidationRepair&&options.authCorrection)throw new ProviderError('Synthetic authentication denied.','authentication',{status:401});if(calls.length===options.malformedRequest)throw new ProviderError('The completed assistant reply was not JSON.','invalid-response',{rawText:'RETAINED_MALFORMED_STAGE_REPLY }',completion:{text:'RETAINED_MALFORMED_STAGE_REPLY }',usage:{inputTokens:10,outputTokens:10},usageKnown:true,estimatedCostUSD:0}});const value=await options.respond?.(data,calls.length,settings,signal)??stageResponse(data);if('tags' in value){if(verbose)for(const tag of value.tags)tag.description='A scientifically separate scope remains deliberately verbose. '.repeat(28);if(calls.length===options.invalidFacetRequest){value.tags[0].facet='invalid-category';if(options.blockCorrectionBudget)state.run!.settings.budgetUSD=0;}}return {value,text:JSON.stringify(value),usage:{inputTokens:10,outputTokens:10},usageKnown:true,estimatedCostUSD:options.costUSD??0};
-  },async hasApiKey(){return true;},async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};},async testConnection(){throw new Error('No connection test is required');},async listModels(){return [];},async setApiKey(){},async removeApiKey(){},async signIn(){throw new Error('No sign-in is required');},cancelSignIn(){},async signOut(){return {revoked:true};},async selectAccount(){}};
-  const env:ControllerEnvironment={ai,host:{async list(){return clone(Object.values(state.papers));},async read(itemID){return clone(Object.values(state.papers).find(paper=>paper.itemID===itemID)??null);},async readTags(){return [{tag:'Manual project',type:0}];},async pdfText(){pdfReads++;return '';},async apply(){writes++;throw new Error('Consolidation cannot write native tags');},async show(){},async saveSearch(){}},persist:async next=>{
-    if(!interrupted&&(options.interruptReturned&&next.run?.consolidation?.pendingResponse||options.interruptCorrection&&next.run?.consolidation?.pendingResponse?.kind==='correction'||options.interruptWhen?.(next))){interrupted=true;throw new Error('Synthetic interruption after receiving a completed response');}persistedReturned ||= !!next.run?.consolidation?.pendingResponse;options.onSaved?.(next);saved.splice(0,saved.length,clone(next));
-  }};
-  return {state,calls,saved,controller:new AppController(state,env),writes:()=>writes,pdfReads:()=>pdfReads,persistedReturned:()=>persistedReturned,setVerbose:(value:boolean)=>{verbose=value;}};
+interface Options {respond?:(input:Input,number:number,signal?:AbortSignal)=>unknown|Promise<unknown>;save?:(state:AppState)=>void|Promise<void>;cost?:number}
+function harness(state=library(),options:Options={}){
+  const calls:{id:string;phase:string;bytes:number}[]=[],saved:AppState[]=[];let running=0,peak=0,writes=0,pdf=0;
+  const ai:ControllerEnvironment['ai']={async completeJson(_system:string,prompt:string,_settings:ProviderSettings,signal?:AbortSignal):Promise<CompletionResult>{
+    const input:Input=JSON.parse(prompt.slice(prompt.lastIndexOf('INPUT_DATA_JSON:')+'INPUT_DATA_JSON:'.length));assert.ok(input.selectionPhase,'Cached paper facts must not trigger extraction');const bytes=new TextEncoder().encode(prompt).length;assert.ok(bytes<=90_000);calls.push({id:input.requestId,phase:input.selectionPhase,bytes});running++;peak=Math.max(peak,running);
+    try{await new Promise<void>(resolve=>setImmediate(resolve));const value=await options.respond?.(input,calls.length,signal)??reply(input);return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:10,outputTokens:10},estimatedCostUSD:options.cost??0};}finally{running--;}
+  },async hasApiKey(){return true;},async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};},async testConnection(){throw new Error('No connection check needed');},async listModels(){return [];},async setApiKey(){},async removeApiKey(){},async signIn(){throw new Error('No sign-in needed');},cancelSignIn(){},async signOut(){return {revoked:true};},async selectAccount(){}};
+  const env:ControllerEnvironment={ai,host:{async list(){return clone(Object.values(state.papers));},async read(itemID){return clone(Object.values(state.papers).find(paper=>paper.itemID===itemID)??null);},async readTags(){return [{tag:'Manual project',type:0}];},async pdfText(){pdf++;return '';},async apply(){writes++;throw new Error('Building tags cannot write native tags');},async show(){},async saveSearch(){}},persist:async value=>{await options.save?.(value);saved.splice(0,saved.length,clone(value));}};
+  return {state,calls,saved,controller:new AppController(state,env),peak:()=>peak,writes:()=>writes,pdf:()=>pdf};
 }
 async function resume(h:ReturnType<typeof harness>){await h.controller.invoke('resume');await h.controller.waitForIdle();}
-function retainedCheckpoint(state:AppState,completedFirst=false){
-  const facts=state.run!.jobs.map(job=>state.facts[job.paperId]).sort((a,b)=>a.paperId.localeCompare(b.paperId)),snapshot=createRegistrySnapshot(facts,state.evidenceCatalog),existing=state.tags;
-  let work=createConsolidationWork(facts,existing,snapshot,state.settings.coreConceptLimit??60);
-  if(completedFirst){const request=nextConsolidationRequest(work)!;work=acceptConsolidationResult(work,request.id,stageResponse(JSON.parse(request.prompt.split('INPUT_DATA_JSON:\n')[1])));}
-  state.run!.consolidation={protocolVersion:2,generationId:'retained-work',inputFingerprint:fingerprint({protocolVersion:2,facts,existing,limit:state.settings.coreConceptLimit??60,baseVersion:state.vocabularyVersion}),snapshot,candidateIds:{},correctionAttempts:0,phase:'generating',work};return work;
+function legacyCheckpoint(state:AppState){
+  const facts=Object.values(state.facts),snapshot=createRegistrySnapshot(facts,state.evidenceCatalog);let work=createConsolidationWork(facts,state.tags,snapshot),request=nextConsolidationRequest(work)!;const data=JSON.parse(request.prompt.split('INPUT_DATA_JSON:\n')[1]);work=acceptConsolidationResult(work,request.id,{tags:data.conceptRegistry.map((entry:{registryId:string;sources:{label:string}[]},index:number)=>({key:`old-${index}`,name:entry.sources[0].label,fullName:entry.sources[0].label,description:'A retained scientific scope.',facet:'phenomenon',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[entry.registryId]})),merges:[],excluded:[]});
+  state.run!.consolidation={protocolVersion:2,generationId:'legacy-generation',inputFingerprint:'legacy-input',snapshot,candidateIds:{},correctionAttempts:0,phase:'generating',work};
 }
 
-test('public controller resumes cached library facts through bounded map and global requests into one proposal',async()=>{
-  const state=retainedLibrary(),facts=fingerprint(state.facts),active=fingerprint(state.tags),h=harness(state);await resume(h);
-  assert.equal(state.run!.status,'idle');assert.equal(state.run!.jobs.filter(job=>job.status==='completed').length,64);assert.equal(state.run!.consolidation!.work!.status,'complete');assert.ok(h.calls.filter(call=>call.phase==='map').length>1);assert.equal(h.calls.at(-1)!.phase,'final');assert.equal(h.calls.filter(call=>call.phase==='final').length,1);assert.ok(h.calls.every(call=>call.bytes<=CONSOLIDATION_REQUEST_BYTE_LIMIT));
-  const proposal=state.taxonomyProposal!;assert.equal(proposal.paperIds.length,64);assert.equal(proposal.tags.filter(tag=>!tag.custom).length,256);assert.deepEqual(proposal.issues,[]);assert.equal(state.tagPreparation!.status,'ready');assert.equal(fingerprint(state.facts),facts);assert.equal(fingerprint(state.tags),active);assert.equal(h.writes(),0);assert.equal(h.pdfReads(),0);assert.equal(validState(state),true);
-  assert.deepEqual(new Set(proposal.tags.filter(tag=>!tag.custom).flatMap(tag=>proposal.support[tag.id].registryIds!)),new Set(Object.keys(proposal.evidenceSnapshot!.entries)));assert.equal(h.persistedReturned(),true,'completed transport output is persisted before local parsing');
-});
-test('restart retains completed consolidation batches and never repeats their provider requests or extraction',async()=>{
-  const state=retainedLibrary(),facts=fingerprint(state.facts),first=harness(state,{failRequest:2});await resume(first);assert.equal(state.run!.status,'paused');const completed=state.run!.consolidation!.work!.tasks.filter(task=>task.completed);assert.equal(completed.length,1);const originalId=completed[0].id;
-  const restored=harness(clone(first.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle');assert.equal(restored.state.tagPreparation!.status,'ready');assert.ok(restored.calls.every(call=>call.id!==originalId));assert.equal([...first.calls,...restored.calls].filter(call=>call.id===originalId).length,1);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
-});
-test('a returned but unparsed response is replayed after restart without another dispatch',async()=>{
-  const first=harness(retainedLibrary(),{interruptReturned:true});await resume(first);assert.equal(first.state.run!.status,'paused');assert.ok(first.state.run!.consolidation!.pendingResponse);const receivedId=first.calls[0].id,restored=harness(clone(first.saved.at(-1)!));
-  await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle');assert.ok(restored.calls.every(call=>call.id!==receivedId));assert.equal(restored.state.run!.consolidation!.pendingResponse,undefined);assert.equal(restored.state.run!.consolidation!.work!.tasks.find(task=>task.id===receivedId)!.completed,true);assert.equal(restored.writes(),0);
+test('cached large-library work becomes one global choice and a finite mapping pass with at most two requests',async()=>{
+  const h=harness(),facts=fingerprint(h.state.facts),tags=fingerprint(h.state.tags),native=fingerprint(h.state.nativeTags);await resume(h);
+  assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.state.run!.selection!.status,'ready');assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.ok(h.calls.filter(call=>call.phase==='mapping').length>1);assert.equal(h.peak(),2);assert.equal(h.state.tagPreparation!.status,'ready');assert.equal(Object.keys(h.state.run!.selection!.sourceLedger).length,256);assert.ok(Object.values(h.state.run!.selection!.sourceLedger).every(value=>value.status!=='pending'));assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length,2);assert.equal(fingerprint(h.state.facts),facts);assert.equal(fingerprint(h.state.tags),tags);assert.equal(fingerprint(h.state.nativeTags),native);assert.equal(h.writes(),0);assert.equal(h.pdf(),0);assert.equal(validState(h.state),true);
+  const display=await h.controller.snapshot();assert.equal(display.queue.selection!.sourceTotal,256);assert.equal(display.queue.selection!.sourceCompleted,256);assert.ok(h.state.run!.selection!.tasks.every(task=>task.attempts.every(attempt=>typeof attempt.raw==='string')),'Original provider reply text is retained for replay');
 });
 
-test('malformed completed stage output is corrected once while its original diagnostic remains retained',async()=>{
-  const state=retainedLibrary(),facts=fingerprint(state.facts),h=harness(state,{malformedRequest:2});await resume(h);assert.equal(state.run!.status,'idle');const checkpoint=state.run!.consolidation!,work=checkpoint.work!,first=work.tasks[0],corrected=work.tasks.find(task=>task.correctionAttempts===1)!;
-  assert.ok(corrected.attempts!.some(attempt=>attempt.kind==='initial'&&attempt.raw==='RETAINED_MALFORMED_STAGE_REPLY }'));assert.equal(h.calls.filter(call=>call.id===first.id).length,1);assert.equal(h.calls.filter(call=>call.id===corrected.id).length,2);assert.equal(h.calls.filter(call=>call.kind==='correction').length,1);assert.equal(state.tagPreparation!.status,'ready');assert.equal(fingerprint(state.facts),facts);assert.equal(h.writes(),0);const calls=h.calls.length;await resume(h);assert.equal(h.calls.length,calls);
-});
-test('ordinary Resume preserves exhausted unproductive organization instead of discarding its durable limits',async()=>{
-  const state=retainedLibrary(),facts=fingerprint(state.facts),h=harness(state,{verbose:true});await resume(h);assert.equal(state.run!.status,'paused');assert.equal(state.run!.consolidation!.work!.status,'failed');assert.equal(state.run!.consolidation!.failed,true);const work=fingerprint(state.run!.consolidation!.work),generation=state.run!.consolidation!.generationId,spent=state.run!.spentUSD,requestCount=h.calls.length;assert.equal(state.taxonomyProposal,null);
-  h.setVerbose(false);await resume(h);assert.equal(state.run!.status,'paused');assert.equal(fingerprint(state.run!.consolidation!.work),work);assert.equal(state.run!.consolidation!.generationId,generation);assert.equal(h.calls.length,requestCount);assert.equal(fingerprint(state.facts),facts);assert.equal(state.run!.spentUSD,spent);assert.equal(h.writes(),0);
+test('legacy completed portions and raw outputs remain immutable while new selection reuses the exact snapshot',async()=>{
+  const state=library();legacyCheckpoint(state);const checkpoint=fingerprint(state.run!.consolidation),snapshot=state.run!.consolidation!.snapshot.id,h=harness(state);await resume(h);
+  assert.equal(state.run!.status,'idle',state.run!.message);assert.equal(fingerprint(state.run!.consolidation),checkpoint);assert.equal(state.run!.selection!.snapshotId,snapshot);assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.equal(h.pdf(),0);assert.equal(h.writes(),0);
 });
 
-test('a stage correction rejected by budget keeps its undispatched attempt available and retains cached facts',async()=>{
-  const state=retainedLibrary();Object.assign(state.settings,{provider:'api',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:10,maxOutputTokens:1024});state.run!.settings=clone(state.settings);const facts=fingerprint(state.facts),h=harness(state,{invalidFacetRequest:1,blockCorrectionBudget:true});await resume(h);
-  assert.equal(state.run!.status,'paused');const task=state.run!.consolidation!.work!.tasks.find(task=>!task.completed)!;assert.equal(task.correctionAttempts??0,0);assert.equal(task.correctionPending,true);assert.equal(h.calls.filter(call=>call.kind==='correction').length,0);assert.equal(state.run!.consolidation!.work!.automaticRequests,1);assert.ok(task.validationError);assert.equal(fingerprint(state.facts),facts);
-  await h.controller.invoke('save-settings',{settings:{...state.settings,budgetUSD:10}});await resume(h);assert.equal(state.run!.status,'idle');assert.equal(task.id,state.run!.consolidation!.work!.tasks[0].id);assert.equal(state.run!.consolidation!.work!.tasks[0].correctionAttempts,1);assert.equal(h.calls.filter(call=>call.kind==='correction').length,1);assert.equal(state.run!.consolidation!.work!.automaticRequests,h.calls.length);assert.equal(fingerprint(state.facts),facts);assert.equal(h.writes(),0);
-});
-test('authentication after correction dispatch remains consumed across restart until explicit Resume retries that part',async()=>{
-  const state=retainedLibrary(),facts=fingerprint(state.facts),h=harness(state,{invalidFacetRequest:2,authCorrection:true});await resume(h);assert.equal(state.run!.status,'paused');const work=state.run!.consolidation!.work!,completed=work.tasks.find(task=>task.completed)!,failed=work.tasks.find(task=>!task.completed)!,workId=work.id,spent=state.run!.spentUSD;
-  assert.equal(failed.correctionAttempts,1);assert.equal(failed.correctionPending,false);assert.equal(h.calls.filter(call=>call.kind==='correction').length,1);
-  const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();assert.equal(restored.calls.length,0);assert.equal(restored.state.run!.consolidation!.work!.tasks.find(task=>task.id===failed.id)!.correctionAttempts,1);
-  await resume(restored);assert.equal(restored.state.run!.status,'idle');assert.equal(restored.state.run!.consolidation!.work!.id,workId);assert.ok(restored.calls.every(call=>call.id!==completed.id));const retried=restored.state.run!.consolidation!.work!.tasks.find(task=>task.id===failed.id)!;assert.equal(retried.requestGeneration,1);assert.equal(retried.correctionAttempts,0);assert.ok(restored.state.run!.spentUSD>=spent);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
-});
-test('a persisted completed correction response is replayed after restart without a second correction dispatch',async()=>{
-  const h=harness(retainedLibrary(),{invalidFacetRequest:1,interruptCorrection:true});await resume(h);assert.equal(h.state.run!.status,'paused');const checkpoint=h.state.run!.consolidation!,pending=checkpoint.pendingResponse!;assert.equal(pending.kind,'correction');assert.equal(checkpoint.work!.tasks[0].correctionAttempts,1);assert.equal(h.calls.filter(call=>call.kind==='correction').length,1);
-  const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle');assert.ok(restored.calls.every(call=>call.id!==pending.requestId));assert.equal(restored.state.run!.consolidation!.work!.tasks[0].correctionAttempts,1);assert.equal(restored.state.run!.consolidation!.pendingResponse,undefined);assert.equal(restored.state.tagPreparation!.status,'ready');assert.equal(restored.writes(),0);
+test('a returned response is persisted and replayed after an interrupted save without another request',async()=>{
+  let interrupted=false;const first=harness(library(),{save(state){if(!interrupted&&state.run?.selectionReplies?.length){interrupted=true;throw new Error('Interrupted after receiving the complete reply');}}});await resume(first);assert.equal(first.state.run!.status,'paused');assert.ok(first.state.run!.selectionReplies!.length);
+  const received=first.state.run!.selectionReplies![0].taskId,restored=harness(clone(first.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle',restored.state.run!.message);assert.ok(restored.calls.every(call=>call.id!==received));assert.equal([...first.calls,...restored.calls].filter(call=>call.id===received).length,1);assert.equal(restored.writes(),0);
 });
 
-test('a failed correction advances automatically to a fresh bounded generation and completes without another Resume',async()=>{
-  const state=retainedLibrary(20);Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:10});state.run!.settings=clone(state.settings);
-  const facts=fingerprint(state.facts),native=fingerprint(state.nativeTags),spent=state.run!.spentUSD;
-  const h=harness(state,{costUSD:0.0002,respond(data,index){if(index===1)return {tags:[],merges:[],excluded:[]};if(data.consolidationRepair)return {repairs:[]};return stageResponse(data);}});
-  await resume(h);
-  assert.equal(state.run!.status,'idle',state.run!.message);assert.equal(state.tagPreparation!.status,'ready');assert.deepEqual(h.calls.slice(0,3).map(call=>call.kind),['initial','correction','initial']);
-  assert.equal(h.calls.filter(call=>call.kind==='correction').length,1);assert.ok(h.calls.every(call=>call.provider==='deepseek'&&call.bytes<=CONSOLIDATION_REQUEST_BYTE_LIMIT));assert.ok(state.run!.spentUSD>spent);
-  assert.equal(fingerprint(state.facts),facts);assert.equal(fingerprint(state.nativeTags),native);assert.equal(state.run!.jobs.filter(job=>job.status==='completed').length,20);assert.equal(h.writes(),0);assert.equal(h.pdfReads(),0);
-  const work=state.run!.consolidation!.work!;assert.equal(work.automaticRequests,h.calls.length);assert.ok(work.tasks.some(task=>(task.requestGeneration??0)>0));assert.ok(work.tasks.some(task=>task.attempts?.some(attempt=>attempt.kind==='correction')));
+test('one malformed mapping reply receives one automatic correction without repeating the global choice',async()=>{
+  let bad=false;const h=harness(library(),{respond(input){if(input.selectionPhase==='mapping'&&!bad){bad=true;return {judgements:[],outside:[]};}return reply(input);}});await resume(h);assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.ok(h.state.run!.selection!.tasks.some(task=>task.invalidResponses===1));assert.equal(h.writes(),0);
 });
 
-test('provider failures during correction stop automatic recovery and preserve the selected paid provider across restart',async()=>{
-  for(const category of ['authentication','quota','permission','configuration','network'] as const){
-    const state=retainedLibrary(20);Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:10});state.run!.settings=clone(state.settings);const facts=fingerprint(state.facts),spent=state.run!.spentUSD;
-    const h=harness(state,{costUSD:0.0002,respond(data,index){if(index===1)return {tags:[],merges:[],excluded:[]};if(data.consolidationRepair)throw new ProviderError(`Synthetic ${category} stop.`,category,{status:category==='quota'?429:category==='network'?503:401});return stageResponse(data);}});
-    await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,2);assert.equal(state.taxonomyProposal,null);assert.equal(state.run!.consolidation!.work!.automaticRequests,2);assert.ok(h.calls.every(call=>call.provider==='deepseek'));assert.equal(state.settings.provider,'deepseek');assert.ok(state.run!.spentUSD>=spent);
-    const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();assert.equal(restored.calls.length,0);assert.equal(restored.state.run!.spentUSD,state.run!.spentUSD);assert.equal(restored.state.run!.consolidation!.work!.automaticRequests,2);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
-  }
+test('an unsupported empty selection can explicitly choose again without repeating facts or resetting spending',async()=>{
+  let unsupported=true;const h=harness(library(),{respond(input){return input.selectionPhase==='mapping'&&unsupported?{judgements:[],outside:input.sources!.map(source=>({sourceIds:[source.sourceId],disposition:'outside-core',reason:'No chosen meaning is established by this original finding.'}))}:reply(input);}}),facts=fingerprint(h.state.facts);
+  await resume(h);assert.equal(h.state.run!.status,'idle');assert.equal(h.state.tagPreparation!.status,'failed');assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length,0);
+  unsupported=false;await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();
+  assert.equal(h.state.tagPreparation!.status,'ready');assert.equal(h.calls.filter(call=>call.phase==='choosing').length,2);assert.equal(fingerprint(h.state.facts),facts);assert.equal(h.state.run!.spentUSD,0.15);assert.equal(h.writes(),0);assert.ok(h.state.tagSelectionHistory!.length);
 });
 
-test('cancelling a pending correction prevents late output from dispatching a fresh generation or changing evidence',async t=>{
-  const state=retainedLibrary(20),facts=fingerprint(state.facts);let entered!:()=>void,release!:()=>void;
-  const started=new Promise<void>(resolve=>{entered=resolve;}),waiting=new Promise<void>(resolve=>{release=resolve;});let signal:AbortSignal|undefined;
-  const h=harness(state,{async respond(data,index,_settings,requestSignal){if(index===1)return {tags:[],merges:[],excluded:[]};if(data.consolidationRepair){signal=requestSignal;entered();await waiting;return {repairs:[]};}return stageResponse(data);}});t.after(()=>release());
-  await h.controller.invoke('resume');await started;await h.controller.invoke('cancel');assert.equal(signal?.aborted,true);release();await h.controller.waitForIdle();
-  assert.equal(state.run!.status,'idle');assert.match(state.run!.message,/cancel/i);assert.equal(h.calls.length,2);assert.equal(state.taxonomyProposal,null);assert.equal(fingerprint(state.facts),facts);assert.equal(h.writes(),0);assert.equal(h.pdfReads(),0);
+test('exhausted mapping correction pauses clearly and ordinary Resume cannot reset its allowance',async()=>{
+  let invalid=true;const h=harness(library(),{respond(input){return input.selectionPhase==='mapping'&&invalid?{judgements:[],outside:[]}:reply(input);}});await resume(h);assert.equal(h.state.run!.status,'paused');assert.equal(h.state.run!.selection!.status,'failed');const calls=h.calls.length,requests=h.state.run!.selection!.automaticRequests;await resume(h);assert.equal(h.calls.length,calls);assert.equal(h.state.run!.selection!.automaticRequests,requests);assert.equal((await h.controller.snapshot()).queue.selection!.failed,true);
+  invalid=false;await h.controller.invoke('retry-selection');await h.controller.waitForIdle();assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.ok(h.state.run!.selection!.automaticRequests>requests);assert.equal(h.writes(),0);
 });
 
-test('repeated bad parts split automatically to grounded local fallbacks and still receive a complete global review',async()=>{
-  const state=retainedLibrary(20),facts=fingerprint(state.facts),active=fingerprint(state.tags),h=harness(state,{respond(data){if(data.consolidationRepair)return {repairs:[]};if(data.consolidationStage==='map')return {tags:[],merges:[],excluded:[]};return stageResponse(data);}});
-  await resume(h);assert.equal(state.run!.status,'idle',state.run!.message);assert.equal(state.tagPreparation!.status,'ready');const work=state.run!.consolidation!.work!;
-  assert.ok(work.tasks.some(task=>task.superseded));assert.ok(work.tasks.some(task=>task.parentTaskId));assert.ok(work.tasks.some(task=>task.localFallback));
-  assert.ok(work.tasks.every(task=>(task.automaticFreshAttempts??0)<=1&&(task.splitDepth??0)<=4));assert.ok(work.tasks.filter(task=>task.parentTaskId).every(task=>task.automaticFreshAttempts===1));assert.ok(work.tasks.filter(task=>task.localFallback).every(task=>task.inputIds.length<=8));
-  assert.ok(h.calls.some(call=>call.phase==='final'));assert.ok(h.calls.length<=512);assert.equal(work.automaticRequests,h.calls.length);assert.equal(state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length,80);
-  assert.deepEqual(new Set(state.taxonomyProposal!.tags.filter(tag=>!tag.custom).flatMap(tag=>state.taxonomyProposal!.support[tag.id].registryIds!)),new Set(Object.keys(state.taxonomyProposal!.evidenceSnapshot!.entries)));
-  assert.equal(fingerprint(state.facts),facts);assert.equal(fingerprint(state.tags),active);assert.equal(h.writes(),0);assert.equal(h.pdfReads(),0);
+for(const category of ['authentication','quota','permission','network','configuration'] as const)test(`${category} failures pause without provider fallback or format-correction consumption`,async()=>{
+  const state=library(),before=fingerprint(state.facts),h=harness(state,{respond(){throw new ProviderError('Synthetic provider failure',category);}});await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,1);assert.equal(state.run!.selection!.automaticRequests,1);assert.equal(state.run!.selection!.tasks[0].invalidResponses,0);assert.equal(state.run!.settings.provider,'chatgpt');assert.equal(fingerprint(state.facts),before);assert.equal(h.writes(),0);
 });
 
-test('restart replays a returned fresh-generation response without resetting its consumed automatic allowance',async()=>{
-  const state=retainedLibrary(20),facts=fingerprint(state.facts),h=harness(state,{respond(data,index){if(index===1)return {tags:[],merges:[],excluded:[]};if(data.consolidationRepair)return {repairs:[]};return stageResponse(data);},interruptWhen(next){return !!next.run?.consolidation?.pendingResponse&&next.run.consolidation.work!.tasks.some(task=>(task.automaticFreshAttempts??0)>0);}});
-  await resume(h);assert.equal(state.run!.status,'paused');const pending=state.run!.consolidation!.pendingResponse!,task=state.run!.consolidation!.work!.tasks.find(task=>task.id===pending.requestId)!;
-  assert.ok(pending);assert.equal(task.automaticFreshAttempts,1);const generation=task.requestGeneration,requests=state.run!.consolidation!.work!.automaticRequests!;
-  const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();assert.equal(restored.calls.length,0);await resume(restored);
-  assert.equal(restored.state.run!.status,'idle');const completed=restored.state.run!.consolidation!.work!.tasks.find(value=>value.id===task.id)!;assert.equal(completed.completed,true);assert.equal(completed.requestGeneration,generation);assert.equal(completed.automaticFreshAttempts,1);assert.ok(restored.calls.every(call=>call.id!==pending.requestId));
-  assert.equal(restored.state.run!.consolidation!.work!.automaticRequests,requests+restored.calls.length);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
+test('budget rejection before dispatch consumes neither request nor correction allowance',async()=>{
+  const state=library();Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:0.150001});state.run!.settings=clone(state.settings);const h=harness(state);await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,0);assert.equal(state.run!.selection!.automaticRequests,0);assert.equal(state.run!.selection!.tasks[0].dispatches,0);assert.equal(state.run!.spentUSD,0.15);
 });
 
-test('a failed pre-dispatch save rolls back the automatic request count and budget reservation before restart',async()=>{
-  const state=retainedLibrary(20);Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:10});state.run!.settings=clone(state.settings);
-  const work=retainedCheckpoint(state),facts=fingerprint(state.facts),spent=state.run!.spentUSD;
-  const h=harness(state,{interruptWhen(next){return next.run?.status==='running'&&next.run.consolidation?.work?.automaticRequests===1&&!next.run.consolidation.pendingResponse;}});
-  await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,0);assert.equal(state.run!.spentUSD,spent);assert.equal(state.run!.consolidation!.work!.automaticRequests??0,0);
-  const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle');assert.equal(restored.state.run!.consolidation!.work!.id,work.id);assert.equal(restored.state.run!.consolidation!.work!.automaticRequests,restored.calls.length);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
+test('a retained safety-limit pause gives a concrete recovery action instead of a nonworking retry loop',async()=>{
+  const h=harness(library(),{respond(){throw new ProviderError('Synthetic interrupted transport','network');}});await resume(h);
+  const work=h.state.run!.selection!;work.automaticRequests=SELECTION_MAX_REQUESTS;work.tasks[0].dispatches=SELECTION_MAX_REQUESTS;work.status='failed';const calls=h.calls.length;
+  await resume(h);assert.equal(h.calls.length,calls);assert.match((await h.controller.snapshot()).queue.message,/Increase the response limit.*fewer papers/);
+  await assert.rejects(h.controller.invoke('retry-selection'),/Saved paper analysis can be reused/);assert.equal(h.calls.length,calls);assert.equal(h.writes(),0);
 });
 
-test('ordinary Resume never resets an exhausted durable organization request limit or completed parts',async()=>{
-  const state=retainedLibrary(20),work=retainedCheckpoint(state,true);work.automaticRequests=512;const facts=fingerprint(state.facts),first=fingerprint(work.tasks[0]),spent=state.run!.spentUSD,h=harness(state);
-  await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,0);assert.equal(state.run!.consolidation!.work!.automaticRequests,512);assert.equal(fingerprint(state.run!.consolidation!.work!.tasks[0]),first);assert.equal(state.run!.spentUSD,spent);
-  const restored=harness(clone(h.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.calls.length,0);assert.equal(restored.state.run!.status,'paused');assert.equal(restored.state.run!.consolidation!.work!.id,work.id);assert.equal(restored.state.run!.consolidation!.work!.automaticRequests,512);assert.equal(fingerprint(restored.state.facts),facts);assert.equal(restored.writes(),0);
+test('pre-dispatch persistence failure rolls back the reservation and task dispatch atomically',async()=>{
+  const state=library();Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:0.01,outputPricePerMillion:0.01,budgetUSD:50});state.run!.settings=clone(state.settings);let reject=true;const h=harness(state,{save(value){if(reject&&value.run?.selection?.tasks.some(task=>task.status==='running')){reject=false;throw new Error('Synthetic dispatch persistence failed');}}});await resume(h);assert.equal(h.calls.length,0);assert.equal(state.run!.selection!.automaticRequests,0);assert.equal(state.run!.selection!.tasks[0].dispatches,0);assert.equal(state.run!.spentUSD,0.15);assert.equal(state.run!.status,'paused');
+});
+
+test('cancellation retains a late paid reply without applying it and Resume replays it',async()=>{
+  let release!:(value:unknown)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise(resolve=>{release=resolve;});const first=harness(library(),{respond:async(input)=>{if(input.selectionPhase==='choosing'){entered();return await gate;}return reply(input);}});
+  await first.controller.invoke('resume');await started;await first.controller.invoke('pause');const inputId=first.calls[0].id;const work=first.state.run!.selection!,input=JSON.parse(nextSelectionRequests(resumeTagSelection(work),1)[0].prompt.split('INPUT_DATA_JSON:\n')[1]);release(reply(input));await first.controller.waitForIdle();assert.equal(first.state.run!.status,'paused');assert.ok(first.state.run!.selectionReplies!.some(value=>value.taskId===inputId));assert.equal(first.state.taxonomyProposal,null);
+  const restored=harness(clone(first.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle',restored.state.run!.message);assert.ok(restored.calls.every(call=>call.id!==inputId));assert.equal(restored.writes(),0);
+});
+
+test('parallel mapping reservations cannot spend the same remaining budget twice',async()=>{
+  const state=library();Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:0.01,outputPricePerMillion:0.01,budgetUSD:50});state.run!.settings=clone(state.settings);
+  let h!:ReturnType<typeof harness>,limited=false,cap=50,peak=0;
+  h=harness(state,{async save(value){const run=value.run!;if(!limited&&run.selection?.status==='mapping'&&run.selection.tasks.every(task=>task.status!=='running')){limited=true;const view=await h.controller.snapshot(),average=(view.queue.estimatedUSD!-run.spentUSD)/view.queue.selection!.queuedRequests;cap=run.spentUSD+average*1.5;run.settings.budgetUSD=cap;}if(limited){peak=Math.max(peak,run.spentUSD);assert.ok(run.spentUSD<=cap+1e-10);}}});
+  await resume(h);assert.equal(limited,true);assert.equal(state.run!.status,'paused');assert.match(state.run!.message,/budget/i);assert.equal(h.calls.filter(call=>call.phase==='mapping').length,1);assert.ok(peak>0.15&&peak<=cap+1e-10);assert.equal(h.writes(),0);
+});
+
+test('restart after a parallel transport failure never repeats a completed source batch',async()=>{
+  let mapping=0,committed!:()=>void;const firstCommitted=new Promise<void>(resolve=>{committed=resolve;});
+  const first=harness(library(),{async respond(input){if(input.selectionPhase==='mapping'&&++mapping===2){await firstCommitted;throw new ProviderError('Synthetic mapping connection failure','network');}return reply(input);},save(state){if(state.run?.selection?.tasks.some(task=>task.kind==='map'&&task.status==='completed'))committed();}});
+  await resume(first);assert.equal(first.state.run!.status,'paused');const done=first.state.run!.selection!.tasks.filter(task=>task.kind==='map'&&task.status==='completed');assert.equal(done.length,1);const fingerprintBefore=fingerprint(done[0]);
+  const restored=harness(clone(first.saved.at(-1)!));await restored.controller.initialize();await resume(restored);assert.equal(restored.state.run!.status,'idle',restored.state.run!.message);assert.ok(restored.calls.every(call=>call.id!==done[0].id));assert.equal(fingerprint(restored.state.run!.selection!.tasks.find(task=>task.id===done[0].id)),fingerprintBefore);assert.equal(restored.pdf(),0);assert.equal(restored.writes(),0);
 });

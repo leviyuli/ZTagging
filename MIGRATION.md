@@ -1,4 +1,18 @@
-# Upgrading to Smart Tags 0.6.0
+# Upgrading to Smart Tags 0.7.0
+
+## Version 0.7.0
+
+This release upgrades local state to **schema 6**, after saving an immutable exact-byte **state.json.pre-v6.json** backup. An occupied filename with different content receives a numbered suffix. Backup or migration-write failure stops without replacing a valid generation from an older `.bak`. Migration performs no model request or native library change.
+
+Cached paper facts, completed jobs, quotations, source and registry IDs, selected snapshots, historical confirmations, definitions, decisions, journals, settings, credential references, and spent budget are preserved. The factual extractor and terminology versions remain unchanged. Older reviewable proposals retain their historical validation behavior.
+
+For an unfinished build, update normally and click **Resume**. Smart Tags reuses its selected facts and valid snapshot, retains the old consolidation checkpoint as audit data, and starts global selection and source checking. It does not continue recursive reduction or reread unchanged papers through the model. Changed paper information still refreshes only affected facts.
+
+New work persists its shortlist, candidate IDs, frozen definitions, source decisions, task states, raw replies, and dispatched counters. Source-validation policy 3 requires an explicit current decision for each covered source. Old confirmations cannot approve new unchecked sources. Ordinary presentation changes preserve compatible proofs; meaning changes require checks of the affected links.
+
+Two independent mapping requests may run at once. Budget reservations and result application are serialized; interrupted or usage-less requests retain their reservations. A complete reply saved before interruption can be replayed without another request. Resume never resets correction allowances. Retry this step starts an explicit retry of failed technical work while retaining prior attempts, completed checks, and spending.
+
+Tag selection favors the largest area in the chosen build group. The initial target is 60 core tags, plus necessary parent closure when needed. Extend keeps all applied definitions; its automatic addition allowance is the greater of the remaining preferred slots or one quarter of the preferred count (15 additions for an existing 60-tag list), plus required parents. This guides automatic selection and is not an approval limit. Deferred topics and their original evidence remain retained, and manually added DIY topics stay available.
 
 ## Version 0.6.0
 

@@ -54,7 +54,7 @@ class MemoryHost implements LibraryHost {
   async saveSearch(name:string,tags:string[]) {this.searches.push({name,tags:clone(tags)});}
 }
 
-type AIInput={protocolVersion?:number;paperCount?:number;conceptRegistry?:{registryId:string;sources:{label:string;paperId:string}[]}[];permittedRegistry?:unknown[];approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
+type AIInput={protocolVersion?:number;selectionPhase?:'choosing'|'mapping';paperCount?:number;census?:{paperCount:number};conceptRegistry?:{registryId:string;sources:{label:string;paperId:string}[]}[];permittedRegistry?:{registryId:string;sourceIds:string[]}[];tags?:{id:string;name:string}[];sources?:{sourceId:string;name:string}[];approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
 type AICall={input:AIInput;settings:ProviderSettings;prompt:string};
 type AIHandler=(call:AICall,index:number)=>unknown|Promise<unknown>;
 
@@ -67,10 +67,14 @@ function normalAnalysis(call:AICall) {
 
 function normalFacts(call:AICall) {const p=call.input.paper!;return {summary:'Water electrolysis is studied.',concepts:[{name:'Water electrolysis',facet:'system',evidence:[{source:p.abstract?'abstract':p.pdf?'pdf':'title',text:p.abstract||p.pdf||p.title}]}],needsPDF:false};}
 function normalTaxonomy(call:AICall) {return {tags:[{key:'water',name:'Water electrolysis',fullName:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],parentKeys:[],relatedKeys:[],...(call.input.protocolVersion===2?{supportRegistryIds:(call.input.conceptRegistry??[]).filter(entry=>entry.sources.some(source=>source.label==='Water electrolysis')).map(entry=>entry.registryId)}:{support:(call.input.facts??[]).map(f=>({paperId:f.paperId,conceptNames:['Water electrolysis']}))})}],merges:[],excluded:[]};}
+function normalMapping(call:AICall) {
+  const chosen=call.input.tags!.find(tag=>tag.name==='WE')!;
+  return {judgements:call.input.sources!.map(source=>({tagId:chosen.id,registryId:call.input.permittedRegistry!.find(entry=>entry.sourceIds.includes(source.sourceId))!.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The complete source quotation explicitly studies water electrolysis.'})),outside:[]};
+}
 
 class MockAI {
   calls:AICall[]=[];
-  handler:AIHandler=(call)=>call.input.protocolVersion===2||call.input.facts?normalTaxonomy(call):call.input.permittedRegistry?{repairs:[]}:call.input.approvedVocabulary?normalAnalysis(call):normalFacts(call);
+  handler:AIHandler=(call)=>call.input.selectionPhase==='mapping'?normalMapping(call):call.input.protocolVersion===2||call.input.facts?normalTaxonomy(call):call.input.permittedRegistry?{repairs:[]}:call.input.approvedVocabulary?normalAnalysis(call):normalFacts(call);
   async completeJson(_instructions:string,prompt:string,settings:ProviderSettings,_signal?:AbortSignal):Promise<CompletionResult> {
     const marker='INPUT_DATA_JSON:\n',index=prompt.indexOf(marker);
     if(index<0)throw new Error('Test requires the real core prompt JSON');
@@ -435,8 +439,9 @@ test('global consolidation retries without replaying cached facts or publishing 
   const h=harness({papers:Array.from({length:26},(_,i)=>fixturePaper(i+1))});
   const batchSizes:number[]=[];let failed=false;
   h.ai.handler=call=>{
+    if(call.input.selectionPhase==='mapping')return normalMapping(call);
     if(call.input.protocolVersion!==2&&!call.input.facts)return normalFacts(call);
-    batchSizes.push(call.input.protocolVersion===2?call.input.paperCount!:call.input.facts!.length);
+    batchSizes.push(call.input.protocolVersion===2?call.input.census!.paperCount:call.input.facts!.length);
     if(!failed){failed=true;throw new Error('Vocabulary quota interruption');}
     return normalTaxonomy(call);
   };

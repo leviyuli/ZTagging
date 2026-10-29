@@ -7,7 +7,7 @@ import type {PaperRecord} from '../src/core.ts';
 import type {NativeTag,TagPatch} from '../src/platform.ts';
 import type {CompletionResult} from '../src/providers.ts';
 import {createRegistrySnapshot,validateRegistrySnapshot} from '../src/evidence.ts';
-import {createTaxonomyProposal} from '../src/taxonomy.ts';
+import {createTaxonomyProposal,normalizeFacts} from '../src/taxonomy.ts';
 
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value));
 const quote='Electrochemical impedance spectroscopy resolves electrode resistance.';
@@ -16,6 +16,7 @@ function harness(saved?:AppState) {
   const paper:PaperRecord={id:'1:PREPARATION',itemID:1,libraryID:1,key:'PREPARATION',title:'Electrode impedance measurements',abstract:quote,keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);
   let native:NativeTag[]=[{tag:'Project paper',type:0}],pdf='';const writes:TagPatch[][]=[],calls:any[]=[],exports:any[]=[];
   const ai={handler:(data:any):unknown=>{
+    if(data.selectionPhase==='mapping')return {judgements:data.sources.map((source:any)=>({tagId:data.tags.find((tag:any)=>tag.name==='EIS').id,registryId:source.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The supplied quotation establishes impedance spectroscopy.'})),outside:[]};
     if(data.preparationPolicyVersion)return {tags:[],judgements:[]};
     if(data.conceptRegistry)return {tags:[{key:'eis',name:'EIS',fullName:'Electrochemical impedance spectroscopy',description:'Electrochemical impedance spectroscopy measures electrical response.',facet:'method',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:data.conceptRegistry.map((entry:any)=>entry.registryId)}],merges:[],excluded:[]};
     if(data.approvedVocabulary)return {summary:'Impedance measurements.',concepts:[],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.filter((tag:any)=>tag.name==='EIS').map((tag:any)=>({tagId:tag.id,reason:'The abstract describes impedance spectroscopy.',confidence:'high',match:'substantive',evidence:[{source:'abstract',text:quote}]}))};
@@ -25,6 +26,13 @@ function harness(saved?:AppState) {
   return {state,paper,ai,calls,writes,exports,env,controller:new AppController(state,env),native:()=>native,setPDF:(text:string)=>{pdf=text;}};
 }
 async function build(h:ReturnType<typeof harness>){await h.controller.invoke('prepare-tags',{scope:'selected'});await h.controller.waitForIdle();}
+async function legacyReview(h:ReturnType<typeof harness>,empty=false){
+  await h.controller.invoke('scan',{scope:'selected'});
+  const facts=normalizeFacts({summary:quote,concepts:[{name:'Electrochemical impedance spectroscopy',facet:'method',evidence:[{source:'abstract',text:quote}]}],needsPDF:false},h.paper,'historical-provider','historical-model'),snapshot=createRegistrySnapshot([facts],h.state.evidenceCatalog);
+  h.state.facts[h.paper.id]=facts;h.state.taxonomyProposal=createTaxonomyProposal({tags:empty?[]:[{key:'eis',name:'EIS',fullName:'Electrochemical impedance spectroscopy',description:'Electrochemical impedance spectroscopy measures electrical response.',facet:'method',supportRegistryIds:Object.keys(snapshot.entries)}],merges:[],excluded:[]},[facts],h.state.tags,{snapshot,baseVersion:h.state.vocabularyVersion});
+  h.state.run={id:'historical-review',kind:'rebuild',scope:'selected',automatic:false,status:'idle',jobs:[{id:'historical-job',paperId:h.paper.id,status:'completed'}],vocabCursor:1,vocabFinished:true,message:'A historical proposal awaits review.',spentUSD:0.15,settings:copy(h.state.settings),vocabularyVersion:h.state.vocabularyVersion,preparationOnly:true};
+  await h.controller.initialize();
+}
 function invalidate(h:ReturnType<typeof harness>){const proposal=h.state.taxonomyProposal!;proposal.unresolvedRelationships=[{tagId:proposal.tags.find(tag=>tag.name==='EIS')!.id,kind:'parent',reference:'unavailable-parent'}];h.state.run!.vocabFinished=false;}
 
 test('Build tags, Apply tag list and paper Apply remain separate, undoable steps',async()=>{
@@ -44,8 +52,7 @@ test('Build tags, Apply tag list and paper Apply remain separate, undoable steps
 });
 
 test('automatic preparation stops after three dispatched requests; Resume cannot reset them',async()=>{
-  const h=harness();const normal=h.ai.handler;h.ai.handler=data=>data.conceptRegistry?{tags:[],merges:[],excluded:[]}:normal(data);
-  await build(h);assert.equal(h.calls.filter(data=>data.preparationPolicyVersion).length,3);assert.equal(h.state.run?.preparation?.attempts,3);assert.equal(h.state.tagPreparation?.status,'failed');
+  const h=harness();await legacyReview(h,true);await h.controller.invoke('resume');await h.controller.waitForIdle();assert.equal(h.calls.filter(data=>data.preparationPolicyVersion).length,3);assert.equal(h.state.run?.preparation?.attempts,3);assert.equal(h.state.tagPreparation?.status,'failed');
   const restored=harness(copy(h.state));await restored.controller.initialize();await restored.controller.invoke('resume');await restored.controller.waitForIdle();
   assert.equal(restored.calls.length,0);assert.equal(restored.state.run?.preparation?.attempts,3);assert.equal(restored.state.tagPreparation?.status,'failed');
   const spent=restored.state.run!.spentUSD;await restored.controller.invoke('retry-tag-preparation',{id:restored.state.tagPreparation!.id});await restored.controller.waitForIdle();
@@ -53,15 +60,15 @@ test('automatic preparation stops after three dispatched requests; Resume cannot
 });
 
 test('budget rejection before dispatch preserves all three attempts and cached facts',async()=>{
-  const h=harness();await build(h);invalidate(h);h.state.settings.provider='api';h.state.settings.budgetUSD=0;h.state.settings.inputPricePerMillion=1;h.state.settings.outputPricePerMillion=1;
+  const h=harness();await legacyReview(h);invalidate(h);h.state.settings.provider='api';h.state.settings.budgetUSD=0;h.state.settings.inputPricePerMillion=1;h.state.settings.outputPricePerMillion=1;
   await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();
   assert.equal(h.state.run?.status,'paused');assert.equal(h.state.run?.preparation?.attempts,0);assert.equal(h.calls.filter(data=>data.preparationPolicyVersion).length,0);
   const facts=copy(h.state.facts);h.state.settings.budgetUSD=100;await h.controller.invoke('resume');await h.controller.waitForIdle();
-  assert.equal(h.state.run?.preparation?.attempts,3);assert.deepEqual(h.state.facts,facts);assert.equal(h.calls.filter(data=>data.paper&&!data.approvedVocabulary).length,1);
+  assert.equal(h.state.run?.preparation?.attempts,3);assert.deepEqual(h.state.facts,facts);assert.equal(h.calls.filter(data=>data.paper&&!data.approvedVocabulary).length,0);
 });
 
 test('authentication failures consume dispatched attempts and survive restart',async()=>{
-  const h=harness();await build(h);invalidate(h);h.ai.handler=()=>{throw Object.assign(new Error('Authentication expired'),{category:'authentication'});};
+  const h=harness();await legacyReview(h);invalidate(h);h.ai.handler=()=>{throw Object.assign(new Error('Authentication expired'),{category:'authentication'});};
   await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();
   assert.equal(h.state.run?.status,'paused');assert.equal(h.state.run?.preparation?.attempts,1);
   const restored=harness(copy(h.state));restored.ai.handler=h.ai.handler;await restored.controller.initialize();
@@ -70,14 +77,14 @@ test('authentication failures consume dispatched attempts and survive restart',a
 });
 
 test('incomplete preparation replies remain diagnostic even when their partial JSON parses',async()=>{
-  const h=harness();await build(h);invalidate(h);const id=h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!.id;
+  const h=harness();await legacyReview(h);invalidate(h);const id=h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!.id;
   h.ai.handler=()=>{throw Object.assign(new Error('The response was truncated'),{category:'invalid-response',rawText:JSON.stringify({tags:[{tagId:id,broaderIds:[]}],judgements:[]})});};
   await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await h.controller.waitForIdle();
   assert.equal(h.state.run?.preparation?.attempts,3);assert.equal(h.state.tagPreparation?.status,'failed');assert.ok(h.state.run?.preparation?.responses.every(response=>response.failed));assert.ok(h.state.taxonomyProposal!.unresolvedRelationships?.length);assert.equal(h.writes.length,0);
 });
 
 test('an interrupted returned repair is replayed without another dispatch',async()=>{
-  const h=harness();await build(h);invalidate(h);
+  const h=harness();await legacyReview(h);invalidate(h);
   let enter!:()=>void,release!:(value:unknown)=>void;const entered=new Promise<void>(resolve=>enter=resolve),pending=new Promise<unknown>(resolve=>release=resolve);
   h.ai.handler=()=>{enter();return pending;};await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await entered;
   await h.controller.invoke('pause');release({tags:[],judgements:[]});await h.controller.waitForIdle();
@@ -87,7 +94,7 @@ test('an interrupted returned repair is replayed without another dispatch',async
 });
 
 test('an edit saved during a model request survives the returned repair',async()=>{
-  const h=harness();await build(h);invalidate(h);const tag=copy(h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!);
+  const h=harness();await legacyReview(h);invalidate(h);const tag=copy(h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!);
   let enter!:()=>void,release!:(value:unknown)=>void;const entered=new Promise<void>(resolve=>enter=resolve),pending=new Promise<unknown>(resolve=>release=resolve);
   h.ai.handler=()=>{enter();return pending;};await h.controller.invoke('retry-tag-preparation',{id:h.state.tagPreparation!.id});await entered;
   await h.controller.invoke('edit-prepared-tag',{id:h.state.tagPreparation!.id,tag:{...tag,name:'Impedance measurements'}});
@@ -95,14 +102,14 @@ test('an edit saved during a model request survives the returned repair',async()
   assert.equal(h.state.taxonomyProposal!.tags.find(value=>value.id===tag.id)?.name,'Impedance measurements');assert.equal(h.state.tagPreparation!.status,'ready');assert.equal(h.writes.length,0);
 });
 
-test('changed papers without earlier extracted concepts trigger a fresh tag list and repair generation',async()=>{
+test('changed papers without earlier extracted concepts trigger fresh selection and source mapping',async()=>{
   const h=harness(),normal=h.ai.handler;let empty=true;
   h.ai.handler=data=>data.paper&&!data.approvedVocabulary&&empty?{summary:'No usable topic was extracted.',concepts:[],needsPDF:false}:normal(data);
-  await build(h);assert.equal(h.state.run?.preparation?.attempts,0);assert.equal(h.state.tagPreparation?.status,'failed');const oldProposal=h.state.taxonomyProposal!.id;
+  await build(h);assert.equal(h.state.run?.preparation?.attempts??0,0);assert.equal(h.state.tagPreparation,undefined);assert.equal(h.state.taxonomyProposal,null);assert.equal(h.calls.filter(data=>data.conceptRegistry).length,0);const oldSelection=h.state.run!.selection?.id;
   await h.controller.initialize();empty=false;h.paper.abstract+=' A corrected abstract describes these measurements.';
   await h.controller.invoke('resume');await h.controller.waitForIdle();
-  assert.notEqual(h.state.taxonomyProposal!.id,oldProposal);assert.equal(h.state.tagPreparation?.status,'ready');assert.equal(h.state.run?.preparation?.attempts,0);
-  assert.equal(h.calls.filter(data=>data.conceptRegistry).length,2);assert.equal(h.calls.filter(data=>data.paper&&!data.approvedVocabulary).length,2);assert.equal(h.state.taxonomyProposal!.support[h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!.id].paperIds.length,1);
+  assert.ok(h.state.run!.selection);assert.notEqual(h.state.run!.selection!.id,oldSelection);assert.equal(h.state.tagPreparation?.status,'ready');assert.equal(h.state.run?.preparation?.attempts??0,0);
+  assert.equal(h.calls.filter(data=>data.conceptRegistry).length,1);assert.equal(h.calls.filter(data=>data.paper&&!data.approvedVocabulary).length,2);assert.equal(h.state.taxonomyProposal!.support[h.state.taxonomyProposal!.tags.find(tag=>tag.name==='EIS')!.id].paperIds.length,1);
 });
 
 test('cached empty facts check newly available PDF text and resolve the paper attention notice',async()=>{

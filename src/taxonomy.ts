@@ -14,9 +14,9 @@ export interface PaperFacts {
   extractionVersion:1;summary:string;concepts:FactConcept[];needsPDF:boolean;
 }
 export interface TaxonomySupport {paperIds:string[];evidence?:({paperId:string}&Evidence)[];registryIds?:string[];sourceIds?:string[]}
-export interface ProposalValidationIssue {id:string;code:'unknown-registry-id'|'stale-registry-id'|'invalid-relationship'|'scientific-contradiction'|'uncertain-meaning'|'unsupported-concept'|'malformed-support';tagId?:string;registryId?:string;field?:'supportRegistryIds';message:string;severity:'error'|'confirmation';paperIds?:string[];sourceNames?:string[]}
+export interface ProposalValidationIssue {id:string;code:'unknown-registry-id'|'stale-registry-id'|'invalid-relationship'|'scientific-contradiction'|'uncertain-meaning'|'unsupported-concept'|'malformed-support'|'unvalidated-source';tagId?:string;registryId?:string;sourceId?:string;field?:'supportRegistryIds';message:string;severity:'error'|'confirmation';paperIds?:string[];sourceNames?:string[]}
 export interface MappingConfirmation {fingerprint:string;confirmedAt:string}
-export interface MachineEvidenceDecision {tagId:string;sourceId:string;registryId:string;snapshotId:string;meaningFingerprint:string;sourceFingerprint:string;policyVersion:number;relation:'equivalent'|'subtype'|'related'|'unrelated'|'needs-context';reason:string;origin:'ai'|'curated'|'researcher';provider?:string;model?:string}
+export interface MachineEvidenceDecision {tagId:string;sourceId:string;registryId:string;snapshotId:string;meaningFingerprint:string;sourceFingerprint:string;tagFingerprint?:string;policyVersion:2|3;relation:'equivalent'|'subtype'|'related'|'unrelated'|'needs-context';reason:string;origin:'ai'|'curated'|'researcher';provider?:string;model?:string}
 export interface UnresolvedMerge {fromId:string;toReference:string;reason:string}
 export interface TaxonomyProposal {
   id:string;createdAt:string;inputFingerprint:string;baseVersion:number;coreLimit:number;tags:TagDefinition[];
@@ -33,7 +33,11 @@ export interface TaxonomyProposal {
   validatedEvidenceLinks?:Record<string,Record<string,string>>;
   evidenceScientificIdentities?:Record<string,string>;
   machineDecisions?:Record<string,MachineEvidenceDecision>;
-  preparationPolicyVersion?:2;
+  preparationPolicyVersion?:2|3;
+  mappingPolicyVersion?:3;
+  mappedSourceIds?:Record<string,string[]>;
+  inheritanceReviewSourceIds?:Record<string,string[]>;
+  retainedDefinitionIds?:string[];
   extension?:VocabularyExtensionContext;
 }
 export interface ProposalOptions {limit?:number;baseVersion?:number;createdAt?:string;snapshot?:RegistrySnapshot;candidateIds?:Record<string,string>;generationId?:string}
@@ -299,7 +303,7 @@ function buildProtocolV2Prompt(facts:readonly PaperFacts[],existing:readonly Tag
 
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 function issue(code:ProposalValidationIssue['code'],message:string,tagId?:string,registryId?:string,extra:Partial<ProposalValidationIssue>={}):ProposalValidationIssue {
-  return {id:`issue-${fingerprint([code,tagId,registryId,message])}`,code,message,severity:code==='uncertain-meaning'?'confirmation':'error',...(tagId?{tagId}:{}),...(registryId?{registryId}:{}),...extra};
+  return {id:`issue-${fingerprint([code,tagId,registryId,message,...(extra.sourceId?[extra.sourceId]:[])])}`,code,message,severity:code==='uncertain-meaning'?'confirmation':'error',...(tagId?{tagId}:{}),...(registryId?{registryId}:{}),...extra};
 }
 /** Opaque allocations are supplied and persisted by the run before any retry/reparse. */
 export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],existing:readonly TagDefinition[],options:ProposalOptions={}):TaxonomyProposal {
@@ -365,13 +369,25 @@ export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],e
 }
 
 export function conceptMeaningFingerprint(tag:TagDefinition):string{return fingerprint({description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples});}
+export function conceptMappingFingerprint(tag:TagDefinition):string {
+  const preferred=scientificIdentity(tag.name,2),expanded=scientificIdentity(tag.fullName??'',2);
+  return fingerprint({fullName:expanded??canonicalTagKey(tag.fullName??tag.name),scientificIdentity:preferred??expanded??null,description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples});
+}
 const meaningFingerprint=conceptMeaningFingerprint;
 export function semanticDecisionKey(tagId:string,sourceId:string):string{return `${tagId}|${sourceId}`;}
-function namingVersion(proposal:TaxonomyProposal):NormalizationVersion{return proposal.preparationPolicyVersion===2?2:proposal.evidenceSnapshot?.normalizationVersion??1;}
+export function validMappedSourceDecision(proposal:TaxonomyProposal,tag:TagDefinition,sourceId:string,candidate?:MachineEvidenceDecision):MachineEvidenceDecision|undefined {
+  const snapshot=proposal.evidenceSnapshot,source=snapshot?.sources[sourceId],decision=candidate??proposal.machineDecisions?.[semanticDecisionKey(tag.id,sourceId)];
+  return proposal.mappingPolicyVersion===3&&proposal.mappedSourceIds?.[tag.id]?.includes(sourceId)&&source&&decision?.tagId===tag.id&&decision.sourceId===sourceId&&decision.policyVersion===3&&decision.snapshotId===snapshot!.id&&decision.meaningFingerprint===meaningFingerprint(tag)&&decision.tagFingerprint===conceptMappingFingerprint(tag)&&decision.sourceFingerprint===fingerprint(source)&&typeof decision.reason==='string'&&!!decision.reason.trim()&&['ai','curated','researcher'].includes(decision.origin)&&['equivalent','subtype','related','unrelated','needs-context'].includes(decision.relation)&&(proposal.support[tag.id]?.registryIds??[]).includes(decision.registryId)&&snapshot!.entries[decision.registryId]?.sourceIds.includes(sourceId)?decision:undefined;
+}
+function namingVersion(proposal:TaxonomyProposal):NormalizationVersion{return proposal.preparationPolicyVersion===2||proposal.preparationPolicyVersion===3?2:proposal.evidenceSnapshot?.normalizationVersion??1;}
 function scientificIdentity(label:string,version:NormalizationVersion):string|undefined {return terminologyFor(label,version)?.name??(['Co','CO','pH'].includes(label)?label:undefined);}
+export function confirmedSourceRelation(tag:TagDefinition,sourceName:string):'equivalent'|'subtype' {
+  const source=scientificIdentity(sourceName,2),target=scientificIdentity(tag.name,2)??scientificIdentity(tag.fullName??'',2),parents:Record<string,string>={PEMFC:'FC',AEMFC:'FC',PEMWE:'WE',AEMWE:'WE'};
+  return source&&target&&parents[source]===target?'subtype':'equivalent';
+}
 function mappingInput(proposal:TaxonomyProposal,tagId:string,snapshot:TaxonomyProposal['evidenceSnapshot']) {
   const tag=proposal.tags.find(candidate=>candidate.id===tagId);
-  return {snapshot,tagId,meaning:tag?{description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples}:null,registryIds:[...(proposal.support[tagId]?.registryIds??[])].sort()};
+  return {snapshot,tagId,meaning:tag?{description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples}:null,registryIds:[...(proposal.support[tagId]?.registryIds??[])].sort(),...(proposal.mappingPolicyVersion===3?{mappingPolicyVersion:3,mappedSourceIds:[...(proposal.mappedSourceIds?.[tagId]??[])].sort(),tagFingerprint:tag?conceptMappingFingerprint(tag):null}:{})};
 }
 function mappingFingerprint(proposal:TaxonomyProposal,tagId:string):string {
   return fingerprint(mappingInput(proposal,tagId,proposal.evidenceSnapshot));
@@ -392,6 +408,7 @@ function proposalEvaluation(proposal:TaxonomyProposal) {
   };
   const isBlocking=(value:ProposalValidationIssue):boolean=>{
     if(value.severity==='error'||!value.tagId)return true;
+    if(proposal.mappingPolicyVersion===3)return true;
     const confirmation=proposal.mappingConfirmations?.[value.tagId];
     // Absence already proves that a mapping is blocked; existing proofs keep their
     // exact historical format and are computed at most once per tag in this pass.
@@ -428,6 +445,22 @@ function semanticRelation(tag:TagDefinition,sourceName:string,sourceEvidence:rea
   if([...sourceTokens].some(token=>targetTokens.has(token)))return 'uncertain';
   return 'contradiction';
 }
+function refreshMappedSources(proposal:TaxonomyProposal,tag:TagDefinition,support:TaxonomySupport,issues:ProposalValidationIssue[],sourceRegistry:Map<string,string>,version:NormalizationVersion) {
+  const snapshot=proposal.evidenceSnapshot!,permitted=proposal.mappedSourceIds?.[tag.id]??[],declared=new Set(support.registryIds),targetIdentity=scientificIdentity(tag.name,version)??scientificIdentity(tag.fullName??'',version),knownParents:Record<string,string>={PEMFC:'FC',AEMFC:'FC',PEMWE:'WE',AEMWE:'WE'};
+  for(const registryId of declared)if(!Object.hasOwn(snapshot.entries,registryId))issues.push(issue('unknown-registry-id',`Unknown supporting registry ID ${registryId} for ${tag.name}.`,tag.id,registryId));
+  for(const sourceId of new Set(permitted)){
+    const source=snapshot.sources[sourceId],registryId=sourceRegistry.get(sourceId),details={sourceId,...(source?{paperIds:[source.paperId],sourceNames:[source.name]}:{})};
+    if(!source||!registryId){issues.push(issue('stale-registry-id',`Mapped source ${sourceId} is unavailable in this evidence snapshot.`,tag.id,registryId,details));continue;}
+    if(!declared.has(registryId)){issues.push(issue('unknown-registry-id',`Mapped source ${sourceId} is outside the declared evidence links for ${tag.name}.`,tag.id,registryId,details));continue;}
+    const decision=validMappedSourceDecision(proposal,tag,sourceId);if(decision?.relation==='related'||decision?.relation==='unrelated')continue;
+    const sourceIdentity=scientificIdentity(source.name,version),knownSubtype=sourceIdentity&&targetIdentity&&knownParents[sourceIdentity]===targetIdentity;
+    if(sourceIdentity&&targetIdentity&&sourceIdentity!==targetIdentity&&!knownSubtype){issues.push(issue('scientific-contradiction',`Source wording "${source.name}" does not establish the meaning of ${tag.name}.`,tag.id,registryId,details));continue;}
+    if(!decision){issues.push(issue('unvalidated-source',`The mapping of source ${sourceId} to ${tag.name} needs a current source-level check.`,tag.id,registryId,details));continue;}
+    if(knownSubtype&&decision.relation==='equivalent'){issues.push(issue('scientific-contradiction',`The source concept ${source.name} is a subtype of ${tag.name}, not an equivalent name.`,tag.id,registryId,details));continue;}
+    if(decision.relation==='needs-context'){issues.push(issue('uncertain-meaning',`The source context leaves the meaning of ${tag.name} unresolved.`,tag.id,registryId,details));continue;}
+    if(decision.relation==='equivalent'||decision.relation==='subtype')support.sourceIds!.push(sourceId);
+  }
+}
 /** Coverage is expanded exclusively from immutable source identities, never presentation labels. */
 export function refreshProposalEvidence(proposal:TaxonomyProposal):TaxonomyProposal {
   return refreshEvidence(proposal,proposalEvaluation(proposal));
@@ -444,6 +477,7 @@ function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof 
     if(implicated.length)for(const tag of implicated)issues.push(issue('invalid-relationship',message,tag.id));else issues.push(issue('invalid-relationship',message));
   }
   const byId=new Map(proposal.tags.map(tag=>[tag.id,tag])),invalidEdges=new Set<string>();
+  const sourceRegistry=proposal.mappingPolicyVersion===3?new Map(Object.values(snapshot.entries).flatMap(entry=>entry.sourceIds.map(sourceId=>[sourceId,entry.registryId] as const))):new Map<string,string>();
   const hasPath=(from:string,to:string,seen=new Set<string>()):boolean=>from===to||(!seen.has(from)&&(seen.add(from),(byId.get(from)?.broaderIds??[]).some(parent=>hasPath(parent,to,seen))));
   const establishedParent:Record<string,string>={PEMFC:'FC',AEMFC:'FC',PEMWE:'WE',AEMWE:'WE'};
   for(const tag of proposal.tags)for(const parentId of tag.broaderIds){
@@ -460,6 +494,12 @@ function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof 
     if(tag.custom)continue;
     const namedIdentity=scientificIdentity(tag.name,version),fullIdentity=scientificIdentity(tag.fullName??'',version);
     if(namedIdentity&&fullIdentity&&namedIdentity!==fullIdentity)issues.push(issue('scientific-contradiction',`The preferred label and full name of ${tag.name} identify scientifically distinct concepts.`,tag.id));
+    if(proposal.mappingPolicyVersion===3){
+      const identity=namedIdentity??fullIdentity;
+      if(identity&&tag.aliases.some(alias=>{const meaning=scientificIdentity(alias,version);return meaning&&meaning!==identity;}))issues.push(issue('scientific-contradiction',`An alias of ${tag.name} identifies a scientifically distinct established concept.`,tag.id));
+      if(!namedIdentity||!fullIdentity||namedIdentity===fullIdentity)refreshMappedSources(proposal,tag,support,issues,sourceRegistry,version);
+      support.sourceIds=[...new Set(support.sourceIds)].sort();continue;
+    }
     const changedMeaning=proposal.evidenceMeaningFingerprints?.[tag.id]&&proposal.evidenceMeaningFingerprints[tag.id]!==meaningFingerprint(tag);
     const linkedSources=support.registryIds.flatMap(id=>snapshot.entries[id]?.sourceIds??[]);
     const machineResolved=linkedSources.length>0&&linkedSources.every(sourceId=>{const decision=proposal.machineDecisions?.[semanticDecisionKey(tag.id,sourceId)],source=snapshot.sources[sourceId];return source&&decision?.snapshotId===snapshot.id&&decision.policyVersion===2&&decision.meaningFingerprint===meaningFingerprint(tag)&&decision.sourceFingerprint===fingerprint(source)&&decision.relation!=='needs-context';});
@@ -504,7 +544,14 @@ function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof 
     for(const tag of proposal.tags)for(const parentId of tag.broaderIds){
       if(invalidEdges.has(`${tag.id}\n${parentId}`))continue;
       const parent=proposal.support[parentId],child=proposal.support[tag.id];if(!parent||!child||!currentTags.has(parentId))continue;
-      const ids=[...new Set([...(parent.sourceIds??[]),...(child.sourceIds??[])])].sort();if(ids.length!==(parent.sourceIds??[]).length){parent.sourceIds=ids;changed=true;}
+      const reviewed=proposal.mappingPolicyVersion===3?new Set(proposal.inheritanceReviewSourceIds?.[parentId]??[]):undefined;
+      const inherited=(child.sourceIds??[]).filter(sourceId=>{
+        if(!reviewed?.has(sourceId))return true;
+        const parentTag=byId.get(parentId)!,source=snapshot.sources[sourceId],registryId=sourceRegistry.get(sourceId);
+        if(!validMappedSourceDecision(proposal,parentTag,sourceId))issues.push(issue('unvalidated-source',`The mapping of source ${sourceId} to ${parentTag.name} needs a current source-level check.`,parentId,registryId,{sourceId,...(source?{paperIds:[source.paperId],sourceNames:[source.name]}:{})}));
+        return false;
+      });
+      const ids=[...new Set([...(parent.sourceIds??[]),...inherited])].sort();if(ids.length!==(parent.sourceIds??[]).length){parent.sourceIds=ids;changed=true;}
     }
     if(!changed)break;
   }
@@ -514,7 +561,7 @@ function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof 
     support.paperIds=[...new Set(selected.map(source=>source.paperId))].sort();
     support.evidence=[...new Map(selected.flatMap(source=>source.evidence.map(quote=>({paperId:source.paperId,...quote}))).map(quote=>[JSON.stringify(quote),quote])).values()];
     const pendingChildren=proposal.tags.some(child=>child.broaderIds.includes(tag.id)&&(issues.some(value=>value.tagId===child.id)||(proposal.support[child.id]?.registryIds?.length??0)>0));
-    if(!tag.custom&&!support.paperIds.length&&!pendingChildren&&!issues.some(value=>value.tagId===tag.id))issues.push(issue('unsupported-concept',`No grounded paper supports proposed core concept ${tag.name}.`,tag.id));
+    if(!tag.custom&&!support.paperIds.length&&!pendingChildren&&!(proposal.mappingPolicyVersion===3&&proposal.retainedDefinitionIds?.includes(tag.id))&&!issues.some(value=>value.tagId===tag.id))issues.push(issue('unsupported-concept',`No grounded paper supports proposed core concept ${tag.name}.`,tag.id));
   }
   proposal.validationIssues=[...new Map(issues.map(value=>[value.id,value])).values()];
   proposal.issues=[...new Set([...(proposal.externalIssues??[]),...proposal.validationIssues.filter(evaluation.isBlocking).map(value=>value.message)])];
@@ -525,6 +572,7 @@ function refreshEvidence(proposal:TaxonomyProposal,evaluation:ReturnType<typeof 
 export function confirmProposalMapping(proposal:TaxonomyProposal,tagId:string,confirmedAt=new Date().toISOString()):TaxonomyProposal {
   if(!proposal.tags.some(tag=>tag.id===tagId))throw new Error('Unknown proposed concept.');
   if((proposal.validationIssues??[]).some(value=>value.tagId===tagId&&value.severity==='error'))throw new Error('Scientific contradictions and invalid evidence must be corrected before confirming a mapping.');
+  if(proposal.mappingPolicyVersion===3)return confirmProposalMappings(proposal,[tagId],confirmedAt);
   proposal.mappingConfirmations??={};proposal.mappingConfirmations[tagId]={fingerprint:mappingFingerprint(proposal,tagId),confirmedAt};return refreshProposalEvidence(proposal);
 }
 /** Confirm a reviewed batch atomically; global approval requirements remain unchanged. */
@@ -539,14 +587,22 @@ export function confirmProposalMappings(proposal:TaxonomyProposal,tagIds?:readon
     &&issues.some(issue=>issue.tagId===tag.id&&issue.code==='uncertain-meaning'&&evaluation.isBlocking(issue)));
   if(!eligible.length)return proposal;
   staged.mappingConfirmations??={};
-  for(const tag of eligible)staged.mappingConfirmations[tag.id]={fingerprint:evaluation.proofFor(tag.id),confirmedAt};
+  for(const tag of eligible){
+    staged.mappingConfirmations[tag.id]={fingerprint:evaluation.proofFor(tag.id),confirmedAt};
+    if(staged.mappingPolicyVersion===3)for(const sourceId of staged.mappedSourceIds?.[tag.id]??[]){
+      const decision=validMappedSourceDecision(staged,tag,sourceId);if(decision?.relation!=='needs-context')continue;
+      (staged.machineDecisions??={})[semanticDecisionKey(tag.id,sourceId)]={...decision,relation:confirmedSourceRelation(tag,staged.evidenceSnapshot!.sources[sourceId].name),origin:'researcher',reason:'The researcher explicitly confirmed this proposed scientific mapping.'};
+    }
+  }
   refreshEvidence(staged,evaluation);
   Object.assign(proposal,staged);
   return proposal;
 }
 export function removeProposalEvidenceLinks(proposal:TaxonomyProposal,tagId:string,registryIds?:readonly string[]):TaxonomyProposal {
   const support=proposal.support[tagId];if(!support)throw new Error('Unknown proposed concept.');
-  support.registryIds=registryIds?(support.registryIds??[]).filter(id=>!registryIds.includes(id)):[];delete proposal.mappingConfirmations?.[tagId];return refreshProposalEvidence(proposal);
+  support.registryIds=registryIds?(support.registryIds??[]).filter(id=>!registryIds.includes(id)):[];
+  if(proposal.mappingPolicyVersion===3){const retained=new Set((support.registryIds??[]).flatMap(id=>proposal.evidenceSnapshot?.entries[id]?.sourceIds??[]));(proposal.mappedSourceIds??={})[tagId]=(proposal.mappedSourceIds?.[tagId]??[]).filter(id=>retained.has(id));}
+  delete proposal.mappingConfirmations?.[tagId];return refreshProposalEvidence(proposal);
 }
 export function needsProposalCorrection(proposal:TaxonomyProposal):boolean {
   return (proposal.validationIssues??[]).some(value=>value.severity==='error')||Boolean(proposal.unresolvedMerges?.length);

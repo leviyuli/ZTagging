@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- Replaced recursive batch merging with a local topic census, bounded global shortlist, compact vocabulary choice, and one finite source-mapping pass. Ranking favors unique-paper coverage in the largest research area, with diminishing returns for repeated paper/category coverage.
+- Kept 60 as a soft target and retained necessary parents, scientifically distinct meanings, existing definitions, and DIY topics. Unselected details remain factual data rather than automatic tags.
+- Added explicit source-validation policy 3: coverage requires current source-specific decisions; one representative cannot approve other papers sharing its registry label. Historical policies and fingerprints remain intact.
+- Separated three semantic repair requests from ordinary mapping batches. Added bounded contextual follow-ups, one malformed-output correction per task, and at most two concurrent mapping requests with serialized budget reservations and persistence.
+- Replaced growing parts counters with unique supporting-findings progress, actual queued requests, and a separate correction allowance. Failed technical work offers Retry this step; account and budget pauses retain Resume.
+- Upgraded state to schema 6 with exact-byte backups, retained legacy checkpoints, reusable cached extraction, durable raw replies, and restart recovery. Native tag writes, manual choices, undo, and incoming automation retain their existing protections.
+
 ## 0.6.0
 
 - Aligned the sidebar and Overview with four setup steps: Connect AI, Build tags, Review & clean up, and Assign & automate. Kept Tag library and Find papers available for everyday use.

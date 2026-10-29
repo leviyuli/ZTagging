@@ -1,8 +1,8 @@
-/** TEST ONLY. Automatic recovery of retained consolidation in the guarded isolated profile. */
+/** TEST ONLY. Retained legacy work stays immutable while the finite selector uses cached facts. */
 import { initialState } from '../src/controller.ts';
 import { fingerprint, paperFingerprint } from '../src/core.ts';
 import { createRegistrySnapshot, ensureFactConceptIds } from '../src/evidence.ts';
-import { createConsolidationWork, acceptConsolidationResult, nextConsolidationRequest, CONSOLIDATION_REQUEST_BYTE_LIMIT } from '../src/library-consolidation.ts';
+import { createConsolidationWork, acceptConsolidationResult, nextConsolidationRequest } from '../src/library-consolidation.ts';
 
 const clone=value=>JSON.parse(JSON.stringify(value));
 const normalized=value=>String(value).replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
@@ -11,6 +11,19 @@ function inputData(prompt){const marker='INPUT_DATA_JSON:';const start=prompt.la
 function stageReply(data){
   const registry=!!data.conceptRegistry,entries=data.conceptRegistry??data.candidates??[];
   return {tags:entries.map((entry,index)=>{const name=registry?entry.sources[0].label:entry.name;return {key:`topic-${index}`,name,fullName:name,description:'An experimentally established scientific topic.',facet:'phenomenon',aliases:[],parentKeys:[],relatedKeys:[],...(registry?{supportRegistryIds:[entry.registryId]}:{supportCandidateIds:[entry.candidateId]})};}),merges:[],excluded:[]};
+}
+function compactPlan(data){
+  const entries=data.conceptRegistry,chosen=[entries[0],entries.at(-1)];
+  return {tags:chosen.map((entry,index)=>({key:`selected-${index}`,name:entry.sources[0].label,fullName:entry.sources[0].label,description:'An experimentally established scientific topic.',facet:'phenomenon',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[entry.registryId]})),merges:[],excluded:[]};
+}
+function mapFindings(data){
+  const judgements=[],outside=[];
+  for(const source of data.sources){
+    const sourceId=source.sourceId??source.factConceptId,entry=data.permittedRegistry.find(value=>value.sourceIds.includes(sourceId)),tag=data.tags.find(value=>value.name===source.name||value.fullName===source.name);
+    if(tag)judgements.push({tagId:tag.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'equivalent',reason:'The validated quotation establishes this exact scientific topic.'});
+    else outside.push({sourceIds:[sourceId],reason:'This separate finding remains outside the selected compact tag list.',disposition:'outside-core'});
+  }
+  return {judgements,outside,questions:[]};
 }
 
 function retainedLibrary(){
@@ -37,37 +50,29 @@ export async function runNativeV053(app,check,config){
   check('v053IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
   const before=clone(app.state),host=app.env.host,librarySnapshot=app.env.librarySnapshot,ai=app.env.ai,complete=ai.completeJson,hasApiKey=ai.hasApiKey;
   const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),mode=navigator?.mode;
-  const fixture=retainedLibrary(),factsBefore=fingerprint(fixture.state.facts),nativeBefore=fingerprint(fixture.state.nativeTags),calls=[],observed=[];
-  let manager,unsubscribe,nativeWrites=0,pdfReads=0,repairVisible=false,failedPartId;
+  const fixture=retainedLibrary(),factsBefore=fingerprint(fixture.state.facts),nativeBefore=fingerprint(fixture.state.nativeTags),legacyBefore=fingerprint(fixture.state.run.consolidation),calls=[];
+  let manager,nativeWrites=0,pdfReads=0;
   try{
     await navigator?.setMode('collections');app.state=fixture.state;
     app.env.host={...host,async list(){return clone(Object.values(app.state.papers));},async read(itemID){return clone(Object.values(app.state.papers).find(paper=>paper.itemID===itemID)??null);},async readTags(itemID){const paper=Object.values(app.state.papers).find(paper=>paper.itemID===itemID);return clone(paper?app.state.nativeTags[paper.id]:[]);},async pdfText(){pdfReads++;throw new Error('Retained facts must not request PDF extraction.');},async apply(){nativeWrites++;throw new Error('Consolidation cannot write native paper tags.');}};
     app.env.librarySnapshot=async()=>({papers:clone(Object.values(app.state.papers)),nativeTags:clone(app.state.nativeTags)});ai.hasApiKey=async()=>true;
     ai.completeJson=async(_system,prompt)=>{
-      const data=inputData(prompt);if(!data.consolidationStage)throw new Error('Cached paper facts must not be extracted or prepared again.');
-      const task=app.state.run.consolidation.work.tasks.find(task=>task.id===data.requestId),count=task.inputIds.length,kind=data.consolidationRepair?'correction':'initial',bytes=new TextEncoder().encode(prompt).length;
-      if(!failedPartId&&task.phase==='map'&&task.id!=='v053-retained-tail')failedPartId=task.id;
-      calls.push({id:data.requestId,kind,count,generation:task.requestGeneration??0,phase:data.consolidationStage,bytes});
-      if(kind==='correction'){
-        await until(()=>manager.document.body.textContent.includes('Repairing'),'automatic repair message');repairVisible=true;
-      }
-      const value=kind==='correction'?{repairs:[]}:stageReply(data);if(kind==='initial'&&task.id===failedPartId)value.tags[0].facet='invalid-category';
+      const data=inputData(prompt),kind=prompt.startsWith('Consolidation protocol v2')?'plan':prompt.startsWith('Prepare a scientific tag vocabulary')?'map':undefined;
+      if(!kind)throw new Error('Retained facts must not be extracted or routed through legacy batches.');calls.push({kind,id:data.requestId});
+      const value=kind==='plan'?compactPlan(data):mapFindings(data);
       return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:10,outputTokens:10},estimatedCostUSD:0.001};
     };
     await app.save();manager=await Zotero.SmartTags.openManager({page:'activity'});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready','Activity ready');
-    unsubscribe=app.subscribe(()=>{if(app.state.run?.id==='v053-retained-library')observed.push({status:app.state.run.status,message:app.state.run.message});});
     await app.invoke('resume');await app.waitForIdle();
-    const run=app.state.run,work=run.consolidation.work;
-    check('v053RecoversWithoutManualResume',run.status==='idle'&&app.state.tagPreparation?.status==='ready'&&work.status==='complete',{status:run.status,message:run.message,preparation:app.state.tagPreparation?.status,calls:calls.length});
-    check('v053RepairsThenRetriesAndSplits',calls.some(call=>call.id===failedPartId&&call.kind==='correction')&&calls.some(call=>call.id===failedPartId&&call.generation===1)&&work.tasks.some(task=>task.parentTaskId===failedPartId)&&work.tasks.find(task=>task.id==='v053-legacy-large-part')?.superseded,{calls});
-    check('v053CompletedPartNeverRepeated',calls.every(call=>call.id!==fixture.completedId)&&work.tasks.find(task=>task.id===fixture.completedId)?.completed);
-    check('v053BoundedRequestsAndRetainedDiagnostics',calls.every(call=>call.bytes<=CONSOLIDATION_REQUEST_BYTE_LIMIT)&&work.tasks.some(task=>(task.attempts??[]).some(attempt=>attempt.error)),{largestRequest:Math.max(...calls.map(call=>call.bytes))});
-    check('v053RecoveryNeverPausedForFormatting',observed.every(event=>event.status!=='paused')&&repairVisible,{messages:[...new Set(observed.map(event=>event.message))]});
+    const run=app.state.run;
+    check('v053FiniteSelectionUsesRetainedFacts',run.status==='idle'&&app.state.tagPreparation?.status==='ready'&&run.selection?.status==='ready',{status:run.status,message:run.message,preparation:app.state.tagPreparation?.status,calls:calls.length});
+    check('v053LegacyCheckpointAndCompletedPartsStayImmutable',fingerprint(run.consolidation)===legacyBefore&&run.consolidation.work.tasks.find(task=>task.id===fixture.completedId)?.completed);
+    check('v053OneGlobalPlanReplacesLegacyBatchReduction',calls.filter(call=>call.kind==='plan').length===1&&calls.some(call=>call.kind==='map')&&calls.every(call=>!run.consolidation.work.tasks.some(task=>task.id===call.id))&&app.state.taxonomyProposal.tags.filter(tag=>!tag.custom).length===2,{calls});
     check('v053RetainedFactsAndNativeTagsUnchanged',fingerprint(app.state.facts)===factsBefore&&fingerprint(app.state.nativeTags)===nativeBefore&&nativeWrites===0&&pdfReads===0&&run.jobs.every(job=>job.status==='completed')&&run.spentUSD>=0.628);
     await until(()=>manager.document.body.textContent.includes('Your tag list is ready'),'ready tag list');
     check('v053ActivityShowsRemainingRatherThanFalseTotal',!manager.document.body.textContent.includes('estimated total')&&manager.document.body.textContent.includes('Estimated cost so far'));
-    return {papers:64,concepts:256,legacyPartInputs:172,syntheticProviderRequests:calls.length,realAIRequests:0,nativeTagWrites:nativeWrites,pdfExtractions:pdfReads,repairVisible,automaticRecovery:true};
+    return {papers:64,concepts:256,legacyPartInputs:172,syntheticProviderRequests:calls.length,realAIRequests:0,nativeTagWrites:nativeWrites,pdfExtractions:pdfReads,legacyCheckpointUnchanged:true,finiteGlobalSelection:true};
   }finally{
-    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();unsubscribe?.();if(manager&&!manager.closed)manager.close();ai.completeJson=complete;ai.hasApiKey=hasApiKey;app.env.host=host;app.env.librarySnapshot=librarySnapshot;app.state=before;await app.save();await navigator?.refresh();if(mode)await navigator?.setMode(mode);
+    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();if(manager&&!manager.closed)manager.close();ai.completeJson=complete;ai.hasApiKey=hasApiKey;app.env.host=host;app.env.librarySnapshot=librarySnapshot;app.state=before;await app.save();await navigator?.refresh();if(mode)await navigator?.setMode(mode);
   }
 }

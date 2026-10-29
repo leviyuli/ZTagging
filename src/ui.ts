@@ -420,20 +420,24 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queueStrip() {
     const q = currentState().queue;
     if (q.status === 'idle' && !q.total) return null;
-    const progress = q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
+    const progress = q.selection ? { completed: q.selection.sourceCompleted, total: q.selection.sourceTotal, label: 'Supporting findings checked' } : q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
     const percent = progress.total ? Math.min(100, progress.completed / progress.total * 100) : 0;
     const fill = h('span');
     fill.style.width = `${percent}%`;
     return h('div', 'run-strip',
-      h('div', 'inline between', h('div', '', h('strong', '', queuePhaseLabel()), h('span', 'muted', ` · ${q.phaseProgress ? `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}` : `${q.completed} of ${q.total} papers read`}`)),
-        h('div', 'inline', q.status === 'running' ? button('Pause', () => run('pause'), 'small') : q.status === 'paused' ? button('Resume', () => run('resume'), 'small') : null, button('View activity', () => nav('activity'), 'quiet small'))),
+      h('div', 'inline between', h('div', '', h('strong', '', queuePhaseLabel()), h('span', 'muted', ` · ${q.selection || q.phaseProgress ? `${progress.label}: ${progress.completed} of ${progress.total}` : `${q.completed} of ${q.total} papers read`}`)),
+        h('div', 'inline', q.status === 'running' ? button('Pause', () => run('pause'), 'small') : q.status === 'paused' ? resumeQueueButton('small') : null, button('View activity', () => nav('activity'), 'quiet small'))),
       q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'progress-bar', fill));
+  }
+  function resumeQueueButton(kind = '', disabled = false) {
+    const q = currentState().queue, retry = q.status === 'paused' && q.selection?.failed === true;
+    return button(retry ? 'Retry this step' : 'Resume', () => run(retry ? 'retry-selection' : 'resume'), kind, disabled);
   }
   function queuePhaseLabel() {
     const q = currentState().queue;
     if (q.status === 'paused') return 'Analysis paused';
-    const labels = { reading: 'Reading papers', organizing: 'Organizing tags', checking: 'Checking tag meanings', ready: 'Ready for review' };
+    const labels = { reading: 'Reading papers', organizing: 'Organizing tags', choosing: 'Choosing tags', mapping: 'Checking supporting findings', checking: 'Checking tag meanings', ready: 'Ready for review' };
     return q.phase ? labels[q.phase] : q.status === 'running' ? 'Analyzing papers' : 'Analysis complete';
   }
 
@@ -961,8 +965,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const runProvider = q.provider || s.settings.provider;
     const remainingUSD = q.estimatedUSD !== undefined && q.spentUSD !== undefined ? Math.max(0, q.estimatedUSD - q.spentUSD) : undefined;
     const apiCost = q.estimatePending ? `Estimated cost so far: ${number(q.spentUSD)}. Remaining work is still being estimated.` : `Estimated cost so far: ${number(q.spentUSD)} · estimated remaining: ${number(remainingUSD)}. Requests stay within your chosen spending limit.`;
-    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
-      h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
+    const corrections = q.selection?.semanticRepairAllowance !== undefined && q.selection.mappingCorrectionAllowance !== undefined
+      ? h('div', '', h('p', 'card-description', `Tag selection repairs: ${q.selection.semanticRepairsUsed ?? 0} of ${q.selection.semanticRepairAllowance} used`), h('p', 'card-description', `Source check corrections: ${q.selection.mappingCorrectionsUsed ?? 0} of ${q.selection.mappingCorrectionAllowance} used`))
+      : q.selection ? h('p', 'card-description', `Additional correction requests: ${q.selection.correctionsUsed} of ${q.selection.correctionAllowance} used`) : null;
+    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.selection ? h('div', 'section-gap', h('p', '', `Supporting findings checked: ${q.selection.sourceCompleted} of ${q.selection.sourceTotal}`), h('p', 'card-description', `${q.selection.completedRequests} requests completed · ${q.selection.queuedRequests} requests queued`), corrections) : q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
+      h('div', 'actions', resumeQueueButton('primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('cleanup'), 'small')));
     const history = h('div', '');

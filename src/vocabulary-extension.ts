@@ -2,7 +2,7 @@ import {allocateOpaqueId,canonicalTagKey,FACETS,fingerprint} from './core.ts';
 import type {TagDefinition} from './core.ts';
 import {terminologyFor,terminologyKey} from './naming.ts';
 import {isNoTagDefinition} from './tag-policy.ts';
-import {conceptMeaningFingerprint,validateTaxonomy} from './taxonomy.ts';
+import {conceptMeaningFingerprint,semanticDecisionKey,validateTaxonomy} from './taxonomy.ts';
 import type {TaxonomyProposal,TaxonomySupport} from './taxonomy.ts';
 
 export interface VocabularyBaseline {version:number;fingerprint:string;definitions:TagDefinition[]}
@@ -94,6 +94,14 @@ export function reconcileExtensionProposal(input:TaxonomyProposal,baseline:Vocab
     const contextual=[...(context[tag.id]??[]),...(tag.relatedIds??[]).filter(id=>byId.has(id))];context[tag.id]=[...new Set(contextual)];tag.relatedIds=(tag.relatedIds??[]).filter(id=>!byId.has(id));
   }
   proposal.tags=[...selected.values()];proposal.support=support;proposal.extension={baseline:clone(baseline),relatedIds:Object.fromEntries(Object.entries(context).filter(([id])=>selected.has(id)))};
+  if(proposal.retainedDefinitionIds)proposal.retainedDefinitionIds=[...new Set(proposal.retainedDefinitionIds.map(id=>redirects.get(id)??id))].filter(id=>selected.has(id));
+  if(proposal.mappingPolicyVersion===3){
+    const mapped:Record<string,string[]>={};
+    for(const [oldId,sources] of Object.entries(proposal.mappedSourceIds??{})){const id=redirects.get(oldId)??oldId;if(selected.has(id))mapped[id]=[...new Set([...(mapped[id]??[]),...sources])];}
+    proposal.mappedSourceIds=mapped;
+    if(proposal.inheritanceReviewSourceIds){const reviewed:Record<string,string[]>={};for(const [oldId,sources] of Object.entries(proposal.inheritanceReviewSourceIds)){const id=redirects.get(oldId)??oldId;if(selected.has(id))reviewed[id]=[...new Set([...(reviewed[id]??[]),...sources])];}proposal.inheritanceReviewSourceIds=reviewed;}
+    proposal.machineDecisions=Object.fromEntries(Object.values(proposal.machineDecisions??{}).map(decision=>{const tagId=redirects.get(decision.tagId)??decision.tagId,updated={...decision,tagId};return [semanticDecisionKey(tagId,updated.sourceId),updated];}));
+  }
   proposal.merges=proposal.merges.filter(merge=>!byId.has(merge.fromId)).map(merge=>({...merge,toId:redirects.get(merge.toId)??merge.toId}));
   proposal.unresolvedMerges=proposal.unresolvedMerges?.filter(merge=>!byId.has(merge.fromId));
   proposal.validationIssues=proposal.validationIssues?.filter(issue=>!issue.tagId||!redirects.has(issue.tagId)||selected.has(redirects.get(issue.tagId)!)).map(issue=>({...issue,...(issue.tagId?{tagId:redirects.get(issue.tagId)??issue.tagId}:{})}));

@@ -24,9 +24,13 @@ function harness(saved?:AppState){
       if(failConsolidation)throw new ProviderError('Synthetic connection expired.','authentication',{status:401});
       const ids=(label:string)=>data.conceptRegistry.filter((entry:{sources:{label:string}[]})=>entry.sources.some(source=>source.label===label)).map((entry:{registryId:string})=>entry.registryId);
       value={tags:[{key:'fc',name:'FC',fullName:'fuel cell',description:'A generated rewrite that must not change the approved meaning.',facet:'system',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[]},{key:'aemfc',name:'AEMFC',fullName:'anion exchange membrane fuel cell',description:'Anion exchange membrane fuel cell systems.',facet:'system',aliases:[],parentKeys:['fc'],relatedKeys:[],supportRegistryIds:ids('AEMFC')},{key:'eis',name:'EIS',fullName:'electrochemical impedance spectroscopy',description:'A generated description of impedance measurements.',facet:'method',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:ids('Electrochemical impedance spectroscopy')}],merges:[],excluded:[]};
+    }else if(data.selectionPhase==='mapping'){
+      const judgements=[],outside=[];
+      for(const source of data.sources){const sourceId=source.sourceId,entry=data.permittedRegistry.find((value:any)=>value.sourceIds.includes(sourceId)),name=source.name.toLowerCase(),tag=data.tags.find((value:any)=>name==='aemfc'?value.name==='AEMFC':name==='electrochemical impedance spectroscopy'&&value.name==='EIS');if(tag)judgements.push({tagId:tag.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'equivalent',reason:'The actual quotation explicitly establishes the chosen scientific topic.'});else outside.push({sourceIds:[sourceId],reason:'No selected core describes this separate finding.',disposition:'outside-core'});}
+      value={judgements,outside};
     }else if(data.approvedVocabulary){
       value={summary:'A fuel-cell impedance experiment.',concepts:[],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.filter((tag:{name:string})=>tag.name==='AEMFC'||tag.name==='EIS').map((tag:{id:string})=>({tagId:tag.id,reason:'The abstract directly establishes this studied concept.',confidence:'high',match:'substantive',evidence:[{source:'abstract',text:data.paper.abstract}]}))};
-    }else if(data.preparationPolicyVersion)throw new Error('Established terminology in this fixture must not require another semantic request.');
+    }else if(data.preparationPolicyVersion)throw new Error('No legacy preparation request is required.');
     else value={summary:quote,concepts:[{name:'AEMFC',facet:'system',evidence:[{source:'abstract',text:quote}]},{name:'Electrochemical impedance spectroscopy',facet:'method',evidence:[{source:'abstract',text:quote}]}],needsPDF:false};
     return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:10,outputTokens:10},estimatedCostUSD:0.001};
   },async hasApiKey(){return true;},async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};},async testConnection(){throw new Error('No connection test is required.');},async listModels(){return [];},async setApiKey(){},async removeApiKey(){},async signIn(){throw new Error('No sign-in is required.');},cancelSignIn(){},async signOut(){return {revoked:true};},async selectAccount(){}};
@@ -68,8 +72,8 @@ test('extension mode and baseline survive a paused run and restart without repea
 });
 
 test('an explicit replacement cannot reuse an extension checkpoint and may omit old core tags after review',async()=>{
-  const h=harness();approved(h);h.setFailure(true);await build(h);const oldFingerprint=h.state.run!.consolidation!.inputFingerprint,facts=fingerprint(h.state.facts);h.setFailure(false);await build(h,'replace');
-  assert.equal(h.state.run!.buildMode,'replace');assert.equal(h.state.run!.extensionBaseline,undefined);assert.notEqual(h.state.run!.consolidation!.inputFingerprint,oldFingerprint);assert.equal(fingerprint(h.state.facts),facts);assert.equal(h.state.taxonomyProposal!.extension,undefined);
+  const h=harness();approved(h);h.setFailure(true);await build(h);const oldFingerprint=h.state.run!.selection!.fingerprint,facts=fingerprint(h.state.facts);h.setFailure(false);await build(h,'replace');
+  assert.equal(h.state.run!.buildMode,'replace');assert.equal(h.state.run!.extensionBaseline,undefined);assert.notEqual(h.state.run!.selection!.fingerprint,oldFingerprint);assert.equal(fingerprint(h.state.facts),facts);assert.equal(h.state.taxonomyProposal!.extension,undefined);
   await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});assert.equal(h.state.tags.some(tag=>tag.id==='old-co'),false);assert.ok(h.state.tags.some(tag=>tag.id==='old-detail'));assert.ok(h.native['1:OLD'].some(tag=>tag.tag==='FC'));assert.equal(h.writes.length,0);
 });
 

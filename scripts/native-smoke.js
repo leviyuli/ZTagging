@@ -8,6 +8,7 @@ import { runNativeV051 } from './native-v051.js';
 import { runNativeV052 } from './native-v052.js';
 import { runNativeV053 } from './native-v053.js';
 import { runNativeV060 } from './native-v060.js';
+import { runNativeV070 } from './native-v070.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -158,6 +159,7 @@ void (async () => {
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
     report.v020=await runNativeV020(app,check,config);
     report.v060=await runNativeV060(app,check,config);
+    report.v070=await runNativeV070(app,check,config);
     report.v040=await runNativeV040(app,check,config);
     report.v053=await runNativeV053(app,check,config);
     report.v052=await runNativeV052(app,check,config);
