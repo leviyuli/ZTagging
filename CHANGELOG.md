@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Simplified the paper-attention panel: empty views no longer show selection controls, disabled batch buttons, repeated help text, a pager, or a large footer action.
+- Each paper shows one recovery action and a **More** menu; clicking its title opens it in Zotero. Batch actions appear only after selection, with secondary choices under **Actions**.
+- Moved **Exclude selected Zotero items…** into the panel's **More** menu. Dismiss, exclusion, inclusion, retry, and one-build skip keep their existing behavior and reviewed Apply steps.
+- Added keyboard navigation, Escape/focus restoration, outside-click dismissal, and viewport-aware placement for the action menus. Search and status changes clear selections so hidden papers cannot be included accidentally.
+- Kept state schema, analysis, provider settings, tag assignments, and library data unchanged.
+
 ## 0.5.1
 
 - Fixed a large-library consolidation pause caused by cross-category subtype edges and relationship names outside the current batch. Routine structural mistakes are repaired locally; unresolved batch links are carried into the global pass instead of rejecting the whole response.

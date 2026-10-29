@@ -1,18 +1,19 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.5.1",
-  "verifiedAt": "2026-10-29T06:39:38.291Z",
+  "version": "0.5.2",
+  "verifiedAt": "2026-10-29T07:03:48.496Z",
   "target": "Zotero 10.0.6 on Windows",
+  "scope": "Attention-panel interface only",
   "schemaVersion": 5,
   "consolidationProtocolVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 649,
+    "passed": 652,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 117,
+    "passed": 129,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -347,6 +348,54 @@
         "passed": true
       },
       {
+        "name": "v052IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v052IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v052RowsKeepOneRecoveryAndMore",
+        "passed": true
+      },
+      {
+        "name": "v052LongTitlesStayInsideTheirColumn",
+        "passed": true
+      },
+      {
+        "name": "v052NoZeroQueueOrFooterClutter",
+        "passed": true
+      },
+      {
+        "name": "v052BulkActionsOnlyAfterSelection",
+        "passed": true
+      },
+      {
+        "name": "v052ActionsUseAccessibleMenu",
+        "passed": true
+      },
+      {
+        "name": "v052MenuStaysInsideWindow",
+        "passed": true
+      },
+      {
+        "name": "v052EscapeClosesAndRestoresFocus",
+        "passed": true
+      },
+      {
+        "name": "v052EmptyViewHasNoSelectionOrPager",
+        "passed": true
+      },
+      {
+        "name": "v052FilteringClearsHiddenSelections",
+        "passed": true
+      },
+      {
+        "name": "v052LayoutChecksNeedNoProvider",
+        "passed": true
+      },
+      {
         "name": "v051IsolatedDataGuard",
         "passed": true
       },
@@ -485,149 +534,78 @@
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection.",
     "nativePackageUpgrade": {
-      "from": "0.5.0",
-      "to": "0.5.1",
+      "from": "0.5.1",
+      "to": "0.5.2",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "f985bf0ba47272f4357f54da2a7d3981a36ebb525c457177336f6ec4797aa4ab",
+      "packageHash": "a4edaa517fe13be0b359ae44948334271cae0cf44bbfa461003a735afe14bed0",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
-    "paperPolicy": {
-      "realAIRequests": 0,
-      "manualExclusionAndUndo": true,
-      "dismissalRecurrence": true,
-      "standaloneNativeFilter": true,
-      "existingNativeTagsPreserved": true
+    "attentionLayout": {
+      "rows": 2,
+      "emptyControlsHidden": true,
+      "selectionOnlyActions": true,
+      "keyboardMenu": true,
+      "realAIRequests": 0
     }
   },
   "nativeBundleMatchesInstaller": true,
-  "consolidationRecovery": {
-    "savedFailedResponseReused": true,
-    "routineCrossCategoryLinksBecomeContextual": true,
-    "unresolvedBatchLinksRetainedUntilGlobalPass": true,
-    "globalOmissionsRequireRecordedReason": true,
-    "hardScientificAndEvidenceChecksRetained": true,
-    "automaticCorrectionRequestsPerPartGeneration": 1,
-    "dispatchedAttemptsAndRepliesPersist": true,
-    "budgetRejectionDoesNotConsumeAttempt": true,
-    "incompleteRepliesRemainDiagnosticOnly": true,
-    "explicitRetryRetainsCompletedPartsAndSpend": true,
-    "requestByteLimit": 100000
+  "attentionUI": {
+    "emptyViewOmitsSelectionActionsPagerHelpAndFooter": true,
+    "oneRecoveryActionPerPaper": true,
+    "paperTitleOpensZotero": true,
+    "secondaryRowActionsInMore": true,
+    "bulkControlsOnlyAfterSelection": true,
+    "secondaryBulkActionsInActionsMenu": true,
+    "headerMoreRetainsZoteroSelectionExclusion": true,
+    "onlyApplicableCommandsIncluded": true,
+    "searchAndStatusChangesClearSelection": true,
+    "keyboardNavigationAndFocusRestoration": true,
+    "popupScrollKeepsActiveCommandVisible": true,
+    "outsideClickTabAndEscapeClose": true,
+    "popupListenersCleanedOnRefreshAndDestroy": true,
+    "longTitlesWrapWithinTheirColumn": true
   },
-  "paperPolicy": {
-    "builtinName": "no_tag",
-    "builtinId": "smart-tags:no-tag",
-    "editable": false,
-    "countsTowardVocabularyTarget": false,
-    "dismissalDoesNotClaimRepair": true,
-    "unchangedRecheckKeepsDismissal": true,
-    "changedConditionCanResurface": true,
-    "manualExclusionNeedsPreviewAndApply": true,
-    "otherTagsAndCollectionsPreserved": true,
-    "exclusionAndInclusionUndoable": true,
-    "nativeMarkerSkipsFutureExtractionAndAssignment": true,
-    "queuedRetryChecksMarkerBeforeDispatch": true,
-    "automaticSuggestionsRequireExplicitOutsideVocabularyOutcome": true,
-    "adequateExactEvidenceRequired": true,
-    "missingInformationAndFailuresNeverBecomeMarker": true,
-    "DIYOnlyPreviewCannotDecideWholeVocabularyFit": true,
-    "suggestedMarkerNeedsSeparateBatchApply": true,
-    "neverUnattendedAssignable": true,
-    "markerAloneCannotApproveScientificPilot": true,
-    "historicalDefinitionIdsAndManualChoicesPreserved": true
-  },
-  "privateReadOnlyReplay": {
-    "status": "passed",
-    "startedAt": "2026-10-29T06:36:17.582Z",
-    "scope": "Private cached input replay only; synthetic outputs do not certify scientific correctness.",
-    "liveProviderRequests": 0,
-    "extractionRequests": 0,
-    "nativeWrites": 0,
-    "localRecovery": {
-      "status": "passed",
-      "selectedJobs": 744,
-      "cachedFacts": 752,
-      "firstInputs": 157,
-      "completedParts": 1,
-      "totalParts": 29,
-      "outputs": 152,
-      "demotedAssociations": 55,
-      "deferredHints": 4,
-      "originalRawUnchanged": true,
-      "recoveryInputUnchanged": true,
-      "allFirstInputIdentitiesAccounted": true,
-      "firstPartReusedAfterJSONRestart": true,
-      "liveProviderRequests": 0,
-      "extractionRequests": 0
-    },
-    "syntheticCompletion": {
-      "status": "passed",
-      "syntheticReplies": 31,
-      "phases": {
-        "map": 28,
-        "reduce": 2,
-        "final": 1
-      },
-      "maxPromptUTF8Bytes": 99909,
-      "byteLimit": 100000,
-      "registryIdentities": 5174,
-      "allIdentitiesRetainedOrExplicitlyExcluded": true,
-      "foreignIdentities": 0,
-      "recoveredCandidatesAndDeferredHintsPreserved": true,
-      "finalUnresolvedHints": 0,
-      "explicitRelationshipOmissions": 4,
-      "originalRawUnchanged": true,
-      "liveProviderRequests": 0,
-      "extractionRequests": 0
-    },
-    "controllerResume": {
-      "status": "passed",
-      "selectedCompletedJobs": 744,
-      "completedParts": 1,
-      "interceptedTransportCalls": 1,
-      "firstPartResent": false,
-      "allCachedInputsReproduced": 744,
-      "metadataReads": 744,
-      "localPDFReads": 161,
-      "factsAndCatalogUnchanged": true,
-      "snapshotUnchanged": true,
-      "liveProviderRequests": 0,
-      "extractionRequests": 0,
-      "nativeWrites": 0
-    },
-    "originalPrivateCopyBytesUnchanged": true,
-    "finishedAt": "2026-10-29T06:36:20.558Z"
-  },
-  "migration": {
-    "schemaUnchanged": true,
-    "optionalAdditiveFields": true,
-    "noModelRequestsOnLoad": true,
-    "existingSchema5StateAndHistoricalHashesRetained": true
+  "unchangedBehavior": {
+    "controller": true,
+    "analysisAndConsolidation": true,
+    "persistenceAndSchema": true,
+    "providerAndBudgetControls": true,
+    "nativeAssignmentAndUndo": true,
+    "incomingAutomation": true,
+    "navigatorAndColumns": true
   },
   "rightItemAndInformationPaneSection": false,
   "skills": {
-    "deslop": "Focused diff cleanup with minimal bug fixes.",
-    "codebaseDesign": "Policy, consolidation and reconciliation tested through module interfaces; persistence through public controller actions; manager through accessible controls."
+    "deslop": "Focused UI/CSS diff cleanup and reviewer audit.",
+    "codebaseDesign": "Menu behavior kept behind a small manager interface and tested through accessible controls; existing controller endpoint assertions retained."
   },
   "workingLibraryModified": false,
+  "liveProviderRequests": 0,
+  "newPrivateLibraryReplay": false,
+  "priorBackendValidation": {
+    "version": "0.5.1",
+    "unchangedBackend": true,
+    "reference": "https://github.com/leviyuli/ZTagging/releases/tag/v0.5.1"
+  },
   "publicArtifactPrivateDataScan": "passed",
   "limits": [
-    "No live AI request or real account authorization was performed.",
-    "The actual saved first response was recovered locally; continuation used synthetic replies to test queue, deferred-link and evidence-identity accounting, not scientific recommendation quality.",
-    "Native UI checks were programmatic; no screenshot-based visual review was performed.",
-    "Native package upgrade was tested through AddonManager without uninstall; remote feed discovery was not exercised before publication."
+    "Native checks used rendered Zotero controls, focus state and layout measurements.",
+    "Desktop screenshot review was unavailable because the computer-use helper could not connect.",
+    "No live AI requests or real account authorization were performed.",
+    "Native package upgrade was tested without uninstall; remote feed discovery was not exercised before publication."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.5.1.xpi",
-      "bytes": 429641,
-      "sha256": "f985bf0ba47272f4357f54da2a7d3981a36ebb525c457177336f6ec4797aa4ab"
+      "file": "smart-tags-0.5.2.xpi",
+      "bytes": 433375,
+      "sha256": "a4edaa517fe13be0b359ae44948334271cae0cf44bbfa461003a735afe14bed0"
     },
     "source": {
-      "file": "smart-tags-0.5.1-source.zip",
-      "bytes": 447249,
-      "sha256": "97c05834ae480ede00c0b42399aa2e0422304d4b27117774bb9966f95271c0da"
+      "file": "smart-tags-0.5.2-source.zip",
+      "bytes": 453407,
+      "sha256": "f5a35ddff2e7de1052c84c8450b228d26a231718c2a65fa752f4cb4528d6e9d3"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

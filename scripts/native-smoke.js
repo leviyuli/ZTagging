@@ -5,6 +5,7 @@ import { runNativeV020 } from './native-v020.js';
 import { runNativeV040 } from './native-v040.js';
 import { runNativeV050 } from './native-v050.js';
 import { runNativeV051 } from './native-v051.js';
+import { runNativeV052 } from './native-v052.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -155,10 +156,15 @@ void (async () => {
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
     report.v020=await runNativeV020(app,check,config);
     report.v040=await runNativeV040(app,check,config);
+    report.v052=await runNativeV052(app,check,config);
     report.v051=await runNativeV051(app,check,config);
     report.v050=await runNativeV050(app,check,config);
     report.syntheticItemIDs = items.map(item => item.id);
-    if (config.openManager) await Zotero.SmartTags.openManager();
+    if (config.openManager) {
+      const preview=await Zotero.SmartTags.openManager({page:'activity'});
+      await until(()=>preview.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready','preview manager ready');
+      preview.document.title='Smart Tags — isolated UI preview';
+    }
     report.status = 'passed';
     report.completedAt = new Date().toISOString();
     report.note = 'No real AI request or authentication was performed. Leave this isolated app running for manual manager inspection.';

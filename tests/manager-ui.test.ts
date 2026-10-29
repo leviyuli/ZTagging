@@ -54,7 +54,7 @@ function managerDOM() {
   const win:any=new Target();Object.assign(win,{document:doc,innerWidth:1100,innerHeight:800,scrollY:0,scrollTo(){},confirm:()=>true,setTimeout(callback:()=>void,delay:number){const id=++nextTimer;timers.set(id,callback);timerDelays.set(id,delay);return id;},clearTimeout(id:number){timers.delete(id);timerDelays.delete(id);}});
   function descendants(root:Element):Element[]{return root.children.flatMap(child=>[child,...descendants(child)]);}
   function matches(node:Element,selector:string){return selector.split(',').some(part=>{const simple=part.trim();if(simple.startsWith('.'))return node.classList.contains(simple.slice(1));if(simple.startsWith('#'))return node.id===simple.slice(1);return node.localName===simple;});}
-  return {win,doc,app,timers,timerDelays,all:()=>descendants(app),button:(label:string)=>descendants(app).find(node=>node.localName==='button'&&node.textContent===label)!};
+  return {win,doc,app,timers,timerDelays,all:()=>descendants(app),button:(label:string)=>descendants(doc.body).find(node=>node.localName==='button'&&(node.textContent===label||node.getAttribute('aria-label')===label))!};
 }
 function tag(id:string,name:string,extra:Partial<DisplayTag>={}):DisplayTag{return {id,name,description:`Definition of ${name}`,facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto',...extra};}
 function snapshot():ManagerSnapshot {
@@ -314,10 +314,11 @@ test('mixed existing tag meanings leave uncertain papers unchanged unless a pape
 
 test('paper attention deduplicates papers and keeps usable evidence gaps out of global notices',async t=>{
   const data=snapshot();const paper={id:'a',title:'Needs abstract',status:'needsInformation' as const,message:'Add information before trying again.',phase:'facts',canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:true};
+  data.papers[0].title=paper.title;data.papers[1].title='Ready paper';
   data.paperAttention={queued:1,papers:[paper,{...paper}, {...paper,id:'b',title:'Ready paper',status:'usable'}]};data.warnings=[warning('gap',{code:'evidence-gap',message:'Raw evidence gap message'})];
   const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.equal(h.all().filter(node=>node.className==='paper-attention-row').length,1);assert.doesNotMatch(h.app.textContent,/Raw evidence gap message|fact-extraction/);
-  await h.click('Open in Zotero');await h.click('Find metadata');await h.click('Recheck PDF');h.change('attention-a',true);await h.click('Retry selected');await h.click('Skip selected for this build');
-  assert.deepEqual(h.actions,[{action:'show-paper',payload:{id:'a'}},{action:'preview-metadata',payload:{id:'a'}},{action:'recheck-paper-inputs',payload:{id:'a'}},{action:'retry-papers',payload:{ids:['a']}},{action:'skip-paper-analysis',payload:{ids:['a']}}]);
+  await h.click('Needs abstract');await h.click('Find metadata');await h.click('More actions for Needs abstract');await h.click('Recheck PDF');await h.click('More actions for Needs abstract');await h.click('Skip for this build');h.change('attention-a',true);await h.click('Retry selected');
+  assert.deepEqual(h.actions,[{action:'show-paper',payload:{id:'a'}},{action:'preview-metadata',payload:{id:'a'}},{action:'recheck-paper-inputs',payload:{id:'a'}},{action:'skip-paper-analysis',payload:{ids:['a']}},{action:'retry-papers',payload:{ids:['a']}}]);
   h.choose('attention-status',2);assert.equal(h.all().filter(node=>node.className==='paper-attention-row').length,1);assert.match(h.app.textContent,/Ready paper/);
 });
 
@@ -355,20 +356,65 @@ test('finished paper reading does not present tag organization as complete',asyn
 test('attention offers per-paper and batch Dismiss without excluding or changing native tags',async t=>{
   const data=snapshot(),entry={id:'a',title:'Notice one',status:'needsInformation' as const,message:'Some information is missing.',phase:'facts',canDismiss:true,canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:false};
   data.paperAttention={queued:0,papers:[entry,{...entry,id:'b',title:'Notice two',status:'failed'},{...entry,id:'c',title:'Ready paper',status:'usable',canDismiss:false}]};const before=structuredClone(data.papers);const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
-  await h.click('Dismiss');assert.deepEqual(h.actions,[{action:'dismiss-paper-attention',payload:{ids:['a']}}]);assert.equal(h.doc.getElementById('attention-a'),null);h.change('attention-b',true);await h.click('Dismiss selected');assert.deepEqual(h.actions[1],{action:'dismiss-paper-attention',payload:{ids:['b']}});assert.deepEqual(data.papers,before);assert.equal(data.settings.autoAssign,false);
+  await h.click('More actions for Notice one');await h.click('Dismiss');assert.deepEqual(h.actions,[{action:'dismiss-paper-attention',payload:{ids:['a']}}]);assert.equal(h.doc.getElementById('attention-a'),null);h.change('attention-b',true);await h.click('Actions for selected papers');await h.click('Dismiss selected');assert.deepEqual(h.actions[1],{action:'dismiss-paper-attention',payload:{ids:['b']}});assert.deepEqual(data.papers,before);assert.equal(data.settings.autoAssign,false);
   data.paperAttention.papers.push({...entry,message:'New information exposed another condition.'});await h.emitUpdate();assert.ok(h.doc.getElementById('attention-a'));
 });
 
 test('Exclude and Include again require a reviewed exact native tag preview',async t=>{
   const data=snapshot(),entry={id:'a',title:'Outside my tagging scope',status:'needsInformation' as const,message:'Information is missing.',phase:'facts',canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:false};data.paperAttention={queued:0,papers:[entry]};const before=structuredClone(data.papers);const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
-  await h.click('Exclude from tagging');assert.deepEqual(h.actions,[{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:true}}]);assert.deepEqual(data.papers,before);assert.equal(h.button('Apply no_tag and exclude'),undefined);
+  await h.click('More actions for Outside my tagging scope');await h.click('Exclude from tagging');assert.deepEqual(h.actions,[{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:true}}]);assert.deepEqual(data.papers,before);assert.equal(h.button('Apply no_tag and exclude'),undefined);
   data.paperExclusionPreview={id:'exclude-review',exclude:true,changes:[{paperId:'a',title:entry.title,before:['Manual project','FC'],after:['Manual project','FC','no_tag']}]};await h.emitUpdate();assert.match(h.app.textContent,/Before: Manual project, FC/);assert.match(h.app.textContent,/After: Manual project, FC, no_tag/);await h.click('Apply no_tag and exclude');assert.deepEqual(h.actions.at(-1),{action:'apply-paper-exclusion',payload:{previewId:'exclude-review'}});
   data.paperAttention.papers=[{...entry,status:'excluded',canDismiss:false,canLookupMetadata:false,canRecheck:false,canRetry:false}];delete data.paperExclusionPreview;await h.emitUpdate();assert.equal(h.doc.getElementById('attention-a'),null);h.choose('attention-status',6);assert.ok(h.doc.getElementById('attention-a'));assert.equal(h.button('Retry analysis'),undefined);await h.click('Include again');assert.deepEqual(h.actions.at(-1),{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:false}});
   data.paperExclusionPreview={id:'include-review',exclude:false,changes:[{paperId:'a',title:entry.title,before:['Manual project','FC','no_tag'],after:['Manual project','FC']}]};await h.emitUpdate();await h.click('Apply inclusion');assert.deepEqual(h.actions.at(-1),{action:'apply-paper-exclusion',payload:{previewId:'include-review'}});assert.deepEqual(data.papers,before);
 });
 
 test('batch exclusion and manually selected Zotero papers work without an AI connection',async t=>{
-  const data=snapshot();data.settings.model='';data.connection.apiKeyStored=false;const entry={id:'a',title:'Unneeded paper',status:'failed' as const,message:'Could not analyze.',phase:'facts',canDismiss:true,canLookupMetadata:false,canRecheck:false,canRetry:false,canSkip:false};data.paperAttention={queued:0,papers:[entry,{...entry,id:'b'}]};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());await h.click('Select this page');await h.click('Exclude selected from tagging');assert.deepEqual(h.actions[0],{action:'preview-paper-exclusion',payload:{ids:['a','b'],exclude:true}});await h.click('Exclude selected Zotero items…');assert.deepEqual(h.actions[1],{action:'preview-paper-exclusion',payload:{exclude:true}});assert.equal(data.settings.autoAssign,false);
+  const data=snapshot();data.settings.model='';data.connection.apiKeyStored=false;const entry={id:'a',title:'Unneeded paper',status:'failed' as const,message:'Could not analyze.',phase:'facts',canDismiss:true,canLookupMetadata:false,canRecheck:false,canRetry:false,canSkip:false};data.paperAttention={queued:0,papers:[entry,{...entry,id:'b'}]};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());h.change('attention-select-page',true);await h.click('Actions for selected papers');await h.click('Exclude selected from tagging');assert.deepEqual(h.actions[0],{action:'preview-paper-exclusion',payload:{ids:['a','b'],exclude:true}});await h.click('More paper actions');await h.click('Exclude selected Zotero items…');assert.deepEqual(h.actions[1],{action:'preview-paper-exclusion',payload:{exclude:true}});assert.equal(data.settings.autoAssign,false);
+});
+
+test('an empty attention panel keeps only its search and header menu without selection controls or pagination',async t=>{
+  const data=snapshot();data.paperAttention={queued:0,papers:[]};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/No papers need attention/);assert.ok(h.doc.getElementById('attention-search'));assert.ok(h.doc.getElementById('attention-status'));assert.ok(h.button('More paper actions'));
+  assert.equal(h.doc.getElementById('attention-select-page'),null);
+  for(const label of ['Clear','Retry selected','Actions for selected papers','Previous papers','Next papers','Exclude selected Zotero items…'])assert.equal(h.button(label),undefined,label);
+  assert.doesNotMatch(h.app.textContent,/0 selected|0 papers queued|Each paper appears once|Dismiss hides|Exclude adds no_tag/);assert.equal(h.actions.length,0);
+  await h.click('More paper actions');assert.ok(h.button('Exclude selected Zotero items…'));assert.equal(h.actions.length,0);
+});
+
+test('attention selection controls and menus expose only applicable actions and clear when filters change',async t=>{
+  const data=snapshot(),entry={id:'a',title:'Missing abstract',status:'needsInformation' as const,message:'An abstract is missing.',phase:'facts',canDismiss:true,canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:false};
+  data.paperAttention={queued:0,papers:[entry,{...entry,id:'b',title:'Already excluded',status:'excluded',canDismiss:false,canLookupMetadata:false,canRecheck:false,canRetry:false},{...entry,id:'c',title:'Leave for later',canLookupMetadata:false,canRecheck:false,canRetry:false,canSkip:true}]};
+  const original=structuredClone(data.papers),h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  const menuItems=()=>h.doc.querySelectorAll('button').filter((node:any)=>node.getAttribute('role')==='menuitem').map((node:any)=>node.textContent).sort();
+  assert.equal(h.button('Retry selected'),undefined);assert.equal(h.button('Actions for selected papers'),undefined);assert.equal(h.button('Clear'),undefined);
+  h.change('attention-a',true);assert.match(h.app.textContent,/1 selected/);assert.ok(h.button('Clear'));assert.ok(h.button('Retry selected'));
+  await h.click('Actions for selected papers');assert.deepEqual(menuItems(),['Dismiss selected','Exclude selected from tagging'].sort());
+  h.choose('attention-status',6);assert.equal(h.button('Clear'),undefined);assert.equal(h.button('Retry selected'),undefined);assert.equal(h.button('Actions for selected papers'),undefined);assert.deepEqual(menuItems(),[]);assert.ok(h.doc.getElementById('attention-b'));
+  h.change('attention-b',true);assert.equal(h.button('Retry selected'),undefined);await h.click('Actions for selected papers');assert.deepEqual(menuItems(),['Include selected again']);await h.click('Include selected again');
+  assert.deepEqual(h.actions[0],{action:'preview-paper-exclusion',payload:{ids:['b'],exclude:false}});
+  h.choose('attention-status',3);assert.equal(h.button('Actions for selected papers'),undefined);h.change('attention-c',true);assert.equal(h.button('Retry selected'),undefined);await h.click('Actions for selected papers');assert.ok(menuItems().includes('Skip selected for this build'));assert.equal(menuItems().includes('Include selected again'),false);await h.click('Skip selected for this build');
+  assert.deepEqual(h.actions[1],{action:'skip-paper-analysis',payload:{ids:['c']}});
+  h.change('attention-search','No paper matches');assert.match(h.app.textContent,/No matching papers/);assert.equal(h.doc.getElementById('attention-select-page'),null);assert.equal(h.button('Clear'),undefined);assert.equal(h.button('Actions for selected papers'),undefined);assert.equal(h.button('Next papers'),undefined);assert.deepEqual(menuItems(),[]);assert.deepEqual(data.papers,original);
+});
+
+test('attention action menus support keyboard focus, scroll within a short popup, and release portals and listeners',async t=>{
+  const data=snapshot();data.paperAttention={queued:0,papers:[{id:'a',title:'Keyboard paper',status:'needsInformation',message:'More information is needed.',phase:'facts',canDismiss:true,canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:true}]};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  const watched=[[h.doc,'pointerdown'],[h.doc,'focusin'],[h.doc,'scroll'],[h.win,'resize'],[h.win,'unload']] as const;
+  const baseline=watched.map(([target,event])=>new Set(target.listeners.get(event)||[]));
+  const assertMenuListenersRemoved=()=>watched.forEach(([target,event],index)=>{for(const listener of target.listeners.get(event)||[])assert.equal(baseline[index].has(listener),true,`Leaked ${event} menu listener`);});
+  function open(key:string){const trigger=h.doc.getElementById('attention-more-a');assert.equal(trigger.getAttribute('aria-haspopup'),'menu');trigger.focus();trigger.emit('keydown',{key});const menu=h.doc.getElementById('attention-more-a-menu');assert.ok(menu);assert.equal(menu.parentNode,h.doc.body);assert.equal(menu.getAttribute('role'),'menu');assert.equal(trigger.getAttribute('aria-expanded'),'true');const items=menu.querySelectorAll('button');assert.ok(items.length>1);assert.equal(items.every((item:any)=>item.getAttribute('role')==='menuitem'),true);return {trigger,menu,items};}
+  const first=open('Enter');assert.equal(h.doc.activeElement,first.items[0]);
+  Object.defineProperty(first.menu,'clientHeight',{value:40});Object.defineProperty(first.items.at(-1),'offsetTop',{value:180});
+  first.items[0].emit('keydown',{key:'ArrowDown'});assert.equal(h.doc.activeElement,first.items[1]);first.items[1].emit('keydown',{key:'ArrowUp'});assert.equal(h.doc.activeElement,first.items[0]);
+  first.items[0].emit('keydown',{key:'End'});assert.equal(h.doc.activeElement,first.items.at(-1));assert.equal(first.menu.scrollTop,174);
+  first.items.at(-1).emit('keydown',{key:'Home'});assert.equal(h.doc.activeElement,first.items[0]);assert.equal(first.menu.scrollTop,0);
+  first.items[0].emit('keydown',{key:'Escape'});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assert.equal(first.trigger.getAttribute('aria-expanded'),'false');assert.equal(h.doc.activeElement,first.trigger);assertMenuListenersRemoved();
+  const spaced=open(' ');spaced.items[0].emit('keydown',{key:'Tab'});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
+  open('ArrowDown');const outside=h.doc.getElementById('attention-search');outside.focus();h.doc.emit('focusin',{target:outside});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assert.equal(h.doc.activeElement,outside);assertMenuListenersRemoved();assert.equal(h.actions.length,0);
+  const activated=open('ArrowDown');assert.equal(activated.items[0].textContent,'Recheck PDF');activated.items[0].emit('keydown',{key:'Enter'});await settle();assert.deepEqual(h.actions,[{action:'recheck-paper-inputs',payload:{id:'a'}}]);assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
+  const refreshed=open('ArrowDown');await h.emitUpdate();assert.equal(refreshed.trigger.isConnected,false);assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
+  open('ArrowDown');h.ui.destroy();assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
 });
 
 test('the builtin no_tag stays outside editable tags and DIY counts while Find papers can filter it',async t=>{

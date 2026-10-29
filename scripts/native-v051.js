@@ -21,19 +21,21 @@ export async function runNativeV051(app,check,config){
     const paper=await host.read(item.id),nativeBefore=JSON.stringify(item.getTags());app.state.papers[paper.id]=paper;app.state.nativeTags[paper.id]=item.getTags();app.state.facts[paper.id]=normalizeFacts({summary:'No scientific concepts were established.',concepts:[],needsPDF:true},paper,'native-synthetic','native-v051');await app.save();
     await app.invoke('recheck-paper-inputs',{id:paper.id});manager=await Zotero.SmartTags.openManager({page:'activity'});
     await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready','manager final document ready');const doc=manager.document;
-    try{await until(()=>doc.querySelector('.paper-attention-row')&&button(doc,'Dismiss'),'attention controls');}
+    const more=async()=>{doc.getElementById('attention-more-'+paper.id).click();await until(()=>button(doc,'Dismiss')||button(doc,'Exclude from tagging'),'paper action menu');};
+    try{await until(()=>doc.querySelector('.paper-attention-row')&&doc.getElementById('attention-more-'+paper.id),'attention controls');}
     catch(error){const attention=(await app.snapshot()).paperAttention?.papers.find(value=>value.id===paper.id);throw new Error(error.message+' '+JSON.stringify({documentURI:doc.documentURI,appState:doc.getElementById('app')?.getAttribute('data-smart-tags-state'),visibleRows:doc.querySelectorAll('.paper-attention-row').length,fixtureStatus:attention?.status,fixtureDismissible:attention?.canDismiss}));}
-    await click(doc,'Dismiss');
+    await more();await click(doc,'Dismiss');
     await until(()=>!doc.getElementById('attention-'+paper.id),'dismissed condition hidden');
     check('v051DismissPreservesLibraryAndEligibility',JSON.stringify(item.getTags())===nativeBefore&&!item.deleted&&!app.state.tags.some(tag=>tag.name==='no_tag')&&requests===0);
     host.mutating?.add(item.id);try{item.setField('abstractNote','New metadata is available for another evidence check.');await item.saveTx();}finally{host.mutating?.delete(item.id);}
     await app.invoke('recheck-paper-inputs',{id:paper.id});await until(()=>doc.getElementById('attention-'+paper.id),'changed condition visible');
-    check('v051ChangedConditionReturnsAfterDismissal',!!button(doc,'Dismiss')&&requests===0);
+    check('v051ChangedConditionReturnsAfterDismissal',!!doc.getElementById('attention-more-'+paper.id)&&requests===0);
+    await more();
     await click(doc,'Exclude from tagging');await until(()=>button(doc,'Apply no_tag and exclude'),'exclusion preview');
     check('v051ExclusionPreviewIsReadOnly',JSON.stringify(item.getTags())===nativeBefore&&doc.body.textContent.includes('V051 manual project')&&doc.body.textContent.includes('no_tag')&&requests===0);
     await click(doc,'Cancel exclusion change');await until(()=>!button(doc,'Apply no_tag and exclude'),'preview cancelled');
     check('v051CancelledExclusionChangesNothing',JSON.stringify(item.getTags())===nativeBefore&&requests===0);
-    await click(doc,'Exclude from tagging');await until(()=>button(doc,'Apply no_tag and exclude'),'new exclusion preview');await click(doc,'Apply no_tag and exclude');
+    await more();await click(doc,'Exclude from tagging');await until(()=>button(doc,'Apply no_tag and exclude'),'new exclusion preview');await click(doc,'Apply no_tag and exclude');
     await until(()=>item.getTags().some(tag=>tag.tag==='no_tag'),'native no_tag applied');
     const exclusion=app.state.history[0];
     check('v051ManualExclusionPreservesExistingTagTypes',item.getTags().filter(tag=>tag.tag!=='no_tag').length===2&&JSON.stringify(item.getTags().filter(tag=>tag.tag!=='no_tag'))===nativeBefore&&!item.deleted&&requests===0);

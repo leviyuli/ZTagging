@@ -186,6 +186,25 @@ a { color:var(--accent); text-underline-offset:3px; }
 .existing-paper-choice { margin-top:12px; padding:10px 12px; border-left:2px solid var(--line); }
 .metadata-change { padding:12px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
 .paper-attention-list > .toolbar,.paper-attention-list > .actions { margin-bottom:14px; }
+.attention-toolbar { gap:8px; }
+.attention-toolbar .attention-menu-trigger { min-width:0; }
+.attention-empty { padding:20px 4px; color:var(--muted); font-size:12px; }
+.attention-select-page { padding:2px 0 10px; font-size:12px; }
+.attention-select-page .check-label { margin:0; font-size:12px; }
+.attention-bulk-bar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:8px 10px; margin-bottom:8px; border-radius:4px; background:var(--hover); font-size:12px; }
+.paper-attention-row { display:grid; grid-template-columns:16px minmax(0,1fr) auto; align-items:start; gap:10px; padding:12px 0; }
+.paper-attention-row .check-label { margin:3px 0 0; }
+.attention-row-content { min-width:0; overflow-wrap:anywhere; }
+.attention-row-content .paper-title-button { max-width:100%; }
+.attention-row-status { margin-top:5px; }
+.attention-row-actions { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:5px; }
+.smart-tags-action-menu { position:fixed; z-index:100; overflow:auto; padding:4px; border:1px solid var(--line-strong); border-radius:5px; background:var(--surface); box-shadow:0 4px 18px #0002; }
+.smart-tags-action-menu .smart-tags-action-item { display:block; width:100%; padding:7px 9px; border:0; background:transparent; text-align:left; font-size:12px; line-height:1.5; }
+.smart-tags-action-item:hover,.smart-tags-action-item:focus-visible { background:var(--hover); outline:none; }
+@media (max-width:760px) {
+  .paper-attention-row { grid-template-columns:16px minmax(0,1fr); }
+  .attention-row-actions { grid-column:2; justify-content:flex-start; }
+}
 .paper-title { font-size:14px; font-weight:600; line-height:1.5; }
 .paper-title-button { padding:0; border:0; border-radius:2px; background:none; color:var(--ink); text-align:left; font-size:14px; font-weight:600; }
 .paper-title-button:hover:not(:disabled) { background:none; color:var(--accent); }

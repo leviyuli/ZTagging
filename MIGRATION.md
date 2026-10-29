@@ -1,4 +1,8 @@
-# Upgrading to Smart Tags 0.5.1
+# Upgrading to Smart Tags 0.5.2
+
+## Version 0.5.2
+
+This is an interface-only patch. State schema remains 5, with no migration, reanalysis, provider call, native tag write, or reset of saved work during upgrading. Attention actions have moved into compact menus; their controller behavior, review steps, and undo records are unchanged.
 
 ## Version 0.5.1
 

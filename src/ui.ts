@@ -6,6 +6,7 @@ import { canonicalTagKey } from './core';
 import type { WarningRecord } from './warnings';
 
 type Child = Node | string | null | undefined | false;
+type MenuAction = { id: string; label: string; run: () => void | Promise<unknown> };
 type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'search' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
@@ -48,6 +49,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let toast = '';
   let toastError = false;
   let toastTimer = 0;
+  let closeActionMenu: ((restoreFocus?: boolean) => void) | null = null;
   let vocabQuery = '';
   let vocabularyPage = 0;
   let tagView: 'tags' | 'questions' = 'tags';
@@ -131,6 +133,80 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     element.disabled = disabled || busy;
     element.addEventListener('click', () => { Promise.resolve().then(action).catch(showError); });
     return element;
+  }
+  function actionMenu(id: string, label: string, accessibleName: string, commands: MenuAction[]) {
+    if (!commands.length) return null;
+    let popup: HTMLDivElement | null = null;
+    let items: HTMLButtonElement[] = [];
+    let active = 0;
+    const trigger = button(label, () => { if (popup) close();else open(0); }, 'quiet small attention-menu-trigger');
+    trigger.id = id;
+    trigger.setAttribute('aria-label', accessibleName);
+    trigger.setAttribute('aria-haspopup', 'menu');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-controls', `${id}-menu`);
+    const contains = (node: Node, target: EventTarget | null) => !!target && typeof (target as Node).nodeType === 'number' && node.contains(target as Node);
+    function close(restoreFocus = true) {
+      if (!popup) return;
+      popup.remove();popup = null;items = [];
+      trigger.setAttribute('aria-expanded', 'false');
+      doc.removeEventListener('pointerdown', outside, true);
+      doc.removeEventListener('focusin', outside);
+      doc.removeEventListener('scroll', scrolled, true);
+      win.removeEventListener('resize', viewportChanged);
+      win.removeEventListener('unload', viewportChanged);
+      if (closeActionMenu === close) closeActionMenu = null;
+      if (restoreFocus && trigger.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
+    }
+    function outside(event: Event) { if (!contains(trigger, event.target) && (!popup || !contains(popup, event.target))) close(false); }
+    function scrolled(event: Event) { if (!popup || !contains(popup, event.target)) close(false); }
+    function viewportChanged() { close(false); }
+    function focusItem(index: number) {
+      active = (index + items.length) % items.length;
+      const item = items[active];
+      item?.focus({ preventScroll: true });
+      if (!popup || !item) return;
+      const top = item.offsetTop, bottom = top + item.offsetHeight;
+      if (top < popup.scrollTop) popup.scrollTop = top;
+      else if (bottom > popup.scrollTop + popup.clientHeight) popup.scrollTop = bottom - popup.clientHeight;
+    }
+    function keydown(event: KeyboardEvent) {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+        event.preventDefault();event.stopPropagation();if (event.repeat) return;
+        if (!popup) open(0);
+        else { const index = items.indexOf(event.target as HTMLButtonElement), command = commands[index < 0 ? active : index];close();Promise.resolve().then(command.run).catch(showError); }
+        return;
+      }
+      if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();close();return; }
+      if (event.key === 'Tab') { close();return; }
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();event.stopPropagation();
+        if (!popup) open(event.key === 'ArrowUp' || event.key === 'End' ? commands.length - 1 : 0);
+        else focusItem(event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : active + (event.key === 'ArrowDown' ? 1 : -1));
+      }
+    }
+    function open(index: number) {
+      if (trigger.disabled || !trigger.isConnected || !doc.body) return;
+      closeActionMenu?.();cleanupDropdowns(doc);
+      popup = h('div', 'smart-tags-action-menu');popup.id = `${id}-menu`;
+      popup.setAttribute('role', 'menu');popup.setAttribute('aria-labelledby', id);
+      items = commands.map(command => {
+        const item = button(command.label, () => { close();return command.run(); }, 'smart-tags-action-item');
+        item.id = `${id}-item-${command.id}`;item.tabIndex = -1;item.setAttribute('role', 'menuitem');item.addEventListener('keydown', keydown);popup!.append(item);return item;
+      });
+      doc.body.append(popup);
+      const rect = trigger.getBoundingClientRect(), edge = 8;
+      const width = Math.min(280, Math.max(1, win.innerWidth - edge * 2));
+      const height = Math.min(popup.scrollHeight + 2, 320, Math.max(1, win.innerHeight - edge * 2));
+      popup.style.width = `${width}px`;popup.style.maxHeight = `${height}px`;
+      popup.style.left = `${Math.max(edge, Math.min(rect.right - width, win.innerWidth - width - edge))}px`;
+      popup.style.top = `${Math.max(edge, Math.min(rect.bottom + 4 + height <= win.innerHeight - edge ? rect.bottom + 4 : rect.top - height - 4, win.innerHeight - height - edge))}px`;
+      trigger.setAttribute('aria-expanded', 'true');closeActionMenu = close;
+      doc.addEventListener('pointerdown', outside, true);doc.addEventListener('focusin', outside);doc.addEventListener('scroll', scrolled, true);
+      win.addEventListener('resize', viewportChanged);win.addEventListener('unload', viewportChanged);focusItem(index);
+    }
+    trigger.addEventListener('keydown', keydown);
+    return trigger;
   }
   function nav(target: ManagerPage) { page = target; modal = null; render(); }
   function empty(title: string, message: string, action?: Node) {
@@ -600,37 +676,56 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
 
   function paperAttention() {
-    const attention = currentState().paperAttention;
-    if (!attention) return empty('No papers need attention', 'Papers with missing information or failed analysis will appear here.');
-    const all = [...new Map(attention.papers.map(paper => [paper.id, paper])).values()];
+    const all = [...new Map((currentState().paperAttention?.papers || []).map(paper => [paper.id, paper])).values()];
     const papers = all.filter(paper => (attentionFilter === 'all' || (attentionFilter === 'attention' ? paper.status === 'needsInformation' || paper.status === 'failed' : paper.status === attentionFilter))
       && (!attentionQuery || paper.title.toLocaleLowerCase().includes(attentionQuery.toLocaleLowerCase())));
     attentionPage = Math.min(attentionPage, Math.max(0, Math.ceil(papers.length / 25) - 1));
     const visible = papers.slice(attentionPage * 25, (attentionPage + 1) * 25);
-    const selected = all.filter(paper => selectedAttentionPapers.has(paper.id));
+    const selected = papers.filter(paper => selectedAttentionPapers.has(paper.id));
     const dismissible = (paper: typeof all[number]) => paper.canDismiss ?? (paper.status === 'needsInformation' || paper.status === 'failed');
     const dismiss = async (ids: string[]) => { await run('dismiss-paper-attention', { ids }, 'Current notices dismissed.');for (const id of ids) selectedAttentionPapers.delete(id);render(); };
     const previewExclusion = (ids: string[], exclude: boolean) => { paperExclusionPage = 0;return run('preview-paper-exclusion', { ids, exclude }); };
+    const headerMenu = actionMenu('attention-more', 'More', 'More paper actions', [{ id: 'exclude-zotero', label: 'Exclude selected Zotero items…', run: () => { paperExclusionPage = 0;return run('preview-paper-exclusion', { exclude: true }); } }]);
     const list = h('div', 'paper-attention-list');
-    list.append(h('div', 'toolbar', input('attention-search', attentionQuery, value => { attentionQuery = value;attentionPage = 0;render(); }, 'Find a paper…', 'search'), select('attention-status', attentionFilter, [['attention', 'Needs attention'], ['all', 'All checked papers'], ['usable', 'Ready to use'], ['needsInformation', 'Needs information'], ['failed', 'Analysis failed'], ['skipped', 'Skipped'], ['excluded', 'Excluded from tagging']], value => { attentionFilter = value;attentionPage = 0;render(); }, 'Paper information status')));
-    list.append(h('p', 'card-description', 'Dismiss hides the current notice. Exclude adds no_tag for future builds.'));
-    list.append(h('div', 'actions', button('Select this page', () => { for (const paper of visible) selectedAttentionPapers.add(paper.id);render(); }), button('Clear selection', () => { selectedAttentionPapers.clear();render(); }, 'quiet'), button('Dismiss selected', () => dismiss(selected.filter(dismissible).map(paper => paper.id)), 'quiet', !selected.some(dismissible)), button('Exclude selected from tagging', () => previewExclusion(selected.filter(paper => paper.status !== 'excluded').map(paper => paper.id), true), '', !selected.some(paper => paper.status !== 'excluded')), selected.some(paper => paper.status === 'excluded') ? button('Include selected again', () => previewExclusion(selected.filter(paper => paper.status === 'excluded').map(paper => paper.id), false)) : null, button('Retry selected', () => run('retry-papers', { ids: selected.filter(paper => paper.canRetry && paper.status !== 'excluded').map(paper => paper.id) }, 'Selected papers queued.'), '', !selected.some(paper => paper.canRetry && paper.status !== 'excluded')), button('Skip selected for this build', () => run('skip-paper-analysis', { ids: selected.filter(paper => paper.canSkip && paper.status !== 'excluded').map(paper => paper.id) }, 'Selected papers skipped for this build.'), 'quiet', !selected.some(paper => paper.canSkip && paper.status !== 'excluded'))));
-    if (!papers.length) list.append(empty('No papers in this view', 'Completed papers remain available in your library.'));
+    list.append(h('div', 'toolbar attention-toolbar', input('attention-search', attentionQuery, value => { attentionQuery = value;attentionPage = 0;selectedAttentionPapers.clear();render(); }, 'Find a paper…', 'search'), select('attention-status', attentionFilter, [['attention', 'Needs attention'], ['all', 'All checked papers'], ['usable', 'Ready to use'], ['needsInformation', 'Needs information'], ['failed', 'Analysis failed'], ['skipped', 'Skipped'], ['excluded', 'Excluded from tagging']], value => { attentionFilter = value;attentionPage = 0;selectedAttentionPapers.clear();render(); }, 'Paper information status'), headerMenu));
+    if (!papers.length) {
+      list.append(h('div', 'attention-empty', h('strong', '', attentionFilter === 'attention' && !attentionQuery ? 'No papers need attention' : 'No matching papers')));
+      return list;
+    }
+    const selectPage = checkbox('attention-select-page', visible.every(paper => selectedAttentionPapers.has(paper.id)), 'Select this page', checked => { for (const paper of visible) checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); });
+    selectPage.querySelector('input')!.indeterminate = visible.some(paper => selectedAttentionPapers.has(paper.id)) && !visible.every(paper => selectedAttentionPapers.has(paper.id));
+    list.append(h('div', 'inline between attention-select-page', selectPage, h('span', 'muted', `${papers.length} papers`)));
+    if (selected.length) {
+      const eligible = (predicate: (paper: typeof all[number]) => boolean) => selected.filter(predicate).map(paper => paper.id);
+      const retryIds = eligible(paper => paper.canRetry && paper.status !== 'excluded');
+      const commands: MenuAction[] = [];
+      const dismissIds = eligible(dismissible), excludeIds = eligible(paper => paper.status !== 'excluded'), skipIds = eligible(paper => paper.canSkip && paper.status !== 'excluded'), includeIds = eligible(paper => paper.status === 'excluded');
+      if (dismissIds.length) commands.push({ id: 'dismiss', label: 'Dismiss selected', run: () => dismiss(dismissIds) });
+      if (excludeIds.length) commands.push({ id: 'exclude', label: 'Exclude selected from tagging', run: () => previewExclusion(excludeIds, true) });
+      if (skipIds.length) commands.push({ id: 'skip', label: 'Skip selected for this build', run: () => run('skip-paper-analysis', { ids: skipIds }, 'Selected papers skipped for this build.') });
+      if (includeIds.length) commands.push({ id: 'include', label: 'Include selected again', run: () => previewExclusion(includeIds, false) });
+      list.append(h('div', 'attention-bulk-bar', h('span', '', `${selected.length} selected`), h('div', 'inline', button('Clear', () => { selectedAttentionPapers.clear();render(); }, 'small quiet'), retryIds.length ? button('Retry selected', () => run('retry-papers', { ids: retryIds }, 'Selected papers queued.'), 'small primary') : null, actionMenu('attention-bulk-actions', 'Actions', 'Actions for selected papers', commands))));
+    }
     const labels = { usable: 'Ready to use', needsInformation: 'Needs information', failed: 'Analysis failed', skipped: 'Skipped for this build', excluded: 'Excluded from tagging' };
     for (const paper of visible) {
-      const actions = h('div', 'actions', button('Open in Zotero', () => openPaper(paper.id), 'small'));
-      if (paper.status === 'excluded') actions.append(button('Include again', () => previewExclusion([paper.id], false), 'small'));
+      const recovery: MenuAction[] = [];
+      if (paper.status === 'excluded') recovery.push({ id: 'include', label: 'Include again', run: () => previewExclusion([paper.id], false) });
       else {
-        if (dismissible(paper)) actions.append(button('Dismiss', () => dismiss([paper.id]), 'small quiet'));
-        actions.append(button('Exclude from tagging', () => previewExclusion([paper.id], true), 'small'));
-        if (paper.canLookupMetadata) actions.append(button('Find metadata', () => { metadataIdentifier = '';return run('preview-metadata', { id: paper.id }); }, 'small'));
-        if (paper.canRecheck) actions.append(button('Recheck PDF', () => run('recheck-paper-inputs', { id: paper.id }, 'Local paper information checked.'), 'small'));
-        if (paper.canRetry) actions.append(button('Retry analysis', () => run('retry-papers', { ids: [paper.id] }, 'Paper queued.'), 'small'));
-        if (paper.canSkip) actions.append(button('Skip for this build', () => run('skip-paper-analysis', { ids: [paper.id] }, 'Paper skipped for this build.'), 'small quiet'));
+        if (paper.canLookupMetadata) recovery.push({ id: 'metadata', label: 'Find metadata', run: () => { metadataIdentifier = '';return run('preview-metadata', { id: paper.id }); } });
+        if (paper.canRecheck) recovery.push({ id: 'pdf', label: 'Recheck PDF', run: () => run('recheck-paper-inputs', { id: paper.id }, 'Local paper information checked.') });
+        if (paper.canRetry) recovery.push({ id: 'retry', label: 'Retry analysis', run: () => run('retry-papers', { ids: [paper.id] }, 'Paper queued.') });
       }
-      list.append(h('article', 'paper-attention-row', checkbox(`attention-${paper.id}`, selectedAttentionPapers.has(paper.id), paper.title, checked => { checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); }), h('div', 'inline', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message)), actions));
+      const primary = recovery.shift();
+      if (paper.status !== 'excluded') {
+        if (dismissible(paper)) recovery.push({ id: 'dismiss', label: 'Dismiss', run: () => dismiss([paper.id]) });
+        recovery.push({ id: 'exclude', label: 'Exclude from tagging', run: () => previewExclusion([paper.id], true) });
+        if (paper.canSkip) recovery.push({ id: 'skip', label: 'Skip for this build', run: () => run('skip-paper-analysis', { ids: [paper.id] }, 'Paper skipped for this build.') });
+      }
+      const selection = checkbox(`attention-${paper.id}`, selectedAttentionPapers.has(paper.id), '', checked => { checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); });
+      selection.querySelector('input')!.setAttribute('aria-label', `Select ${paper.title}`);
+      list.append(h('article', 'paper-attention-row', selection, h('div', 'attention-row-content', paperButton(paper.id), h('div', 'inline attention-row-status', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message))), h('div', 'attention-row-actions', primary ? button(primary.label, primary.run, 'small') : null, actionMenu(`attention-more-${paper.id}`, 'More', `More actions for ${paper.title}`, recovery))));
     }
-    list.append(pagination(papers.length, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
+    if (papers.length > 25) list.append(pagination(papers.length, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
     return list;
   }
 
@@ -831,7 +926,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && warning.code !== 'evidence-gap');
     const notices = active.length ? card('Needs attention', '', h('div', '', ...active.map(warning => warningEntry(warning, true)))) : null;
-    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention ? `${s.paperAttention.queued} papers queued. Each paper appears once.` : '', paperAttention(), button('Exclude selected Zotero items…', () => { paperExclusionPage = 0;return run('preview-paper-exclusion', { exclude: true }); })), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention?.queued ? `${s.paperAttention.queued} papers queued` : '', paperAttention()), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
   function renderSettings() {
@@ -1061,9 +1156,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     fitTagWorkspace();
   }
   function render() {
+    closeActionMenu?.();
     cleanupDropdowns(doc);
     try { renderContent(); }
     catch (error) {
+      closeActionMenu?.();
       cleanupDropdowns(doc);
       diagnostic(`render failed: ${error instanceof Error ? error.message : String(error)}`);
       try {
@@ -1091,6 +1188,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   const destroy = () => {
     if (disposed) return;
     disposed = true;
+    closeActionMenu?.(false);
     cleanupDropdowns(doc);
     unsubscribe();
     if (signingIn) void api.invoke('cancel-sign-in').catch(() => {});

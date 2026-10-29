@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.5.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.1.xpi).
+2. Select [`smart-tags-0.5.2.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.2.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Choose **Pilot · 50 papers** on Overview and click **Prepare tags**. Smart Tags reads the papers, brings related concepts together, and checks names, categories, and scientific meanings using your selected model.
@@ -19,7 +19,7 @@ The extension checks this repository's [update manifest](updates.json) for new v
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.5.1** recovers routine relationship errors in saved consolidation replies and adds **Dismiss**, reviewed item exclusion, and the **no_tag** marker. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+Version **0.5.2** simplifies the paper-attention panel: one recovery action per paper, secondary choices under **More**, and batch controls only after selection. Saved-response recovery, **Dismiss**, reviewed exclusions, and the **no_tag** marker remain available. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
 
 The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 
@@ -37,9 +37,11 @@ If a saved part stopped because of a routine relationship error, **Resume** firs
 
 ## Dismiss or exclude an item
 
-In **Activity**, **Dismiss** hides the current information notice. It does not repair the item or remove it from tagging. An unchanged local recheck or restart keeps the notice dismissed; changed information can make it appear again.
+In **Activity**, open **More** beside a paper for **Dismiss**, **Exclude from tagging**, and other applicable choices. Selecting papers reveals batch controls; **Actions** holds secondary batch choices. Clicking a paper's title opens it in Zotero. Empty views keep only search, the status filter, and the panel's **More** menu.
 
-**Exclude from tagging** previews adding the native **no_tag** marker. Applying the preview preserves the item's other tags, collections, attachments, and metadata, and skips that item in future builds and assignments. Use **Excluded from tagging → Include again** to preview removing only no_tag, or undo the change in History. **Exclude selected Zotero items…** also works for items outside the current build. These manual choices need no AI connection. A one-build **Skip** remains a separate option.
+**Dismiss** hides the current information notice. It does not repair the item or remove it from tagging. An unchanged local recheck or restart keeps the notice dismissed; changed information can make it appear again.
+
+**Exclude from tagging** previews adding the native **no_tag** marker. Applying the preview preserves the item's other tags, collections, attachments, and metadata, and skips that item in future builds and assignments. Use **Excluded from tagging → Include again** to preview removing only no_tag, or undo the change in History. The panel's **More → Exclude selected Zotero items…** also works for items outside the current build. These manual choices need no AI connection. A one-build **Skip** remains a separate option.
 
 For whole-list assignment, the model may suggest **no_tag** when readable evidence establishes that none of the approved scientific tags applies. This suggestion requires separate batch Apply and does not enable automation. Missing abstracts, unreadable PDFs, empty replies, and connection failures are not evidence of an outside-vocabulary item. A DIY-only preview cannot make this whole-list judgment. The built-in marker is searchable in the navigator, does not count toward the preferred tag target, and cannot be renamed or turned into a DIY topic.
 
