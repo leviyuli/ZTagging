@@ -18,6 +18,12 @@ import type { PreparationResult } from './tag-preparation.ts';
 import {cleanupLegacyDraftDefinitions, inferEditedProposalTagIds, pruneProposalSupport} from './legacy-cleanup.ts';
 import {validTagPreparationState} from './tag-preparation.ts';
 import type {TagPreparationState} from './tag-preparation.ts';
+import {classifyPaperAttention,sameMetadata,reverseMetadataPatch} from './paper-recovery.ts';
+import type {PaperInputAssessment,MetadataPreview,MetadataPatch} from './paper-recovery.ts';
+import {createReconciliationPlan,buildReconciliationPrompt,applyReconciliationAnalysis,compileReconciliationChanges,buildDIYDefinitionPrompt,applyDIYDefinitions,prepareDIYDefinitions} from './tag-reconciliation.ts';
+import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYDefinitionChoice,ReviewedReconciliationChanges} from './tag-reconciliation.ts';
+import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork} from './library-consolidation.ts';
+import type {ConsolidationWork} from './library-consolidation.ts';
 
 export type StoredSuggestion = Suggestion & { operation?:'add'|'remove'; applied?:boolean;definitionFingerprint?:string };
 type ProviderFailure = Partial<Pick<ProviderError,'category'|'rawText'|'completion'>>;
@@ -34,19 +40,30 @@ type Run = {
   jobs:Job[];vocabCursor:number;vocabFinished:boolean;message:string;spentUSD:number;
   settings:ManagerSettings;vocabularyVersion:number;detailId?:string;proposalFingerprint?:string;
   preparationOnly?:boolean;
+  skippedIds?:string[];
   preparation?:PreparationCheckpoint;
-  consolidation?:{protocolVersion:2;generationId:string;inputFingerprint:string;snapshot:RegistrySnapshot;candidateIds:Record<string,string>;value?:unknown;correctionValue?:unknown;correctionAttempts:0|1;phase:'generating'|'validating'|'correcting'|'needs-review'|'ready';failed?:boolean;diagnostics?:string[];responseIssue?:string;correctionIssue?:string};
+  consolidation?:{protocolVersion:2;generationId:string;inputFingerprint:string;snapshot:RegistrySnapshot;candidateIds:Record<string,string>;value?:unknown;correctionValue?:unknown;correctionAttempts:0|1;phase:'generating'|'validating'|'correcting'|'needs-review'|'ready';failed?:boolean;diagnostics?:string[];responseIssue?:string;correctionIssue?:string;work?:ConsolidationWork;pendingResponse?:{requestId:string;raw:unknown}};
 };
 type History = {
   id:string;date:string;label:string;patches:TagPatch[];beforeOwnership:Ownership;afterOwnership:Ownership;
   suggestionIds:string[];status:'prepared'|'applied'|'undone'|'conflict';
   beforeDecisions?:Record<string,Decision|null>;afterDecisions?:Record<string,Decision|null>;
+  metadataPatches?:MetadataPatch[];
+  beforeDefinitions?:Record<string,TagDefinition|null>;afterDefinitions?:Record<string,TagDefinition|null>;
+  undoOfId?:string;
 };
-type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string};
+export interface MaintenanceTask {
+  id:string;kind:'reconcile'|'diy'|'retry';status:'queued'|'running'|'paused'|'completed';
+  run:Run;cursor:number;createdAt:string;groupIds:string[];paperIds:string[];choices?:DIYDefinitionChoice[];
+  planId?:string;batches?:{groupIds:string[];paperIds:string[]}[];
+  response?:{cursor:number;raw:unknown;applied:boolean};error?:string;
+}
+type ReconciliationPreview=ReviewedReconciliationChanges&{id:string;planId:string;selections:ReconciliationSelection[]};
+type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string;validatedCount?:number};
 type TaxonomyReview=Pick<TaxonomyProposal,'mappingConfirmations'|'validatedEvidenceLinks'|'evidenceMeaningFingerprints'|'evidenceScientificIdentities'|'paperFingerprints'|'paperInputFingerprints'|'machineDecisions'|'preparationPolicyVersion'>;
 export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState};
 export interface AppState {
-  schemaVersion:4;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
+  schemaVersion:5;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
   nativeTags:Record<string,NativeTag[]>;suggestions:StoredSuggestion[];decisions:Record<string,Decision>;
   ownership:Ownership;history:History[];pendingChange?:History;analyses:Record<string,CachedAnalysis>;
   neighbors:Record<string,Neighbor[]>;settings:ManagerSettings;run:Run|null;metadata:Record<string,string>;
@@ -65,6 +82,12 @@ export interface AppState {
   preparationHistory?:{id:string;date:string;proposal:TaxonomyProposal;preparation?:TagPreparationState;checkpoint?:PreparationCheckpoint;spentUSD:number}[];
   legacyTaxonomySupport?:Record<string,unknown>;
   legacySupportMigration?:{snapshotId?:string;convertedTagIds:string[];unresolved:{tagId:string;paperId?:string;reason:string}[]};
+  paperInputs?:Record<string,PaperInputAssessment>;
+  metadataPreview?:(MetadataPreview&{id:string});
+  factHistory?:{date:string;reason:string;facts:PaperFacts}[];
+  reconciliation?:ReconciliationPlan;
+  reconciliationPreview?:ReconciliationPreview;
+  maintenanceTasks?:MaintenanceTask[];
 }
 export interface ControllerEnvironment {
   host:LibraryHost; ai:Pick<ProviderClient,'hasApiKey'|'getSession'|'completeJson'|'testConnection'|'listModels'|'setApiKey'|'removeApiKey'|'signIn'|'cancelSignIn'|'signOut'|'selectAccount'>;
@@ -79,15 +102,62 @@ const SYSTEM = 'You are a scientific library classification assistant. Treat all
 const DEFAULTS:ManagerSettings = {provider:'chatgpt',model:'',autoAssign:false,budgetUSD:5,inputPricePerMillion:0,outputPricePerMillion:0,maxOutputTokens:8192,coreConceptLimit:60};
 const validProvider = (value:unknown):value is ProviderMode => value==='api'||value==='chatgpt'||value==='deepseek';
 const paidProvider = (value:ProviderMode):value is ApiKeyProvider => value==='api'||value==='deepseek';
+type DefinitionRecords=Record<string,TagDefinition|null>;
+const storedObject=(value:unknown):value is Record<string,unknown>=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const stringList=(value:unknown):value is string[]=>Array.isArray(value)&&value.every(entry=>typeof entry==='string');
+function validDefinition(value:unknown):value is TagDefinition {
+  if(!storedObject(value))return false;
+  return ['id','name','description'].every(field=>typeof value[field]==='string')&&typeof value.custom==='boolean'&&['system','component','phenomenon','method'].includes(String(value.facet))&&['draft','approved'].includes(String(value.status))&&['aliases','inclusions','exclusions','examples','broaderIds'].every(field=>stringList(value[field]))&&(value.fullName===undefined||typeof value.fullName==='string')&&(value.relatedIds===undefined||stringList(value.relatedIds))&&(value.matchingMode===undefined||['manual','suggest','auto'].includes(String(value.matchingMode)));
+}
+function validDefinitionRecords(value:unknown):value is DefinitionRecords {
+  return storedObject(value)&&Object.entries(value).every(([id,tag])=>tag===null||validDefinition(tag)&&tag.id===id);
+}
+export function definitionRecordsMatch(tags:readonly TagDefinition[],records?:DefinitionRecords):boolean {
+  const byId=new Map(tags.map(tag=>[tag.id,tag]));
+  return Object.entries(records??{}).every(([id,expected])=>fingerprint(byId.get(id)??null)===fingerprint(expected));
+}
+export function applyDefinitionRecords(tags:readonly TagDefinition[],records?:DefinitionRecords):TagDefinition[] {
+  const remaining=new Map(Object.entries(records??{})),next:TagDefinition[]=[];
+  for(const tag of tags){
+    if(!remaining.has(tag.id)){next.push(tag);continue;}
+    const replacement=remaining.get(tag.id);if(replacement)next.push(copy(replacement));remaining.delete(tag.id);
+  }
+  for(const tag of remaining.values())if(tag)next.push(copy(tag));
+  return next;
+}
+const decisionRecordsMatch=(decisions:Record<string,Decision>,records?:Record<string,Decision|null>)=>Object.entries(records??{}).every(([key,expected])=>fingerprint(decisions[key]??null)===fingerprint(expected));
+function validMetadataSnapshot(value:unknown):boolean {
+  if(!storedObject(value)||typeof value.paperId!=='string'||!Number.isSafeInteger(value.itemID)||typeof value.itemType!=='string'||!storedObject(value.fields)||!Object.values(value.fields).every(field=>typeof field==='string')||!Array.isArray(value.creators)||!Array.isArray(value.identifiers))return false;
+  return value.creators.every(creator=>storedObject(creator)&&typeof creator.creatorType==='string'&&['name','firstName','lastName'].every(field=>creator[field]===undefined||typeof creator[field]==='string')&&(typeof creator.name==='string'&&!!creator.name||typeof creator.firstName==='string'||typeof creator.lastName==='string'))&&value.identifiers.every(identifier=>storedObject(identifier)&&['DOI','PMID','ISBN','arXiv'].includes(String(identifier.kind))&&typeof identifier.value==='string');
+}
+function validMetadataPatch(value:unknown):value is MetadataPatch {
+  if(!storedObject(value)||typeof value.paperId!=='string'||!Number.isSafeInteger(value.itemID)||!validMetadataSnapshot(value.before)||!validMetadataSnapshot(value.after))return false;
+  const patch=value as unknown as MetadataPatch;
+  return patch.before.paperId===patch.paperId&&patch.after.paperId===patch.paperId&&patch.before.itemID===patch.itemID&&patch.after.itemID===patch.itemID&&patch.before.itemType===patch.after.itemType;
+}
+function validInputAssessment(value:unknown):value is PaperInputAssessment {
+  if(!storedObject(value)||typeof value.paperId!=='string'||!Number.isSafeInteger(value.itemID)||typeof value.checkedAt!=='string'||!Number.isFinite(Date.parse(value.checkedAt))||!storedObject(value.metadata)||!storedObject(value.pdf))return false;
+  const metadata=value.metadata,pdf=value.pdf;
+  return ['title','abstract','keywords'].every(field=>typeof metadata[field]==='boolean')&&['missing','nonlocal','readable','textUnavailable','readError','unknown'].includes(String(pdf.status))&&['attachmentCount','localCount','characters'].every(field=>Number.isSafeInteger(pdf[field])&&Number(pdf[field])>=0)&&typeof pdf.rechecked==='boolean';
+}
+function validMaintenanceTask(value:unknown):value is MaintenanceTask {
+  if(!storedObject(value)||typeof value.id!=='string'||!['reconcile','diy','retry'].includes(String(value.kind))||!['queued','running','paused','completed'].includes(String(value.status))||!Number.isSafeInteger(value.cursor)||Number(value.cursor)<0||typeof value.createdAt!=='string'||!stringList(value.groupIds)||!stringList(value.paperIds)||!storedObject(value.run))return false;
+  const run=value.run,settings=run.settings;
+  if(!['tag','rebuild'].includes(String(run.kind))||!['idle','running','paused'].includes(String(run.status))||typeof run.id!=='string'||typeof run.automatic!=='boolean'||!Number.isSafeInteger(run.vocabCursor)||!Number.isFinite(run.spentUSD)||!storedObject(settings)||!validProvider(settings.provider)||typeof settings.model!=='string'||typeof settings.autoAssign!=='boolean'||!['budgetUSD','inputPricePerMillion','outputPricePerMillion','maxOutputTokens'].every(field=>typeof settings[field]==='number'&&Number.isFinite(settings[field]))||!Array.isArray(run.jobs)||!run.jobs.every(job=>storedObject(job)&&typeof job.id==='string'&&typeof job.paperId==='string'&&['pending','running','completed'].includes(String(job.status))))return false;
+  if(value.response!==undefined&&(!storedObject(value.response)||!Number.isSafeInteger(value.response.cursor)||Number(value.response.cursor)<0||typeof value.response.applied!=='boolean'||!Object.hasOwn(value.response,'raw')))return false;
+  if(value.batches!==undefined&&(!Array.isArray(value.batches)||!value.batches.every(batch=>storedObject(batch)&&stringList(batch.groupIds)&&stringList(batch.paperIds))))return false;
+  if(value.choices!==undefined&&(!Array.isArray(value.choices)||!value.choices.every(choice=>storedObject(choice)&&typeof choice.groupId==='string'&&['name','description'].every(field=>choice[field]===undefined||typeof choice[field]==='string')&&(choice.facet===undefined||['system','component','phenomenon','method'].includes(String(choice.facet))))))return false;
+  return (value.error===undefined||typeof value.error==='string')&&(value.planId===undefined||typeof value.planId==='string');
+}
 
 export function initialState():AppState {
-  return {schemaVersion:4,vocabularyVersion:0,tags:[{
+  return {schemaVersion:5,vocabularyVersion:0,tags:[{
     id:'custom-rcl',name:'RCL',description:'Catalyst-layer resistance in water electrolysis or fuel cells.',facet:'phenomenon',
     aliases:['catalyst layer resistance'],inclusions:['Substantive study of resistance within a catalyst layer, even when the acronym RCL is absent.'],
     exclusions:['Unrelated meanings of RCL.','Resistance mentioned only in a bibliography or unrelated device context.'],examples:[],custom:true,status:'draft',broaderIds:[],fullName:'Catalyst-layer resistance',relatedIds:[],matchingMode:'suggest'
   }],papers:{},nativeTags:{},suggestions:[],decisions:{},ownership:{},history:[],analyses:{},neighbors:{},settings:{...DEFAULTS},run:null,metadata:{},cleanup:[],pilotReviewed:false,pilotVersion:0,pilotIds:[],pilotExpected:0,verifiedConnections:[],models:[],warnings:[],deferredItemIDs:[],facts:{},taxonomyProposal:null,taxonomyArchives:[],taxonomyRedirects:{},taxonomyReady:false,taxonomySupport:{},evidenceCatalog:createEmptyEvidenceCatalog(),taxonomyEvidence:null,preparationHistory:[]};
 }
-function validStateShape(value:unknown,version:2|3|4):boolean {
+function validStateShape(value:unknown,version:2|3|4|5):boolean {
   const v=value as AppState;
   const object=(x:unknown)=>x!==null&&typeof x==='object'&&!Array.isArray(x);
   const settings=(x:any)=>object(x)&&validProvider(x.provider)&&typeof x.model==='string'&&typeof x.autoAssign==='boolean'&&['budgetUSD','inputPricePerMillion','outputPricePerMillion','maxOutputTokens'].every(k=>Number.isFinite(x[k]));
@@ -114,13 +184,13 @@ function validStateShape(value:unknown,version:2|3|4):boolean {
   if(!v.taxonomyArchives.every(a=>object(a)&&typeof a.id==='string'&&Array.isArray(a.tags)&&object(a.redirects)&&Number.isInteger(a.version)))return false;
   return true;
 }
-function validIdentifiedState(value:unknown,version:3|4):boolean {
+function validIdentifiedState(value:unknown,version:3|4|5):boolean {
   if(!validStateShape(value,version))return false;
   const v=value as AppState,object=(x:unknown)=>!!x&&typeof x==='object'&&!Array.isArray(x);
   if(!v.warnings.every(validWarningRecord)||!object(v.evidenceCatalog)||!object(v.evidenceCatalog.sources)||!object(v.evidenceCatalog.entries))return false;
   if(!Object.values(v.facts).every(f=>f.concepts.every(c=>typeof c.factConceptId==='string'&&!!c.factConceptId)))return false;
   if(v.taxonomyEvidence!==null&&(!v.taxonomyEvidence||validateRegistrySnapshot(v.taxonomyEvidence).length))return false;
-  if(version===4){
+  if(version>=4){
     if(v.run?.preparationOnly!==undefined&&typeof v.run.preparationOnly!=='boolean')return false;
     if(v.userEditedTagIds!==undefined&&(!Array.isArray(v.userEditedTagIds)||!v.userEditedTagIds.every(id=>typeof id==='string')))return false;
     if(v.tagPreparation!==undefined&&!validTagPreparationState(v.tagPreparation))return false;
@@ -134,11 +204,36 @@ function validIdentifiedState(value:unknown,version:3|4):boolean {
       if(!checkpoint.responses.every(response=>object(response)&&Number.isInteger(response.attempt)&&response.attempt>0&&response.attempt<=checkpoint.attempts&&!seen.has(response.attempt)&&(seen.add(response.attempt),true)&&typeof response.provider==='string'&&typeof response.model==='string'&&(response.applied===undefined||typeof response.applied==='boolean')&&(response.failed===undefined||typeof response.failed==='boolean')))return false;
     }
   }
+  if(version>=5){
+    const historyValid=(entry:History)=>{
+      if(entry.undoOfId!==undefined&&typeof entry.undoOfId!=='string')return false;
+      if(entry.metadataPatches!==undefined&&(!Array.isArray(entry.metadataPatches)||!entry.metadataPatches.every(validMetadataPatch)||entry.metadataPatches.length>0&&entry.patches.length>0))return false;
+      if(entry.beforeDefinitions===undefined&&entry.afterDefinitions===undefined)return true;
+      return validDefinitionRecords(entry.beforeDefinitions)&&validDefinitionRecords(entry.afterDefinitions)&&fingerprint(Object.keys(entry.beforeDefinitions).sort())===fingerprint(Object.keys(entry.afterDefinitions).sort());
+    };
+    if(!v.history.every(historyValid)||v.pendingChange&&!historyValid(v.pendingChange))return false;
+    if(v.run?.skippedIds!==undefined&&!stringList(v.run.skippedIds))return false;
+    if(v.paperInputs!==undefined&&(!storedObject(v.paperInputs)||!Object.entries(v.paperInputs).every(([id,assessment])=>validInputAssessment(assessment)&&assessment.paperId===id)))return false;
+    if(v.metadataPreview!==undefined){
+      const preview=v.metadataPreview;
+      if(!storedObject(preview)||typeof preview.id!=='string'||typeof preview.paperId!=='string'||!Number.isSafeInteger(preview.itemID)||!['ready','noIdentifier','notFound','mismatch','ambiguous','unchanged'].includes(preview.status)||typeof preview.message!=='string'||!Array.isArray(preview.changes)||!preview.changes.every(change=>(['field','before','after'] as const).every(field=>typeof change[field]==='string'))||(preview.patch!==undefined&&!validMetadataPatch(preview.patch)))return false;
+    }
+    if(v.factHistory!==undefined&&(!Array.isArray(v.factHistory)||!v.factHistory.every(entry=>storedObject(entry)&&typeof entry.date==='string'&&typeof entry.reason==='string'&&storedObject(entry.facts)&&typeof entry.facts.paperId==='string'&&entry.facts.extractionVersion===1&&Array.isArray(entry.facts.concepts))))return false;
+    if(v.reconciliation!==undefined&&(!storedObject(v.reconciliation)||typeof v.reconciliation.id!=='string'||typeof v.reconciliation.fingerprint!=='string'||!Number.isInteger(v.reconciliation.vocabularyVersion)||typeof v.reconciliation.applied!=='boolean'||!Array.isArray(v.reconciliation.groups)||!storedObject(v.reconciliation.snapshot)||!stringList(v.reconciliation.diagnostics)))return false;
+    if(v.reconciliationPreview!==undefined&&(!storedObject(v.reconciliationPreview)||typeof v.reconciliationPreview.id!=='string'||typeof v.reconciliationPreview.planId!=='string'||!Array.isArray(v.reconciliationPreview.selections)||!Array.isArray(v.reconciliationPreview.patches)||!Array.isArray(v.reconciliationPreview.aliases)||!storedObject(v.reconciliationPreview.beforeDecisions)||!storedObject(v.reconciliationPreview.afterDecisions)))return false;
+    if(v.maintenanceTasks!==undefined&&(!Array.isArray(v.maintenanceTasks)||!v.maintenanceTasks.every(validMaintenanceTask)))return false;
+    for(const run of [v.run,...(v.maintenanceTasks??[]).map(task=>task.run)]){
+      const checkpoint=run?.consolidation;if(!checkpoint)continue;
+      if(checkpoint.work!==undefined&&!validConsolidationWork(checkpoint.work))return false;
+      if(checkpoint.pendingResponse!==undefined&&(!storedObject(checkpoint.pendingResponse)||typeof checkpoint.pendingResponse.requestId!=='string'||!Object.hasOwn(checkpoint.pendingResponse,'raw')))return false;
+    }
+  }
   return true;
 }
-export function validState(value:unknown):value is AppState{return validIdentifiedState(value,4);}
+export function validState(value:unknown):value is AppState{return validIdentifiedState(value,5);}
 export function validLegacyState(value:unknown):boolean {
   const old=value as any;
+  if(old?.schemaVersion===4)return validIdentifiedState(old,4);
   if(old?.schemaVersion===3)return validIdentifiedState(old,3);
   if(old?.schemaVersion===2)return validStateShape(old,2)&&old.warnings.every((warning:unknown)=>typeof warning==='string');
   if(old?.schemaVersion!==1||!Array.isArray(old.tags)||!old.settings)return false;
@@ -151,12 +246,15 @@ export function migrateState(value:unknown,options:MigrationOptions={}):AppState
   if(validState(value))return value;
   if(!validLegacyState(value))throw new Error('Unsupported or invalid Smart Tags state.');
   const source=value as {schemaVersion:number};
-  const next=(source.schemaVersion===3?copy(value):upgradeToIdentifiedState(value)) as AppState;
-  next.schemaVersion=4;
-  next.warnings=migrateWarningEpisodes(next.warnings);
-  next.userEditedTagIds=inferEditedProposalTagIds(next);
-  pruneProposalSupport(next.taxonomyProposal);
-  next.tags=cleanupLegacyDraftDefinitions(next,options.legacyBaseline).tags;
+  const next=(source.schemaVersion>=3?copy(value):upgradeToIdentifiedState(value)) as AppState;
+  next.schemaVersion=5;
+  if(source.schemaVersion<4){
+    next.warnings=migrateWarningEpisodes(next.warnings);
+    next.userEditedTagIds=inferEditedProposalTagIds(next);
+    pruneProposalSupport(next.taxonomyProposal);
+    next.tags=cleanupLegacyDraftDefinitions(next,options.legacyBaseline).tags;
+  }
+  next.cleanup=[];
   if(!validState(next))throw new Error('Migrated Smart Tags state is invalid; the original file was preserved.');
   return next;
 }
@@ -255,6 +353,9 @@ function upgradeV1(old:any):any {
 export class AppController implements ManagerAPI {
   private listeners = new Set<()=>void>();
   private worker:Promise<void>|null = null;
+  private maintenanceWorker:Promise<void>|null = null;
+  private maintenanceAbort:AbortController|null=null;
+  private refreshAfterMaintenance=false;
   private abort:AbortController|null = null;
   private shuttingDown = false;
   private deferredItems = new Set<number>();
@@ -288,11 +389,12 @@ export class AppController implements ManagerAPI {
       for(const job of this.state.run.jobs)if(job.status==='running')job.status='pending';
     }
     if(this.state.pendingChange) await this.recoverChange();
+    for(const task of this.state.maintenanceTasks??[])if(task.status==='running'){task.status='paused';task.run.status='paused';task.error='Interrupted by Zotero closing. Retry this task to continue.';}
     if(this.state.taxonomyProposal){this.refreshPreparation();if(this.state.run?.kind==='rebuild')this.state.run.preparationOnly=true;}
     await this.save();
     if(this.deferredItems.size&&this.state.settings.autoAssign&&this.state.run?.status!=='paused')await this.processDeferred();
   }
-  async shutdown() {this.shuttingDown=true;this.abort?.abort();this.env.ai.cancelSignIn();if(this.worker)await this.worker;await Promise.allSettled([this.mutationTail,this.commitTail]);await this.save();this.listeners.clear();}
+  async shutdown() {this.shuttingDown=true;this.abort?.abort();this.maintenanceAbort?.abort();this.env.ai.cancelSignIn();await Promise.allSettled([this.worker,this.maintenanceWorker,this.mutationTail,this.commitTail]);await this.save();this.listeners.clear();}
   private connectionKey() {return `${this.state.settings.provider}:${this.state.settings.model}`;}
   private preparationOptions() {
     const proposal=this.state.taxonomyProposal,protectedIds=new Set(this.state.userEditedTagIds??[]);
@@ -317,6 +419,10 @@ export class AppController implements ManagerAPI {
     return result;
   }
   private processingMessage(message:string):string {
+    if(/AI could not combine|tag-building part could not|selected papers.*changed|work was paused/i.test(message))return message;
+    if(/maximum context|context.length|too many tokens|request.*too large/i.test(message))return 'The tag-building request was too large. Resume to organize the saved analysis in smaller parts.';
+    if(/comparison.*changed|preview.*(?:stale|out of date)|refresh.*comparison/i.test(message))return 'Paper information or tags changed. Refresh the comparison before applying it.';
+    if(/tag-building part|consolidation response|one part/i.test(message))return 'One part of tag building could not finish. Resume to retry that part; completed paper analysis is saved.';
     if(/budget/i.test(message))return 'This run has reached its budget. Adjust it in Settings, then continue.';
     if(/auth|api key|sign.in|signed out|token.*expir|401|403/i.test(message))return 'Check your AI connection in Settings, then continue.';
     if(/quota|insufficient.balance|429/i.test(message))return 'The AI connection has no available usage. Check your account, then continue.';
@@ -339,6 +445,7 @@ export class AppController implements ManagerAPI {
     history.push({id,date:new Date().toISOString(),proposal:copy(proposal),...(this.state.tagPreparation?{preparation:copy(this.state.tagPreparation)}:{}),...(run?.preparation?{checkpoint:copy(run.preparation)}:{}),spentUSD:run?.spentUSD??0});
   }
   private async continuePreparation(id:string) {
+    if(this.maintenanceWorker)throw new Error('Pause or finish the current run first.');
     if(this.state.run?.status==='running')throw new Error('Automatic checks are already running.');
     if(this.worker)await this.worker;
     const current=this.requirePreparation(id);
@@ -398,6 +505,7 @@ export class AppController implements ManagerAPI {
     await this.save();
   }
   private async applyPreparedTags(id:string) {
+    if(this.maintenanceWorker)throw new Error('Pause or finish the current run first.');
     if(this.state.run?.status==='running')throw new Error('Wait for the automatic checks to finish.');
     if(this.worker)await this.worker;
     const current=this.requirePreparation(id);
@@ -414,6 +522,188 @@ export class AppController implements ManagerAPI {
       if(this.state.run?.kind!=='tag')this.state.run={id:uid('run'),kind:'tag',scope,automatic:false,status:'paused',jobs:papers.map(paper=>({id:uid('job'),paperId:paper.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:this.processingMessage(this.message(error)),spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
       else{this.state.run.status='paused';this.state.run.message=this.processingMessage(this.message(error));}
       await this.save();
+    }
+  }
+  private async reconciliationInput():Promise<ReconciliationInput> {
+    const papers=await this.env.host.list('library');
+    const nativeTags:Record<string,NativeTag[]>={};
+    for(const paper of papers){this.remember(paper);nativeTags[paper.id]=await this.env.host.readTags(paper.itemID);this.state.nativeTags[paper.id]=copy(nativeTags[paper.id]);}
+    return {papers:papers.map(paper=>copy(this.state.papers[paper.id])),nativeTags,definitions:copy(this.state.tags),facts:copy(this.state.facts),decisions:copy(this.state.decisions),vocabularyVersion:this.state.vocabularyVersion,applied:this.state.taxonomyReady};
+  }
+  private async refreshExistingTags() {
+    this.state.reconciliation=createReconciliationPlan(await this.reconciliationInput(),this.state.reconciliation);
+    delete this.state.reconciliationPreview;await this.save();
+  }
+  private existingTagDisplay():ManagerSnapshot['existingTags'] {
+    const plan=this.state.reconciliation;if(!plan)return;
+    const task=[...(this.state.maintenanceTasks??[])].reverse().find(task=>task.planId===plan.id&&task.status!=='completed');
+    const targetName=(id:string)=>this.state.tags.find(tag=>tag.id===id)?.name??'Other tag';
+    const preview=this.state.reconciliationPreview;
+    const rows=plan.groups.map(group=>{
+      const definition=this.state.tags.find(tag=>equivalentTagNames(tag).some(name=>name.length>160||group.source.length>160?name===group.source:canonicalTagKey(name)===canonicalTagKey(group.source)));
+      return {
+        id:group.id,name:group.source,status:group.status,facet:definition?.facet??this.state.tags.find(tag=>tag.id===group.targetId)?.facet??group.diy.facet,
+        meaning:definition?.description||group.diy.description||group.inferredMeaning,
+        meaningInferred:!definition&&(!!group.diy.description||!!group.inferredMeaning),
+        targetNames:[...new Set(group.assignments.flatMap(value=>(value.targetIds??(value.targetId?[value.targetId]:[])).map(targetName)))],
+        paperIds:group.paperIds,affectedCount:group.paperIds.length,manualCount:group.manualCount,reason:group.reason,diyQuestion:group.diy.question,
+        assignments:group.assignments.map(assignment=>{
+          const targetIds=assignment.targetIds??(assignment.targetId?[assignment.targetId]:[]);
+          return {paperId:assignment.paperId,status:assignment.status,targetIds,targetNames:targetIds.map(targetName),reason:assignment.reason,conflict:assignment.conflict,meaning:assignment.meaning};
+        }),
+      };
+    });
+    return {id:plan.id,applied:plan.applied,status:task&&task.status!=='completed'?task.status:'ready',message:task?.error?this.processingMessage(task.error):undefined,rows,
+      ...(preview?{preview:{id:preview.id,changes:preview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Paper',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}}:{})};
+  }
+  private async previewExistingChanges(selections:ReconciliationSelection[]) {
+    const plan=this.state.reconciliation;if(!plan)throw new Error('Refresh the existing tags first.');
+    const changes=compileReconciliationChanges(plan,selections,await this.reconciliationInput());
+    this.state.reconciliationPreview={...changes,id:uid('tag-changes'),planId:plan.id,selections:copy(selections)};await this.save();
+  }
+  private async applyExistingChanges(previewId:string) {
+    const preview=this.state.reconciliationPreview,plan=this.state.reconciliation;
+    if(!preview||preview.id!==previewId||!plan||plan.id!==preview.planId)throw new Error('Refresh the tag-change preview before applying it.');
+    const verified=compileReconciliationChanges(plan,preview.selections,await this.reconciliationInput());
+    if(fingerprint(verified)!==fingerprint({patches:preview.patches,beforeDecisions:preview.beforeDecisions,afterDecisions:preview.afterDecisions,aliases:preview.aliases}))throw new Error('The tag-change preview is out of date. Refresh it first.');
+    const beforeOwnership:Ownership={},afterOwnership:Ownership={},beforeDefinitions:Record<string,TagDefinition|null>={},afterDefinitions:Record<string,TagDefinition|null>={};
+    for(const patch of preview.patches){
+      beforeOwnership[patch.paperId]=copy(this.state.ownership[patch.paperId]??{});afterOwnership[patch.paperId]=copy(beforeOwnership[patch.paperId]);
+      for(const [id,owned] of Object.entries(afterOwnership[patch.paperId])){
+        if(patch.after.some(tag=>tag.tag===owned.name))continue;
+        const target=this.state.tags.find(tag=>tag.id===id&&patch.after.some(value=>value.tag===tag.name));
+        if(target&&!patch.before.some(value=>value.tag===target.name))owned.name=target.name;else delete afterOwnership[patch.paperId][id];
+      }
+    }
+    for(const {tagId,alias} of preview.aliases){const tag=this.state.tags.find(tag=>tag.id===tagId);if(!tag||tag.aliases.includes(alias)||tag.name===alias)continue;beforeDefinitions[tagId]??=copy(tag);const next=afterDefinitions[tagId]??copy(tag);next.aliases=[...new Set([...next.aliases,alias])];afterDefinitions[tagId]=next;}
+    if(preview.patches.length||Object.keys(afterDefinitions).length||Object.keys(preview.afterDecisions).length)await this.commit({id:uid('tag-cleanup'),date:new Date().toISOString(),label:'Reviewed existing-tag changes',patches:copy(preview.patches),beforeOwnership,afterOwnership,beforeDecisions:preview.beforeDecisions,afterDecisions:preview.afterDecisions,beforeDefinitions,afterDefinitions,suggestionIds:[],status:'prepared'});
+    delete this.state.reconciliation;delete this.state.reconciliationPreview;this.state.cleanup=[];await this.refreshExistingTags();
+  }
+  private inputFallback(paper:PaperRecord):PaperInputAssessment {
+    return {paperId:paper.id,itemID:paper.itemID,checkedAt:new Date().toISOString(),metadata:{title:!!paper.title,abstract:!!paper.abstract,keywords:!!paper.keywords.length},pdf:{status:paper.pdfText?'readable':'unknown',attachmentCount:0,localCount:0,characters:paper.pdfText?.length??0,rechecked:false}};
+  }
+  private async inspectPaperInputs(id:string,recheck=false) {
+    const paper=this.state.papers[id];if(!paper)throw new Error('This paper is no longer available.');
+    const assessment=this.env.host.inspectInputs?await this.env.host.inspectInputs(paper.itemID,recheck):this.inputFallback(paper);
+    (this.state.paperInputs??={})[id]=assessment;await this.save();return assessment;
+  }
+  private paperAttentionDisplay():NonNullable<ManagerSnapshot['paperAttention']> {
+    const tasks=(this.state.maintenanceTasks??[]).filter(task=>task.kind==='retry'&&task.status!=='completed');
+    const ids=new Set([...Object.keys(this.state.facts),...Object.keys(this.state.analyses),...Object.keys(this.state.paperInputs??{}),...this.state.warnings.filter(warning=>warning.code==='evidence-gap').flatMap(warning=>warning.paperIds),...(this.state.run?.jobs.filter(job=>job.error).map(job=>job.paperId)??[]),...tasks.flatMap(task=>task.paperIds)]);
+    const papers:NonNullable<ManagerSnapshot['paperAttention']>['papers']=[];
+    for(const id of ids){
+      const paper=this.state.papers[id];if(!paper)continue;
+      const notices=this.state.warnings.filter(warning=>warning.code==='evidence-gap'&&warning.paperIds.includes(id)),notice=notices.at(-1),facts=this.state.facts[id],analysis=this.state.analyses[id];
+      const originalJob=this.state.run?.jobs.find(job=>job.paperId===id),repairJob=tasks.flatMap(task=>task.run.jobs).find(job=>job.paperId===id&&job.error),job=repairJob??originalJob;
+      const phase=notice?.context??(!facts&&(analysis||this.state.run?.kind==='tag')?'assignment:core':'facts');
+      const assessment=this.state.paperInputs?.[id]??this.inputFallback(paper);
+      let supported=facts?.concepts.length??0,needsPDF=facts?.needsPDF??false;
+      if(!facts&&analysis){try{const raw=normalizeAnalysis(analysis.raw);supported=analysis.validatedCount??validateSuggestions(paper,this.state.tags,analysis.raw,this.context(id)).suggestions.length;needsPDF=raw.needsPDF;}catch{/* The failed job supplies the actionable processing status. */}}
+      const attention=classifyPaperAttention(assessment,{validatedConcepts:supported,needsPDF});
+      const skipped=!!this.state.run?.skippedIds?.includes(id),queued=tasks.some(task=>task.paperIds.includes(id));
+      const acknowledged=notice?.status==='dismissed'&&!supported&&facts?.inputFingerprint===paperFingerprint(paper);
+      if(acknowledged&&!queued&&!skipped)continue;
+      papers.push({id,title:paper.title,status:skipped?'skipped':job?.error?'failed':attention.status==='usable'?'usable':'needsInformation',message:skipped?'Skipped for this build. Existing tags are unchanged.':job?.error?this.processingMessage(job.error):attention.message,phase,queued,canLookupMetadata:attention.canLookupMetadata,canRecheck:attention.canRecheck,canRetry:attention.canRetry,canSkip:!!originalJob&&!skipped});
+    }
+    return {papers,queued:new Set(tasks.flatMap(task=>task.paperIds)).size};
+  }
+  private async previewMetadata(id:string,identifier?:string) {
+    const paper=this.state.papers[id];if(!paper||!this.env.host.lookupMetadata)throw new Error('Metadata lookup is unavailable in this Zotero window.');
+    this.state.metadataPreview={...await this.env.host.lookupMetadata(paper.itemID,identifier),id:uid('metadata-preview')};await this.save();
+  }
+  private async applyMetadataPreview(id:string) {
+    const preview=this.state.metadataPreview;if(!preview||preview.id!==id||preview.status!=='ready'||!preview.patch)throw new Error('Look up the missing metadata again before applying it.');
+    await this.commit({id:uid('metadata'),date:new Date().toISOString(),label:'Fill missing paper information',patches:[],metadataPatches:[copy(preview.patch)],beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'prepared'});
+    const paperId=preview.paperId;delete this.state.metadataPreview;await this.inspectPaperInputs(paperId);
+    if(!this.state.facts[paperId]&&!this.state.analyses[paperId])await this.queueMaintenance('retry',{paperIds:[paperId]},true);
+  }
+  private async skipPaperAnalysis(ids:string[]) {
+    const run=this.state.run;if(!run)throw new Error('There is no active build to skip papers from.');
+    const selected=[...new Set(ids)].filter(id=>run.jobs.some(job=>job.paperId===id));
+    run.skippedIds=[...new Set([...(run.skippedIds??[]),...selected])];
+    for(const id of selected){const job=run.jobs.find(job=>job.paperId===id)!;job.status='completed';delete job.error;}
+    run.vocabFinished=false;run.preparationOnly=false;
+    if(run.status==='running'&&run.jobs.every(job=>job.status==='completed')&&run.consolidation){run.status='paused';run.message='Your paper selection changed. Resume to organize tags for the remaining papers.';this.abort?.abort();}
+    await this.save();
+  }
+  private async queueMaintenance(kind:MaintenanceTask['kind'],input:{paperIds?:string[];groupIds?:string[];choices?:DIYDefinitionChoice[]},allowPaused=false) {
+    let connectionError:string|undefined;
+    try{this.checkConnectionSettings();}catch(error){if(!allowPaused)throw error;connectionError=this.message(error);}
+    if(kind!=='retry'&&!this.state.reconciliation)await this.refreshExistingTags();
+    const plan=this.state.reconciliation;
+    if(kind==='reconcile'&&!plan?.applied)throw new Error('Apply your tag list before comparing existing tags.');
+    const paperIds=[...new Set(input.paperIds??[])].filter(id=>!!this.state.papers[id]);
+    const groupIds=[...new Set(input.groupIds??plan?.groups.filter(group=>kind==='diy'?false:group.status!=='match').map(group=>group.id)??[])];
+    if(kind==='retry'&&!paperIds.length||kind!=='retry'&&!groupIds.length)throw new Error('Select papers or existing tags first.');
+    const matches=(task:MaintenanceTask)=>task.kind===kind&&fingerprint([...task.paperIds].sort())===fingerprint([...paperIds].sort())&&fingerprint([...task.groupIds].sort())===fingerprint([...groupIds].sort())&&fingerprint(task.choices??[])===fingerprint(input.choices??[])&&task.planId===(kind==='retry'?undefined:plan?.id);
+    const active=this.state.maintenanceTasks?.find(task=>matches(task)&&(task.status==='queued'||task.status==='running'));
+    if(active)return active.id;
+    const prior=this.state.maintenanceTasks?.find(task=>matches(task)&&task.status==='paused');
+    if(prior){prior.status='queued';prior.run.status='running';prior.run.settings=copy(this.state.settings);delete prior.error;await this.save();this.launchMaintenance();return prior.id;}
+    const phase=kind==='retry'?this.paperAttentionDisplay().papers.find(paper=>paper.id===paperIds[0])?.phase:undefined;
+    const run:Run={id:uid('maintenance-run'),kind:phase?.startsWith('assignment')?'tag':'rebuild',scope:'selected',automatic:false,status:'running',jobs:paperIds.map(paperId=>({id:uid('job'),paperId,status:'pending'})),vocabCursor:0,vocabFinished:false,message:'Preparing requested work…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
+    const task:MaintenanceTask={id:uid('maintenance'),kind,status:'queued',run,cursor:0,createdAt:new Date().toISOString(),groupIds,paperIds,...(input.choices?{choices:copy(input.choices)}:{}),...(kind!=='retry'&&plan?{planId:plan.id}:{})};
+    if(kind==='reconcile')task.batches=groupIds.flatMap(groupId=>{const ids=plan!.groups.find(group=>group.id===groupId)?.paperIds??[];return Array.from({length:Math.ceil(ids.length/20)},(_,index)=>({groupIds:[groupId],paperIds:ids.slice(index*20,index*20+20)}));});
+    if(connectionError){task.status='paused';task.run.status='paused';task.error=connectionError;}
+    (this.state.maintenanceTasks??=[]).push(task);await this.save();this.launchMaintenance();return task.id;
+  }
+  private launchMaintenance() {if(!this.worker&&!this.maintenanceWorker&&!this.shuttingDown)void this.drainMaintenance().catch(error=>{this.warn(this.processingMessage(this.message(error)));});}
+  private async drainMaintenance() {
+    if(this.maintenanceWorker)return this.maintenanceWorker;
+    const operation=this.runMaintenance();this.maintenanceWorker=operation;
+    try{await operation;}finally{if(this.maintenanceWorker===operation)this.maintenanceWorker=null;}
+    if(this.refreshAfterMaintenance&&!this.worker&&this.state.run?.kind==='rebuild'&&this.state.run.status==='idle'&&!this.shuttingDown){this.refreshAfterMaintenance=false;this.state.run.status='running';this.state.run.vocabFinished=false;this.state.run.preparationOnly=false;await this.save();this.launch();}
+  }
+  private async maintenanceResponse(task:MaintenanceTask,prompt:string) {
+    if(task.response?.cursor===task.cursor&&!task.response.applied)return task.response.raw;
+    const response=await this.request(prompt,task.run);task.response={cursor:task.cursor,raw:response.value,applied:false};await this.save();return response.value;
+  }
+  private async runMaintenance() {
+    this.maintenanceAbort=new AbortController();
+    for(const task of this.state.maintenanceTasks??[]){
+      if(task.status!=='queued'||this.shuttingDown)continue;
+      task.status='running';task.run.status='running';delete task.error;await this.save();
+      try{
+        if(task.kind==='retry'){
+          for(;task.cursor<task.run.jobs.length;task.cursor++){
+            if(this.shuttingDown)throw new Error('Interrupted by Zotero closing.');
+            const job=task.run.jobs[task.cursor],id=job.paperId;
+            if(job.status==='completed')continue;
+            if(task.run.kind==='rebuild'){
+              const old=this.state.facts[id];if(old){(this.state.factHistory??=[]).push({date:new Date().toISOString(),reason:'Explicit paper retry',facts:copy(old)});delete this.state.facts[id];}
+              await this.extractFacts(job,task.run);
+              if(this.state.run?.kind==='rebuild'&&this.state.run.jobs.some(value=>value.paperId===id)){this.state.run.vocabFinished=false;this.state.run.preparationOnly=false;this.refreshAfterMaintenance=true;}
+            }else{delete this.state.analyses[id];await this.analyze(job,task.run);}
+            job.status='completed';delete job.error;
+            const originalJob=this.state.run?.jobs.find(value=>value.paperId===id);if(originalJob?.error){delete originalJob.error;originalJob.status='completed';}
+            await this.inspectPaperInputs(id);await this.save();
+          }
+        }else{
+          let plan=this.state.reconciliation;if(!plan||plan.id!==task.planId)throw new Error('The existing-tag comparison changed. Refresh it before continuing.');
+          const current=await this.reconciliationInput();
+          if(createReconciliationPlan(current,plan).id!==plan.id)throw new Error('The paper information or tag list changed. Refresh the comparison.');
+          if(task.kind==='reconcile'){
+            const batches=task.batches??[];
+            while(task.cursor<batches.length){
+              const batch=batches[task.cursor],raw=await this.maintenanceResponse(task,buildReconciliationPrompt(plan,batch.groupIds,batch.paperIds));
+              plan=applyReconciliationAnalysis(plan,raw,batch);this.state.reconciliation=plan;task.response!.applied=true;task.cursor++;await this.save();
+            }
+          }else{
+            const manualOnly=!!task.choices?.length&&task.groupIds.every(id=>task.choices!.some(choice=>choice.groupId===id&&!!choice.description));
+            if(!manualOnly&&!task.response?.applied){
+              const raw=await this.maintenanceResponse(task,buildDIYDefinitionPrompt(plan,task.groupIds));plan=applyDIYDefinitions(plan,raw);this.state.reconciliation=plan;task.response!.applied=true;await this.save();
+            }
+            const choices=task.groupIds.map(groupId=>task.choices?.find(choice=>choice.groupId===groupId)??{groupId});
+            const prepared=prepareDIYDefinitions(plan,choices,await this.reconciliationInput());
+            if(task.run.status!=='running'||this.maintenanceAbort.signal.aborted)throw new Error('This work was paused. Completed results are saved.');
+            for(const question of prepared.questions){const group=plan.groups.find(value=>value.id===question.groupId);if(group){group.diy.status='question';group.diy.question=question.message;}}
+            const definitions=prepared.definitions.filter(tag=>!this.state.tags.some(existing=>existing.id===tag.id));
+            if(definitions.length){await this.commit({id:uid('diy-definitions'),date:new Date().toISOString(),label:'Create DIY tags from existing topics',patches:[],beforeDefinitions:Object.fromEntries(definitions.map(tag=>[tag.id,null])),afterDefinitions:Object.fromEntries(definitions.map(tag=>[tag.id,tag])),beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'prepared'});}
+            if(definitions.length){const fresh=createReconciliationPlan(await this.reconciliationInput());for(const question of prepared.questions){const old=plan.groups.find(group=>group.id===question.groupId),current=fresh.groups.find(group=>group.source===old?.source);if(old&&current)current.diy=copy(old.diy);}this.state.reconciliation=fresh;}
+          }
+        }
+        task.status='completed';task.run.status='idle';await this.save();
+      }catch(error){if(task.status==='running'){task.status='paused';task.run.status='paused';task.error=this.message(error);if(task.kind==='retry'){const job=task.run.jobs[task.cursor];if(job){job.status='pending';job.error=task.error;}}}await this.save();break;}
     }
   }
   async snapshot():Promise<ManagerSnapshot> {
@@ -438,14 +728,24 @@ export class AppController implements ManagerAPI {
       return {...tag,coverage:support?.paperIds.length,currentlyTaggedCount:matches.size,representativePaperIds:[...new Set([...(matches.size?nativePaperIds.filter(id=>matches.has(id)):[]),...(support?.paperIds??[])])].slice(0,3)};
     });
     const run=this.state.run;
+    const metadata=this.state.metadataPreview;
+    const metadataDisplay=metadata?{id:metadata.id,paperId:metadata.paperId,itemID:metadata.itemID,status:metadata.status,message:metadata.message,changes:metadata.changes,identifier:metadata.identifier?.value}:undefined;
+    const attention=this.paperAttentionDisplay(),skipped=run?.skippedIds?.length??0;
+    const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(this.state.tagPreparation?'checking':'organizing'):'reading';
+    const stage=run?.consolidation?.work;
+    const phaseProgress=phase==='organizing'&&stage?{completed:stage.tasks.filter(task=>task.completed).length,total:stage.tasks.length,label:'Parts organized'}:phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
+    const maintenance=(!run||run.status==='idle')?this.state.maintenanceTasks?.find(task=>task.status==='running'||task.status==='paused'):undefined;
+    const queueRun=maintenance?.run??run;
+    const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):run?.message??'Ready';
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,
-      tags,papers:papers.map(p=>({...p,tags:(nativeTags[p.id]??[]).map(t=>t.tag),evidenceStatus:p.pdfText?'Metadata and selected PDF passages':!p.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
+      existingTags:this.existingTagDisplay(),paperAttention:attention,metadataPreview:metadataDisplay,
+      tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
       analyzedPaperCount:Object.keys(this.state.papers).length,taxonomyReady:this.state.taxonomyReady,tagPreparation:this.preparationDisplay(),
       taxonomyArchives:this.state.taxonomyArchives.map(a=>({id:a.id,date:a.date,version:a.version,reason:a.reason,count:a.tags.length})),
       suggestions:this.state.suggestions.map(s=>({...s,locked:!!this.state.decisions[pair(s.paperId,s.tagId)]?.locked,applied:s.applied||false})),
-      cleanup:this.state.cleanup.map(({patches,...display})=>display),history:this.state.history.map(h=>({id:h.id,date:h.date,label:h.label,count:h.patches.length,canUndo:h.status==='applied',status:h.status})),neighbors:this.state.neighbors,
-      queue:{provider:run?.settings.provider,status:run?.status??'idle',total:run?.jobs.length??0,completed:run?.jobs.filter(j=>j.status==='completed').length??0,failed:run?.jobs.filter(j=>!!j.error).length??0,message:run?.status==='paused'?this.processingMessage(run.message):run?.message??'Ready',spentUSD:run?.spentUSD??0,estimatedUSD:run?this.estimateRun(run):0,jobs:run?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
+      cleanup:this.state.cleanup.map(({patches,...display})=>display),history:this.state.history.map(h=>({id:h.id,date:h.date,label:h.label,count:h.patches.length+(h.metadataPatches?.length??0)+Object.keys(h.afterDefinitions??{}).length,canUndo:h.status==='applied',status:h.status})),neighbors:this.state.neighbors,
+      queue:{phase:maintenance?'reading':phase,phaseProgress:maintenance?undefined:phaseProgress,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueRun?this.estimateRun(queueRun):0,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
       settings:{...this.state.settings},models:[...this.state.models],connection:{apiKeyStored:apiKey,deepseekKeyStored:deepseekKey,chatgptSignedIn:session.connected&&session.sharing,accountLabel:session.email??undefined,verified:this.state.verifiedConnections.includes(this.connectionKey()),credentialStorage:this.env.credentialStatus?.()??'OS-encrypted',accounts:session.accounts.map(a=>({id:a.id,label:a.label})),selectedAccountId:session.accountId??undefined},warnings:[...this.state.warnings]
     };
   }
@@ -455,7 +755,10 @@ export class AppController implements ManagerAPI {
     if(action==='cancel-sign-in') {this.env.ai.cancelSignIn();return;}
     if(action==='pause'||action==='cancel') {
       const run=this.state.run;
-      if(run){run.status=action==='pause'?'paused':'idle';run.message=action==='pause'?'Paused. Completed results are saved.':'Cancelled. Completed results are retained.';this.abort?.abort();await this.save();}
+      for(const task of this.state.maintenanceTasks??[])if(task.status==='running'||task.status==='queued'){task.status=action==='pause'?'paused':'completed';task.run.status=action==='pause'?'paused':'idle';}
+      this.maintenanceAbort?.abort();
+      if(run){run.status=action==='pause'?'paused':'idle';run.message=action==='pause'?'Paused. Completed results are saved.':'Cancelled. Completed results are retained.';this.abort?.abort();}
+      await this.save();
       return;
     }
     const next=this.mutationTail.catch(()=>{}).then(()=>this.dispatch(action,payload));
@@ -463,6 +766,16 @@ export class AppController implements ManagerAPI {
   }
   private async dispatch(action:string,payload:any):Promise<any> {
     switch(action) {
+      case 'refresh-existing-tags': await this.refreshExistingTags();break;
+      case 'analyze-existing-tags': return this.queueMaintenance('reconcile',{groupIds:payload.groupIds});
+      case 'preview-existing-tag-changes': await this.previewExistingChanges(payload.selections??[]);break;
+      case 'apply-existing-tag-changes': await this.applyExistingChanges(String(payload.previewId));break;
+      case 'create-diy-from-existing': return this.queueMaintenance('diy',{groupIds:payload.groupIds,choices:payload.choices});
+      case 'inspect-paper-inputs':case 'recheck-paper-inputs': await this.inspectPaperInputs(String(payload.id),action==='recheck-paper-inputs');break;
+      case 'retry-papers': return this.queueMaintenance('retry',{paperIds:payload.ids});
+      case 'skip-paper-analysis': await this.skipPaperAnalysis(payload.ids??[]);break;
+      case 'preview-metadata': await this.previewMetadata(String(payload.id),payload.identifier);break;
+      case 'apply-metadata': await this.applyMetadataPreview(String(payload.previewId));break;
       case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot');break;
       case 'retry-tag-preparation': await this.continuePreparation(String(payload.id));break;
       case 'answer-tag-question': {
@@ -518,6 +831,11 @@ export class AppController implements ManagerAPI {
       }
       case 'resume': {
         if(this.worker)await this.worker;
+        if(this.maintenanceWorker)await this.maintenanceWorker;
+        const maintenance=this.state.maintenanceTasks?.find(task=>task.status==='paused');
+        if(maintenance&&(!this.state.run||this.state.run.status==='idle')){
+          this.checkConnectionSettings();maintenance.status='queued';maintenance.run.status='running';maintenance.run.settings=copy(this.state.settings);delete maintenance.error;await this.save();this.launchMaintenance();break;
+        }
         if(!this.state.run)throw new Error('There is no saved job to resume.');
         this.checkConnectionSettings();
         const connectionChanged=this.state.run.settings.provider!==this.state.settings.provider||this.state.run.settings.model!==this.state.settings.model;
@@ -532,7 +850,12 @@ export class AppController implements ManagerAPI {
           if(this.state.run.scope==='pilot'&&this.state.run.kind==='tag'){this.state.pilotIds=[];this.state.pilotExpected=this.state.run.jobs.length;this.state.pilotReviewed=false;}
         }
         if(this.state.run.kind==='rebuild')for(const job of this.state.run.jobs)if(!this.state.facts[job.paperId])job.status='pending';
-        this.state.run.status='running';this.state.run.message='Resuming…';await this.save();this.launch();break;
+        if(this.state.run.consolidation?.work?.status==='failed'){
+          this.rememberPreparation();delete this.state.run.consolidation;delete this.state.run.preparation;delete this.state.tagPreparation;this.state.taxonomyProposal=null;
+        }
+        this.state.run.status='running';this.state.run.message='Resuming…';
+        for(const task of this.state.maintenanceTasks??[])if(task.status==='paused'){task.status='queued';task.run.status='running';task.run.settings=copy(this.state.settings);delete task.error;}
+        await this.save();this.launch();break;
       }
       case 'save-tag': {this.saveTag(payload.tag);if(payload.tag.custom&&this.state.taxonomyProposal){const saved=this.state.tags.find(tag=>tag.id===payload.tag.id);if(saved)this.state.taxonomyProposal.tags=this.state.taxonomyProposal.tags.map(tag=>tag.id===saved.id?copy(saved):tag);}this.refreshPreparation();await this.save();break;}
       case 'delete-tag': {const old=this.state.tags.find(t=>t.id===payload.id);this.state.tags=this.state.tags.filter(t=>t.id!==payload.id);for(const tag of this.state.tags){tag.broaderIds=tag.broaderIds.filter(id=>id!==payload.id);tag.relatedIds=(tag.relatedIds??[]).filter(id=>id!==payload.id);}if(old?.custom)this.detailChanged(payload.id);else this.vocabularyChanged();await this.save();break;}
@@ -580,7 +903,7 @@ export class AppController implements ManagerAPI {
         if(!validProvider(v.provider))throw new Error('Choose OpenAI API, ChatGPT, or DeepSeek as the connection.');
         const settings:ManagerSettings={provider:v.provider,model:String(v.model??'').trim(),autoAssign:v.autoAssign===true,budgetUSD:this.number(v.budgetUSD,0.01,10000),inputPricePerMillion:this.number(v.inputPricePerMillion,0,10000),outputPricePerMillion:this.number(v.outputPricePerMillion,0,10000),maxOutputTokens:Math.round(this.number(v.maxOutputTokens,512,32768)),coreConceptLimit:Math.round(this.number(v.coreConceptLimit??previous.coreConceptLimit??60,1,500))};
         if(settings.autoAssign&&(!this.state.pilotReviewed||this.state.pilotVersion!==this.state.vocabularyVersion))throw new Error('Complete and review the pilot for this vocabulary before enabling automatic assignment.');
-        if((settings.provider!==previous.provider||settings.model!==previous.model)&&this.state.run?.status==='running'){this.state.run.status='paused';this.state.run.message='Connection settings changed. Resume to use the selected connection.';this.abort?.abort();}
+        if(settings.provider!==previous.provider||settings.model!==previous.model)await this.pauseProviderRun(previous.provider,'Connection settings changed. Resume to use the selected connection.');
         if(settings.provider!==previous.provider)this.state.models=[];
         this.state.settings=settings;await this.save();break;
       }
@@ -832,12 +1155,13 @@ export class AppController implements ManagerAPI {
   }
   private async pauseProviderRun(provider:ProviderMode,message:string) {
     const run=this.state.run;
-    if(!run||run.settings.provider!==provider||!(this.worker||run.status==='running'))return;
-    if(run.status==='running')run.status='paused';
-    if(run.status==='paused')run.message=message;
-    this.abort?.abort();await this.save();
-    // Settle the affected request before replacing its credentials. Another provider's run is untouched.
-    if(this.worker)await this.worker;
+    const mainAffected=run?.settings.provider===provider&&(!!this.worker||run.status==='running');
+    const tasks=(this.state.maintenanceTasks??[]).filter(task=>task.run.settings.provider===provider&&(task.status==='running'||task.status==='queued'));
+    if(!mainAffected&&!tasks.length)return;
+    if(mainAffected){run!.status='paused';run!.message=message;this.abort?.abort();}
+    for(const task of tasks){task.status='paused';task.run.status='paused';task.error=message;}
+    if(tasks.length)this.maintenanceAbort?.abort();await this.save();
+    await Promise.allSettled([mainAffected?this.worker:null,tasks.length?this.maintenanceWorker:null]);
   }
   private number(value:unknown,min:number,max:number) {const n=Number(value);if(!Number.isFinite(n)||n<min||n>max)throw new Error(`Enter a number between ${min} and ${max}.`);return n;}
   private vocabularyChanged() {
@@ -890,7 +1214,7 @@ export class AppController implements ManagerAPI {
   private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string) {
     const replacePausedRebuild=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&this.state.run.status==='paused';
     if(replacePausedRebuild&&this.worker)await this.worker;
-    if(this.worker||this.state.run?.status==='running')throw new Error('Pause or finish the current run first.');
+    if(this.worker||this.maintenanceWorker||this.state.run?.status==='running')throw new Error('Pause or finish the current run first.');
     if(this.state.run?.status==='paused'&&!replacePausedRebuild)throw new Error('Resume or cancel the paused run before starting another analysis.');
     this.checkConnectionSettings();
     if(kind==='tag'&&!this.state.tags.some(t=>t.status==='approved'))throw new Error('Approve a vocabulary or a custom tag before assigning tags.');
@@ -911,43 +1235,52 @@ export class AppController implements ManagerAPI {
   }
   private estimateRun(run:Run) {
     if(!paidProvider(run.settings.provider))return 0;
+    const maintenance=this.state.maintenanceTasks?.find(task=>task.run===run);
+    if(maintenance&&maintenance.kind!=='retry')return run.spentUSD;
     const pending=run.jobs.filter(j=>j.status!=='completed').reduce((sum,j)=>{const paper=this.state.papers[j.paperId];return sum+(paper?this.estimate(run.kind==='rebuild'?buildFactExtractionPrompt(paper):buildAnalysisPrompt(paper,this.state.tags),run.settings):0);},0);
-    const facts=run.jobs.map(job=>this.state.facts[job.paperId]).filter(Boolean);
+    if(maintenance)return run.spentUSD+pending;
+    const work=run.consolidation?.work;
+    if(work){const next=nextConsolidationRequest(work);return run.spentUSD+pending+(next?this.estimate(next.prompt,run.settings)*work.tasks.filter(task=>!task.completed).length:0);}
+    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
     const snapshot=run.consolidation?.snapshot??(run.kind==='rebuild'?createRegistrySnapshot(copy(facts),copy(this.state.evidenceCatalog)):undefined);
     const consolidation=run.kind==='rebuild'&&!run.vocabFinished&&run.consolidation?.value===undefined?this.estimate(buildConsolidationPrompt(facts,this.state.tags,run.settings.coreConceptLimit??60,snapshot),run.settings):0;
     return run.spentUSD+pending+consolidation;
   }
   private async request(prompt:string,run:Run,onDispatch?:()=>void|(()=>void)):Promise<CompletionResult> {
+    const signal=(this.state.run===run?this.abort:this.maintenanceAbort)?.signal;
+    if(run.status!=='running'||signal?.aborted||this.shuttingDown)throw new Error('This work was paused. Completed results are saved.');
     const reservation=this.estimate(prompt,run.settings);
     if(paidProvider(run.settings.provider)&&run.spentUSD+reservation>run.settings.budgetUSD)throw new Error('The next request exceeds the remaining estimated API budget. Increase the cap in Settings, then resume.');
     const before=run.spentUSD,rollback=onDispatch?.();run.spentUSD+=reservation;
     try{await this.save();}catch(error){run.spentUSD=before;if(typeof rollback==='function')rollback();throw error;}
     let result:CompletionResult;
-    try{result=await this.env.ai.completeJson(SYSTEM,prompt,this.providerSettings(run.settings),this.abort?.signal);}
+    try{result=await this.env.ai.completeJson(SYSTEM,prompt,this.providerSettings(run.settings),signal);}
     catch(error){const completed=(error as ProviderFailure|null)?.completion;if(completed?.usageKnown&&completed.estimatedCostUSD!==null&&Number.isFinite(completed.estimatedCostUSD))run.spentUSD=Math.max(0,run.spentUSD-reservation+completed.estimatedCostUSD);throw error;}
     if(result.estimatedCostUSD!==null&&result.usageKnown)run.spentUSD=Math.max(0,run.spentUSD-reservation+result.estimatedCostUSD);
     else if(paidProvider(run.settings.provider))this.warn('A request omitted usage. Its full budget reservation was retained; failed requests may also incur charges.');
+    if(this.state.run!==run&&(run.status!=='running'||signal?.aborted||this.shuttingDown))throw new Error('This work was paused. Completed results are saved.');
     return result;
   }
   private launch() {
     if(this.worker||this.shuttingDown)return;
-    this.worker=this.work().finally(()=>{this.worker=null;this.abort=null;if(!this.shuttingDown&&this.deferredItems.size&&this.state.run?.status!=='paused')void this.processDeferred();});
+    this.worker=this.work().finally(()=>{this.worker=null;this.abort=null;if(!this.shuttingDown){if(this.state.maintenanceTasks?.some(task=>task.status==='queued'))this.launchMaintenance();else if(this.deferredItems.size&&this.state.run?.status!=='paused')void this.processDeferred();}});
   }
-  async waitForIdle() {await this.worker;}
+  async waitForIdle() {await this.worker;await this.maintenanceWorker;if(this.worker)await this.worker;}
   private async work() {
     const run=this.state.run;if(!run)return;
     this.abort=new AbortController();
     try {
       for(const job of run.jobs) {
         if(run.status!=='running'||this.shuttingDown)return;
+        if(run.skippedIds?.includes(job.paperId)){job.status='completed';continue;}
         if(job.status==='completed'&&run.kind==='rebuild'){
           const cached=this.state.facts[job.paperId],original=this.state.papers[job.paperId];
           if(!cached||!original)job.status='pending';
           else{
             const current=await this.fresh(original);
-            if(cached.needsPDF||!cached.concepts.length||cached.inputFingerprint!==cached.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(current.itemID),[],18000);
+            if(!cached.concepts.length||cached.inputFingerprint!==cached.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(current.itemID),[],18000);
             if(cached.metadataFingerprint!==paperFingerprint({...current,pdfText:undefined})||cached.inputFingerprint!==paperFingerprint(current))job.status='pending';
-            else this.updateEvidenceWarning(current,'facts',cached.needsPDF||!cached.concepts.length,run);
+            else this.updateEvidenceWarning(current,'facts',!cached.concepts.length,run);
           }
         }
         if(job.status==='completed')continue;
@@ -955,8 +1288,10 @@ export class AppController implements ManagerAPI {
         try{if(run.kind==='rebuild')await this.extractFacts(job,run);else await this.analyze(job,run);job.status='completed';if(run.scope==='pilot'&&run.kind==='tag'&&!run.detailId)this.state.pilotIds=[...new Set([...this.state.pilotIds,job.paperId])];await this.save();}
         catch(error){job.status='pending';job.error=this.message(error);throw error;}
       }
+      await this.drainMaintenance();this.refreshAfterMaintenance=false;
+      if(run.status!=='running'||this.shuttingDown)return;
       if(run.kind==='rebuild'){
-        const proposal=this.state.taxonomyProposal,facts=run.jobs.map(job=>this.state.facts[job.paperId]).filter(Boolean);
+        const proposal=this.state.taxonomyProposal,facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
         const sameInputs=proposal&&facts.length===proposal.paperIds.length&&facts.every(fact=>proposal.paperFingerprints?.[fact.paperId]===fact.metadataFingerprint&&proposal.paperInputFingerprints?.[fact.paperId]===fact.inputFingerprint);
         if(run.preparationOnly&&sameInputs&&proposal?.evidenceSnapshot&&!validateSnapshotAgainstFacts(proposal.evidenceSnapshot,facts).length)await this.prepareRun(run);
         else{run.preparationOnly=false;await this.consolidateRun(run);}
@@ -964,11 +1299,12 @@ export class AppController implements ManagerAPI {
       if(run.status!=='running'||this.shuttingDown)return;
       this.state.neighbors=buildSimilarityNetwork(Object.values(this.state.papers),10);run.status='idle';await this.save();
     } catch(error) {
-      if(run.status!=='idle'){run.status='paused';run.message=this.message(error);}await this.save();
+      if(run.status==='running'){run.status='paused';run.message=this.message(error);}await this.save();
     }
   }
   private async consolidateRun(run:Run) {
-    const facts=run.jobs.map(job=>this.state.facts[job.paperId]).sort((a,b)=>a?.paperId.localeCompare(b?.paperId??'')??0);
+    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)).map(job=>this.state.facts[job.paperId]).sort((a,b)=>a?.paperId.localeCompare(b?.paperId??'')??0);
+    if(!facts.length){run.vocabFinished=true;run.message='All papers were skipped for this build. Your existing tag list is unchanged.';return;}
     if(facts.some(fact=>!fact))throw new Error('A selected paper needs fresh factual extraction. Resume to process its saved job.');
     ensureFactConceptIds(facts);
     const existing=this.consolidationDefinitions(),inputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion});
@@ -981,6 +1317,31 @@ export class AppController implements ManagerAPI {
     }
     const invalidSnapshot=validateSnapshotAgainstFacts(checkpoint.snapshot,facts);
     if(invalidSnapshot.length)throw new Error('The saved evidence snapshot changed. Start a new rebuild to create a current proposal.');
+    if(checkpoint.value===undefined&&(checkpoint.work||new TextEncoder().encode(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60,checkpoint.snapshot)).length>100_000)){
+      checkpoint.work??=createConsolidationWork(facts,existing,checkpoint.snapshot,run.settings.coreConceptLimit??60);await this.save();
+      for(let request=nextConsolidationRequest(checkpoint.work);request;request=nextConsolidationRequest(checkpoint.work)){
+        if(run.status!=='running'||this.shuttingDown)return;
+        run.message=`Organizing your tag list: ${request.phase==='final'?'global merge':request.phase==='reduce'?'combining topics':'part '+(request.completed+1)+' of '+request.total}…`;await this.save();
+        if(!checkpoint.pendingResponse){
+          try{const response=await this.request(request.prompt,run);checkpoint.pendingResponse={requestId:request.id,raw:response.value};await this.save();}
+          catch(error){
+            const failure=error as ProviderFailure|null;
+            if(failure?.category==='invalid-response'&&typeof failure.rawText==='string'){
+              const task=checkpoint.work.tasks.find(task=>task.id===request.id);if(task)task.raw=failure.rawText;
+              checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];checkpoint.failed=true;await this.save();
+            }
+            throw error;
+          }
+        }
+        if(run.status!=='running'||this.shuttingDown)return;
+        try{checkpoint.work=acceptConsolidationResult(checkpoint.work,checkpoint.pendingResponse.requestId,checkpoint.pendingResponse.raw);}
+        catch(error){checkpoint.diagnostics=[...(checkpoint.diagnostics??[]),this.message(error)];const task=checkpoint.work.tasks.find(task=>task.id===checkpoint.pendingResponse!.requestId);if(task)task.raw=checkpoint.pendingResponse.raw;delete checkpoint.pendingResponse;checkpoint.failed=true;await this.save();throw new Error('One tag-building part could not be used. Resume to retry that part.');}
+        delete checkpoint.pendingResponse;checkpoint.failed=false;await this.save();
+      }
+      checkpoint.value=finishedConsolidation(checkpoint.work);
+      if(checkpoint.value===undefined){checkpoint.failed=true;await this.save();throw new Error(checkpoint.work.status==='failed'?'The AI could not combine these topics into a compact list. Resume to organize the saved paper analysis again.':'One tag-building part could not finish. Resume to retry it.');}
+      checkpoint.phase='validating';await this.save();
+    }
     if(checkpoint.value===undefined){
       run.message=`Consolidating ${facts.length} papers using stable evidence references…`;await this.save();
       try{const response=await this.request(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60,checkpoint.snapshot),run);checkpoint.value=response.value;}
@@ -1010,14 +1371,18 @@ export class AppController implements ManagerAPI {
     const original=this.state.papers[job.paperId];if(!original)throw new Error('Paper is no longer available.');
     const paper=await this.fresh(original),metadataFingerprint=paperFingerprint(paper),cached=this.state.facts[paper.id];
     const provenance=cached?.extractionVersion===1;
-    if(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===metadataFingerprint&&!cached.needsPDF&&cached.concepts.length){this.updateEvidenceWarning(paper,'facts',false,run);return cached;}
-    if(!paper.abstract||cached?.needsPDF||cached&&!cached.concepts.length||(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint!==metadataFingerprint))paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);
-    if(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===paperFingerprint(paper)){this.updateEvidenceWarning(paper,'facts',cached.needsPDF||!cached.concepts.length,run);return cached;}
+    if(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===metadataFingerprint&&cached.concepts.length){this.updateEvidenceWarning(paper,'facts',false,run);return cached;}
+    if(!paper.abstract||cached&&!cached.concepts.length||(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint!==metadataFingerprint))paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);
+    if(provenance&&cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===paperFingerprint(paper)){this.updateEvidenceWarning(paper,'facts',!cached.concepts.length,run);return cached;}
     let result=normalizeFacts((await this.request(buildFactExtractionPrompt(paper,!!paper.pdfText),run)).value,paper,run.settings.provider,run.settings.model);
-    if((result.needsPDF||!result.concepts.length)&&!paper.pdfText){paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);if(paper.pdfText)result=normalizeFacts((await this.request(buildFactExtractionPrompt(paper,true),run)).value,paper,run.settings.provider,run.settings.model);}
+    if(!result.concepts.length&&!paper.pdfText){paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);if(paper.pdfText)result=normalizeFacts((await this.request(buildFactExtractionPrompt(paper,true),run)).value,paper,run.settings.provider,run.settings.model);}
     if(run.status!=='running')throw new Error('Fact extraction was paused. Completed records remain cached.');
+    const latest=await this.fresh(original);
+    if(paper.pdfText)latest.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),[],18000);
+    if(paperFingerprint(latest)!==paperFingerprint(paper))throw new Error('Paper information changed during analysis. Retry this paper with its updated information.');
     paper.summary=result.summary;paper.concepts=result.concepts.map(c=>c.name);paper.fingerprint=paperFingerprint(paper);
-    this.updateEvidenceWarning(paper,'facts',result.needsPDF||!result.concepts.length,run);
+    this.updateEvidenceWarning(paper,'facts',!result.concepts.length,run);
+    if(!result.concepts.length||result.needsPDF)(this.state.paperInputs??={})[paper.id]=this.env.host.inspectInputs?await this.env.host.inspectInputs(paper.itemID):this.inputFallback(paper);
     this.state.papers[paper.id]=paper;this.state.facts[paper.id]=result;this.state.nativeTags[paper.id]=await this.env.host.readTags(paper.itemID);return result;
   }
   private async fresh(paper:PaperRecord,withPDF=false) {
@@ -1034,7 +1399,7 @@ export class AppController implements ManagerAPI {
     const metadataFingerprint=paperFingerprint(paper),cached=this.state.analyses[paper.id];
     let raw:unknown,pdfProbed=false;
     let reusable=cached?.metadataFingerprint===metadataFingerprint&&cached.vocabularyVersion===this.state.vocabularyVersion&&cached.provider===run.settings.provider&&cached.model===run.settings.model&&cached.detailFingerprint===detailFingerprint;
-    if(reusable&&(normalizeAnalysis(cached!.raw).needsPDF||!paper.abstract||original.pdfText)){
+    if(reusable&&(original.pdfText||!cached!.validatedCount&&(normalizeAnalysis(cached!.raw).needsPDF||!paper.abstract))){
       paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);pdfProbed=true;
       reusable=cached!.pdfFingerprint!==undefined?cached!.pdfFingerprint===fingerprint(paper.pdfText??''):String(paper.pdfText??'')===String(original.pdfText??'');
     }
@@ -1044,17 +1409,22 @@ export class AppController implements ManagerAPI {
       const includedPDF=!!paper.pdfText;
       raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:includedPDF}),run)).value;
       const first=normalizeAnalysis(raw);
-      if(first.needsPDF||!paper.abstract||!!original.pdfText) {
+      if(!validateSuggestions(paper,definitions,raw,this.context(paper.id)).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)) {
         if(!pdfProbed)paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
         if(paper.pdfText){paper.fingerprint=paperFingerprint(paper);if(!includedPDF)raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:true}),run)).value;}
       }
+      if(run.status!=='running')throw new Error('Paper analysis was paused. Completed results are saved.');
       if(run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Vocabulary changed during analysis. Resume to refresh results.');
       if(detailFingerprint!==this.detailFingerprint(run.detailId?this.state.tags.filter(t=>t.id===run.detailId):this.state.tags))throw new Error('A detail definition changed during analysis. Rerun its preview.');
+      const latest=await this.fresh(original);
+      if(paper.pdfText)latest.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
+      if(paperFingerprint(latest)!==paperFingerprint(paper))throw new Error('Paper information changed during analysis. Retry this paper with its updated information.');
       this.state.analyses[paper.id]={metadataFingerprint,vocabularyVersion:this.state.vocabularyVersion,provider:run.settings.provider,model:run.settings.model,raw,detailFingerprint,pdfFingerprint:fingerprint(paper.pdfText??'')};
     }
     const result=validateSuggestions(paper,definitions,raw,this.context(paper.id));
     paper.fingerprint=paperFingerprint(paper);
-    this.updateEvidenceWarning(paper,`assignment:${run.detailId??'core'}`,result.needsPDF||!paper.abstract&&!paper.pdfText&&!result.suggestions.length,run);
+    if(this.state.analyses[paper.id])this.state.analyses[paper.id].validatedCount=result.suggestions.length;
+    this.updateEvidenceWarning(paper,`assignment:${run.detailId??'core'}`,!result.suggestions.length&&(result.needsPDF||!paper.abstract&&!paper.pdfText),run);
     paper.summary=result.summary;paper.concepts=result.concepts;this.state.papers[paper.id]=paper;
     this.state.nativeTags[paper.id]=await this.env.host.readTags(paper.itemID);
     if(run.kind==='tag') {
@@ -1121,73 +1491,105 @@ export class AppController implements ManagerAPI {
   }
   private async performCommit(change:History) {
     if(this.state.pendingChange)throw new Error('An interrupted change must be recovered before another batch.');
+    const metadata=change.metadataPatches??[];
+    if(change.patches.length&&metadata.length)throw new Error('Apply native tags and metadata in separate reviewed batches.');
+    if(metadata.length&&(!this.env.host.readMetadata||!this.env.host.applyMetadata))throw new Error('Metadata recovery is unavailable in this Zotero connection.');
+    if((change.beforeDefinitions===undefined)!==(change.afterDefinitions===undefined)||change.beforeDefinitions&&fingerprint(Object.keys(change.beforeDefinitions).sort())!==fingerprint(Object.keys(change.afterDefinitions??{}).sort()))throw new Error('The tag-definition journal is incomplete. Refresh the preview.');
+    if(!definitionRecordsMatch(this.state.tags,change.beforeDefinitions))throw new Error('Tag definitions changed after the preview. Refresh before applying.');
+    if(!decisionRecordsMatch(this.state.decisions,change.beforeDecisions))throw new Error('Manual choices changed after the preview. Refresh before applying.');
     for(const id of change.suggestionIds){const s=this.suggestion(id);if(this.state.decisions[pair(s.paperId,s.tagId)]?.locked)throw new Error('An assignment was locked while this batch was waiting.');}
+    for(const patch of change.patches)if(!sameTags(await this.env.host.readTags(patch.itemID),patch.before))throw new Error('Tags changed after the preview. Refresh before applying.');
+    for(const patch of metadata)if(!sameMetadata(await this.env.host.readMetadata!(patch.itemID),patch.before))throw new Error('Metadata changed after the preview. Refresh before applying.');
+    if(!change.patches.length&&!metadata.length){
+      const previousTags=this.state.tags,previousDecisions=copy(this.state.decisions),previousHistory=copy(this.state.history),previousSuggestions=copy(this.state.suggestions);
+      this.state.tags=applyDefinitionRecords(this.state.tags,change.afterDefinitions);change.status='applied';this.restoreDecisions(change.afterDecisions);this.state.history.unshift(change);this.finishUndoJournal(change);
+      try{await this.save();}catch(error){this.state.tags=previousTags;this.state.decisions=previousDecisions;this.state.history=previousHistory;this.state.suggestions=previousSuggestions;change.status='prepared';throw error;}
+      return;
+    }
     this.state.pendingChange=change;await this.save();
-    try{await this.env.host.apply(change.patches,change.label);}
-    catch(error){delete this.state.pendingChange;await this.save();throw error;}
+    try{
+      if(metadata.length)await this.env.host.applyMetadata!(metadata,change.label);else await this.env.host.apply(change.patches,change.label);
+    }catch(error){await this.recoverChange();await this.save();throw error;}
+    if(!definitionRecordsMatch(this.state.tags,change.beforeDefinitions)&&!definitionRecordsMatch(this.state.tags,change.afterDefinitions)||!decisionRecordsMatch(this.state.decisions,change.beforeDecisions)&&!decisionRecordsMatch(this.state.decisions,change.afterDecisions)){await this.recoverChange();await this.save();throw new Error('Tag definitions or manual choices changed while the batch was being applied. Review its history.');}
+    this.state.tags=applyDefinitionRecords(this.state.tags,change.afterDefinitions);
     for(const patch of change.patches)this.state.ownership[patch.paperId]=copy(change.afterOwnership[patch.paperId]??{});change.status='applied';
     this.restoreDecisions(change.afterDecisions);
     for(const patch of change.patches)this.state.nativeTags[patch.paperId]=copy(patch.after);
+    await this.refreshMetadataPapers(metadata,change.label);
     for(const s of this.state.suggestions)if(change.suggestionIds.includes(s.id)){s.status='accepted';s.applied=true;}
-    this.state.history.unshift(change);delete this.state.pendingChange;await this.save();
+    this.state.history.unshift(change);this.finishUndoJournal(change);delete this.state.pendingChange;await this.save();
   }
   private async recoverChange() {
-    const change=this.state.pendingChange!;let applied=0,conflict=false;const appliedPapers=new Set<string>();
+    const change=this.state.pendingChange!,metadata=change.metadataPatches??[];let applied=0,before=0,conflict=false;const appliedPapers=new Set<string>(),appliedMetadata:MetadataPatch[]=[];
     for(const patch of change.patches) {
       const current=await this.env.host.readTags(patch.itemID).catch(()=>null);
       if(current&&sameTags(current,patch.after)){applied++;appliedPapers.add(patch.paperId);this.state.nativeTags[patch.paperId]=current;this.state.ownership[patch.paperId]=copy(change.afterOwnership[patch.paperId]??{});}
-      else if(current&&sameTags(current,patch.before))this.state.ownership[patch.paperId]=copy(change.beforeOwnership[patch.paperId]??{});
+      else if(current&&sameTags(current,patch.before)){before++;this.state.nativeTags[patch.paperId]=current;this.state.ownership[patch.paperId]=copy(change.beforeOwnership[patch.paperId]??{});}
       else {conflict=true;delete this.state.ownership[patch.paperId];}
     }
-    if(applied){if(applied===change.patches.length&&!conflict)this.restoreDecisions(change.afterDecisions);change.status=conflict||applied!==change.patches.length?'conflict':'applied';this.state.history.unshift(change);for(const s of this.state.suggestions)if(change.suggestionIds.includes(s.id)&&appliedPapers.has(s.paperId)){s.status='accepted';s.applied=true;}}
-    if(conflict)this.warn('An interrupted batch has later edits. Its ownership was released for affected papers; review their current tags.');
+    for(const patch of metadata){
+      const current=this.env.host.readMetadata?await this.env.host.readMetadata(patch.itemID).catch(()=>null):null;
+      if(current&&sameMetadata(current,patch.after)){applied++;appliedMetadata.push(patch);}
+      else if(current&&sameMetadata(current,patch.before))before++;
+      else{conflict=true;appliedMetadata.push(patch);}
+    }
+    const total=change.patches.length+metadata.length,definitionsBefore=definitionRecordsMatch(this.state.tags,change.beforeDefinitions),definitionsAfter=definitionRecordsMatch(this.state.tags,change.afterDefinitions);
+    const decisionsBefore=decisionRecordsMatch(this.state.decisions,change.beforeDecisions),decisionsAfter=decisionRecordsMatch(this.state.decisions,change.afterDecisions);
+    const complete=!conflict&&(total?applied===total:definitionsAfter&&!definitionsBefore)&&(definitionsBefore||definitionsAfter)&&(decisionsBefore||decisionsAfter);
+    const untouched=!conflict&&before===total&&definitionsBefore&&decisionsBefore;
+    if(complete){
+      if(definitionsBefore)this.state.tags=applyDefinitionRecords(this.state.tags,change.afterDefinitions);
+      this.restoreDecisions(change.afterDecisions);change.status='applied';
+    }else if(!untouched)change.status='conflict';
+    if(complete||!untouched){
+      this.state.history=this.state.history.filter(history=>history.id!==change.id);this.state.history.unshift(change);
+      if(complete)this.finishUndoJournal(change);
+      for(const suggestion of this.state.suggestions)if(change.suggestionIds.includes(suggestion.id)&&appliedPapers.has(suggestion.paperId)){suggestion.status='accepted';suggestion.applied=true;}
+    }
+    await this.refreshMetadataPapers(appliedMetadata,change.label);
+    if(!complete&&!untouched)this.warn('An interrupted batch has later or incomplete changes. Current native data and tag definitions were preserved; review its history before continuing.');
     delete this.state.pendingChange;
   }
+  private finishUndoJournal(change:History) {
+    if(!change.undoOfId)return;
+    const original=this.state.history.find(history=>history.id===change.undoOfId);if(!original)return;
+    original.status='undone';for(const suggestion of this.state.suggestions)if(original.suggestionIds.includes(suggestion.id))suggestion.applied=false;
+  }
+  private async refreshMetadataPapers(patches:readonly MetadataPatch[],reason:string) {
+    for(const patch of patches){
+      const previous=this.state.papers[patch.paperId],current=await this.env.host.read(patch.itemID).catch(()=>null);
+      if(current){this.remember(current);if(previous?.pdfText)current.pdfText=previous.pdfText;current.fingerprint=paperFingerprint(current);}
+      if(previous&&current&&paperFingerprint(previous)===paperFingerprint(current))continue;
+      const facts=this.state.facts[patch.paperId];if(facts)(this.state.factHistory??=[]).push({date:new Date().toISOString(),reason,facts:copy(facts)});
+      delete this.state.facts[patch.paperId];delete this.state.analyses[patch.paperId];delete this.state.paperInputs?.[patch.paperId];delete this.state.approvedTaxonomyInput;
+      if(current){current.summary='';current.concepts=[];}
+      if(this.state.taxonomyProposal?.paperIds.includes(patch.paperId))this.state.taxonomyProposal.issues=[...new Set([...this.state.taxonomyProposal.issues,'Source metadata changed. Rebuild the taxonomy proposal.'])];
+    }
+  }
   private async previewCleanup() {
-    await this.scan('library');
-    const names=Object.values(this.state.nativeTags).flat().map(t=>t.tag);
-    this.state.cleanup=findCleanupCandidates(names,this.state.tags).map(candidate=>{
-      const patches:TagPatch[]=[];let manualCount=0;
-      for(const [paperId,before] of Object.entries(this.state.nativeTags)) {
-        const source=before.find(t=>t.tag===candidate.from);if(!source)continue;
-        if(source.type===0)manualCount++;
-        const after=before.filter(t=>t.tag!==candidate.from).map(t=>({...t}));
-        if(!after.some(t=>t.tag===candidate.to))after.push({tag:candidate.to,type:0});
-        patches.push({paperId,itemID:this.state.papers[paperId].itemID,before:copy(before),after});
-      }
-      return {id:fingerprint([candidate.from,candidate.to,this.state.vocabularyVersion]),from:candidate.from,to:candidate.to,reason:candidate.reason,affectedCount:patches.length,manualCount,patches};
+    await this.refreshExistingTags();const plan=this.state.reconciliation!;
+    this.state.cleanup=plan.groups.flatMap(group=>{
+      const target=this.state.tags.find(tag=>tag.id===group.targetId);
+      if(group.status!=='match'||!target||target.name===group.source)return [];
+      try{const changes=compileReconciliationChanges(plan,[{groupId:group.id,action:'replace'}],plan.snapshot);return [{id:group.id,from:group.source,to:target.name,reason:group.reason,affectedCount:changes.patches.length,manualCount:group.manualCount,patches:changes.patches}];}catch{return [];}
     });await this.save();
   }
   private async applyCleanup(ids:string[]) {
-    const selected=this.state.cleanup.filter(c=>ids.includes(c.id));if(!selected.length)return;
-    const patchMap=new Map<string,TagPatch>();
-    for(const candidate of selected)for(const patch of candidate.patches) {
-      const existing=patchMap.get(patch.paperId);
-      if(existing&&!sameTags(existing.before,patch.before))throw new Error('Cleanup preview is stale. Preview again.');
-      const next=existing??copy(patch);
-      if(existing){next.after=next.after.filter(t=>t.tag!==candidate.from);if(!next.after.some(t=>t.tag===candidate.to))next.after.push({tag:candidate.to,type:0});}
-      patchMap.set(patch.paperId,next);
-    }
-    const beforeOwnership:Ownership={},afterOwnership:Ownership={};
-    for(const patch of patchMap.values()){beforeOwnership[patch.paperId]=copy(this.state.ownership[patch.paperId]??{});afterOwnership[patch.paperId]=copy(beforeOwnership[patch.paperId]);}
-    for(const patch of patchMap.values())for(const [tagId,owned] of Object.entries(afterOwnership[patch.paperId]??{})) {
-      const candidate=selected.find(c=>c.from===owned.name);if(!candidate)continue;
-      // A pre-existing target assignment must never become extension-owned via a rename.
-      if(patch.before.some(t=>t.tag===candidate.to))delete afterOwnership[patch.paperId][tagId];else owned.name=candidate.to;
-    }
-    await this.commit({id:uid('cleanup'),date:new Date().toISOString(),label:'Approved tag cleanup',patches:[...patchMap.values()],beforeOwnership,afterOwnership,suggestionIds:[],status:'prepared'});
-    this.state.cleanup=[];await this.save();
+    if(!ids.length)return;await this.previewExistingChanges(ids.map(groupId=>({groupId,action:'replace'})));await this.applyExistingChanges(this.state.reconciliationPreview!.id);
   }
   private async undo(id:string) {
     const history=this.state.history.find(h=>h.id===id);if(!history||history.status!=='applied')throw new Error('This change cannot be undone.');
     const patches=history.patches.map(p=>({...copy(p),before:copy(p.after),after:copy(p.before)}));
     for(const patch of patches)if(!sameTags(await this.env.host.readTags(patch.itemID),patch.before))throw new Error('Later tag edits conflict with this undo. Review the paper before restoring an earlier state.');
+    const metadataPatches=history.metadataPatches?.map(reverseMetadataPatch);
+    if(metadataPatches?.length&&!this.env.host.readMetadata)throw new Error('Metadata recovery is unavailable in this Zotero connection.');
+    for(const patch of metadataPatches??[])if(!sameMetadata(await this.env.host.readMetadata!(patch.itemID),patch.before))throw new Error('Later metadata edits conflict with this undo. Review the paper before restoring an earlier state.');
+    if(!definitionRecordsMatch(this.state.tags,history.afterDefinitions))throw new Error('Later tag-definition edits conflict with this undo. Review the tag before restoring an earlier state.');
+    for(const [key,expected] of Object.entries(history.afterDecisions??{}))if(fingerprint(this.state.decisions[key]??null)!==fingerprint(expected))throw new Error('Later manual choices conflict with this undo. Review the paper before restoring an earlier state.');
     const current:Ownership={},restored:Ownership={};
     for(const patch of patches){current[patch.paperId]=copy(this.state.ownership[patch.paperId]??{});restored[patch.paperId]=copy(history.beforeOwnership[patch.paperId]??{});}
     const beforeDecisions:Record<string,Decision|null>={};for(const key of Object.keys(history.beforeDecisions??{}))beforeDecisions[key]=copy(this.state.decisions[key]??null);
-    await this.commit({id:uid('undo'),date:new Date().toISOString(),label:`Undo: ${history.label}`,patches,beforeOwnership:current,afterOwnership:restored,beforeDecisions,afterDecisions:history.beforeDecisions,suggestionIds:[],status:'prepared'});
-    history.status='undone';for(const s of this.state.suggestions)if(history.suggestionIds.includes(s.id))s.applied=false;
-    await this.save();
+    await this.commit({id:uid('undo'),date:new Date().toISOString(),label:`Undo: ${history.label}`,patches,...(metadataPatches?{metadataPatches}:{}),...(history.afterDefinitions?{beforeDefinitions:copy(history.afterDefinitions),afterDefinitions:copy(history.beforeDefinitions??{})}:{}),beforeOwnership:current,afterOwnership:restored,beforeDecisions,afterDecisions:history.beforeDecisions,suggestionIds:[],status:'prepared',undoOfId:history.id});
   }
   private restoreDecisions(decisions?:Record<string,Decision|null>) {for(const [key,value] of Object.entries(decisions??{}))if(value)this.state.decisions[key]=copy(value);else delete this.state.decisions[key];}
   async onItemChanged(itemID:number) {

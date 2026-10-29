@@ -179,6 +179,13 @@ a { color:var(--accent); text-underline-offset:3px; }
 .chips { display:flex; flex-wrap:wrap; gap:6px; }
 .paper-card { padding:18px 20px; border-bottom:1px solid var(--line); }
 .paper-card:last-child { border-bottom:0; }
+.existing-tag-row,.paper-attention-row { padding:14px 18px; border-bottom:1px solid var(--line); }
+.existing-tag-row:last-child,.paper-attention-row:last-child { border-bottom:0; }
+.existing-tag-row .check-label,.paper-attention-row .check-label { font-weight:600; margin-bottom:8px; }
+.existing-tag-row p,.paper-attention-row p { margin-top:7px; }
+.existing-paper-choice { margin-top:12px; padding:10px 12px; border-left:2px solid var(--line); }
+.metadata-change { padding:12px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.paper-attention-list > .toolbar,.paper-attention-list > .actions { margin-bottom:14px; }
 .paper-title { font-size:14px; font-weight:600; line-height:1.5; }
 .paper-title-button { padding:0; border:0; border-radius:2px; background:none; color:var(--ink); text-align:left; font-size:14px; font-weight:600; }
 .paper-title-button:hover:not(:disabled) { background:none; color:var(--accent); }

@@ -316,7 +316,8 @@ export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],e
     }
     if(originalByKey.has(key)){malformed.push(issue('malformed-support',`Duplicate consolidation key: ${key}.`,candidateIds[key]));continue;}
     originalByKey.set(key,item);
-    const naming=preferredCoreNaming(text(item.name,80),text(item.fullName,160)||text(item.name,80),strings(item.aliases,100,160),snapshot.normalizationVersion??1);
+    const name=text(item.name,80),fullName=text(item.fullName,160)||name,aliases=strings(item.aliases,100,160),version=snapshot.normalizationVersion??1,named=terminologyFor(name,version)?.name,expanded=terminologyFor(fullName,version)?.name;
+    const naming=named&&expanded&&named!==expanded?{name,fullName,aliases}:preferredCoreNaming(name,fullName,aliases,version);
     prepared.push({...item,...naming,key,support:[],supportConcepts:[],supportPaperIds:[],paperIds:[]});
   }
   if(diagnostic)malformed.push(issue('malformed-support',diagnostic));

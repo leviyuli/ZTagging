@@ -112,7 +112,7 @@ test('complete workflow scans, drafts and approves vocabulary, reviews a pilot, 
   assert.equal(Object.keys(h.state.papers).length,2);
   assert.equal(h.ai.calls.length,0);
   await run(h,'rebuild');
-  assert.equal(h.state.run?.status,'idle');
+  assert.equal(h.state.run?.status,'idle',h.state.run?.message);
   assert.equal(h.state.tags.length,1,'Discovery must not append staged core labels to the active vocabulary');
   assert.ok(h.state.taxonomyProposal!.tags.some(t=>t.name==='WE'&&t.fullName==='water electrolysis'&&t.status==='draft'));
   assert.deepEqual(h.state.taxonomyProposal!.issues,[]);
@@ -231,6 +231,7 @@ test('cleanup previews count manual assignments, retain scientific distinctions,
     1:[{tag:'catalyst layer resistance',type:0},{tag:'Co',type:0},{tag:'CO',type:0},{tag:'Project A',type:0}],
     2:[{tag:'catalyst layer resistance',type:1}],
   }});
+  h.state.taxonomyReady=true;
   await h.controller.invoke('preview-cleanup');
   assert.equal(h.state.cleanup.length,1);
   const change=h.state.cleanup[0];
@@ -246,15 +247,17 @@ test('cleanup previews count manual assignments, retain scientific distinctions,
 
 test('cleanup does not acquire ownership of a pre-existing target and refuses a changed preview',async()=>{
   const h=harness({nativeTags:{1:[{tag:'catalyst layer resistance',type:0},{tag:'RCL',type:0}]}});
+  h.state.taxonomyReady=true;
   await h.controller.invoke('scan',{scope:'library'});
   h.state.ownership['1:KEY1']={'custom-rcl':{name:'catalyst layer resistance',changeId:'old'}};
   await h.controller.invoke('preview-cleanup');
   await h.controller.invoke('apply-cleanup',{ids:h.state.cleanup.map(c=>c.id)});
   assert.equal(h.state.ownership['1:KEY1']['custom-rcl'],undefined);
   const stale=harness({nativeTags:{1:[{tag:'catalyst layer resistance',type:0}]}});
+  stale.state.taxonomyReady=true;
   await stale.controller.invoke('preview-cleanup');
   stale.host.setTags(1,[{tag:'catalyst layer resistance',type:0},{tag:'Later manual tag',type:0}]);
-  await assert.rejects(stale.controller.invoke('apply-cleanup',{ids:stale.state.cleanup.map(c=>c.id)}),/changed after the preview/);
+  await assert.rejects(stale.controller.invoke('apply-cleanup',{ids:stale.state.cleanup.map(c=>c.id)}),/changed|stale|refresh/i);
   assert.ok((await stale.host.readTags(1)).some(t=>t.tag==='Later manual tag'));
 });
 
@@ -341,7 +344,7 @@ test('metadata is analyzed before targeted PDF text, and scanning does not disca
   assert.equal(h.ai.calls.length,2);
   assert.equal(h.ai.calls[0].input.paper?.pdf,undefined);
   assert.ok(h.ai.calls[1].input.paper?.pdf?.includes(quote));
-  assert.equal(h.host.pdfReads.length,1);
+  assert.equal(h.host.pdfReads.length,2,'Read the PDF again before persisting to reject a changed source');
   assert.equal(h.state.suggestions[0].evidence[0].source,'pdf');
   await h.controller.invoke('scan',{scope:'library'});
   assert.ok(h.state.papers['1:KEY1'].pdfText?.includes(quote));
@@ -493,7 +496,7 @@ test('concurrent automatic and manual commits preserve ownership for both papers
 });
 
 test('renaming an owned tag recognizes its existing alias without duplicating it before reviewed cleanup',async()=>{
-  const h=harness();await run(h);await acceptAll(h);await applyAccepted(h);
+  const h=harness();h.state.taxonomyReady=true;await run(h);await acceptAll(h);await applyAccepted(h);
   const stableId=h.state.tags[0].id,newName='Catalyst-layer resistance';
   await h.controller.invoke('save-tag',{tag:{...clone(h.state.tags[0]),name:newName}});
   const renamed=h.state.tags.find(tag=>tag.id===stableId)!;

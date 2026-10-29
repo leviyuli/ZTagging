@@ -6,21 +6,23 @@ import { canonicalTagKey } from './core';
 import type { WarningRecord } from './warnings';
 
 type Child = Node | string | null | undefined | false;
-type ModalState = { kind: 'apply' | 'cleanup'; ids: string[] } | { kind: 'search' } | null;
+type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'search' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
 const pageTitles: Record<ManagerPage, [string, string]> = {
   overview: ['Your library, clearly tagged', 'Prepare a useful tag list, then review its paper suggestions.'],
   vocabulary: ['Tags', 'Keep useful topics together, with only the questions that need your choice.'],
+  'existing-tags': ['Existing tags', 'Bring useful library tags into Smart Tags and review any paper changes.'],
   review: ['Review suggestions', 'Check the evidence, keep useful tags, and teach Smart Tags your preferences.'],
   library: ['Explore your library', 'Combine approved tags and discover papers with related content.'],
   activity: ['Queue & history', 'Follow analysis progress and review changes that have been applied.'],
   settings: ['Connections & settings', 'Choose an AI connection and control automatic assignment and API spending.'],
 };
-const pageNames: Record<ManagerPage, string> = { overview: 'Overview', vocabulary: 'Tags', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
+const pageNames: Record<ManagerPage, string> = { overview: 'Overview', vocabulary: 'Tags', 'existing-tags': 'Existing tags', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
 const iconPaths = {
   overview: ['M3 10.5 12 3l9 7.5', 'M5 9v12h14V9', 'M9 21v-7h6v7'],
   vocabulary: ['M20 13 13 20a2 2 0 0 1-3 0l-7-7V4h9l8 6a2 2 0 0 1 0 3Z', 'M7.5 8h.01'],
+  'existing-tags': ['M4 4h16v16H4z', 'M8 8h8M8 12h8M8 16h5'],
   review: ['M9 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-4', 'M9 2h6v5H9z', 'm8 13 3 3 5-5'],
   library: ['M12 5v16', 'M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z'],
   activity: ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6', 'M12 7v5l3 2'],
@@ -54,6 +56,25 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let reviewPage = 0;
   let libraryPage = 0;
   let warningHistoryPage = 0;
+  let existingTagQuery = '';
+  let existingTagFilter = 'all';
+  let existingTagFacet = 'all';
+  let existingTagPage = 0;
+  let existingPreviewPage = 0;
+  let existingTagAction: 'replace' | 'remove' | 'keep' = 'replace';
+  const selectedExistingTags = new Set<string>();
+  const existingTagTargets = new Map<string,string>();
+  const existingPaperTargets = new Map<string,string>();
+  const selectedExistingPapers = new Set<string>();
+  const overriddenExistingPapers = new Set<string>();
+  const expandedExistingGroups = new Set<string>();
+  const existingPaperPages = new Map<string,number>();
+  const existingDIYDrafts = new Map<string,{ name: string; description: string }>();
+  let attentionFilter = 'attention';
+  let attentionQuery = '';
+  let attentionPage = 0;
+  const selectedAttentionPapers = new Set<string>();
+  let metadataIdentifier = '';
   let modalPage = 0;
   let paperQuery = '';
   let selectedPaper = '';
@@ -73,7 +94,6 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let searchName = '';
   let modal: ModalState = null;
   const selectedSuggestions = new Set<string>();
-  const selectedCleanup = new Set<string>();
   let conceptFilter: ConceptFilter = { mode: 'all', selections: [] };
   let paperMap = new Map<string, DisplayPaper>();
   let tagMap = new Map<string, DisplayTag>();
@@ -257,7 +277,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   }
   function activeWarnings() {
-    const records = (currentState().warnings || []).filter(warning => warning.status === 'active' && !warning.legacy);
+    const records = (currentState().warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && warning.code !== 'evidence-gap');
     if (!records.length) return null;
     const notice = h('section', 'notice warning active-warning-summary', h('div', 'inline between', h('div', '', h('strong', '', `${records.length} ${records.length === 1 ? 'notice' : 'notices'} to check`), h('p', '', humanMessage(records[0].message))), h('div', 'inline', button('View details', () => nav('activity'), 'quiet small'), button('Dismiss all', () => run('dismiss-warnings', undefined, 'Notices dismissed.'), 'quiet small'))));
     notice.setAttribute('aria-label', 'Needs attention');
@@ -306,14 +326,21 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queueStrip() {
     const q = currentState().queue;
     if (q.status === 'idle' && !q.total) return null;
-    const percent = q.total ? Math.min(100, (q.completed + q.failed) / q.total * 100) : 0;
+    const progress = q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
+    const percent = progress.total ? Math.min(100, progress.completed / progress.total * 100) : 0;
     const fill = h('span');
     fill.style.width = `${percent}%`;
     return h('div', 'run-strip',
-      h('div', 'inline between', h('div', '', h('strong', '', q.status === 'running' ? 'Analyzing papers' : q.status === 'paused' ? 'Analysis paused' : 'Analysis complete'), h('span', 'muted', ` · ${q.completed} of ${q.total} completed${q.failed ? ` · ${q.failed} need attention` : ''}`)),
+      h('div', 'inline between', h('div', '', h('strong', '', queuePhaseLabel()), h('span', 'muted', ` · ${q.phaseProgress ? `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}` : `${q.completed} of ${q.total} papers read`}`)),
         h('div', 'inline', q.status === 'running' ? button('Pause', () => run('pause'), 'small') : q.status === 'paused' ? button('Resume', () => run('resume'), 'small') : null, button('View activity', () => nav('activity'), 'quiet small'))),
       q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'progress-bar', fill));
+  }
+  function queuePhaseLabel() {
+    const q = currentState().queue;
+    if (q.status === 'paused') return 'Analysis paused';
+    const labels = { reading: 'Reading papers', organizing: 'Organizing tags', checking: 'Checking tag meanings', ready: 'Ready for review' };
+    return q.phase ? labels[q.phase] : q.status === 'running' ? 'Analyzing papers' : 'Analysis complete';
   }
 
   function renderOverview() {
@@ -506,6 +533,98 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return h('div', `tag-workspace ${editorTag ? 'has-editor' : ''}`, header, tabs, note, h('div', 'tag-workspace-columns', content, tagEditor()));
   }
 
+  function renderExistingTags() {
+    const existing = currentState().existingTags;
+    const sourceRows = existing?.rows || [];
+    const rows = sourceRows.filter(row => (existingTagFilter === 'all' || row.status === existingTagFilter)
+      && (!existingTagQuery || `${row.name} ${row.meaning || ''} ${row.targetNames.join(' ')}`.toLocaleLowerCase().includes(existingTagQuery.toLocaleLowerCase()))
+      && (existingTagFacet === 'all' || row.facet === existingTagFacet || row.targetNames.some(name => currentState().tags.some(tag => tag.name === name && tag.facet === existingTagFacet))));
+    const selected = sourceRows.filter(row => selectedExistingTags.has(row.id));
+    const replacementPapers = (row: typeof sourceRows[number]) => row.assignments?.filter(assignment => {
+      const key = `${row.id}:${assignment.paperId}`;
+      return (!assignment.conflict || overriddenExistingPapers.has(key)) && (assignment.status === 'match' || selectedExistingPapers.has(key) && existingPaperTargets.has(key));
+    }).map(assignment => assignment.paperId);
+    const removalPapers = (row: typeof sourceRows[number]) => row.assignments?.filter(assignment => !assignment.conflict || overriddenExistingPapers.has(`${row.id}:${assignment.paperId}`)).map(assignment => assignment.paperId);
+    const canReplace = (row: typeof sourceRows[number]) => row.assignments ? !!replacementPapers(row)?.length : !!row.targetNames.length && (row.status !== 'choice' || !!existingTagTargets.get(row.id));
+    const selection = (row: typeof sourceRows[number]) => {
+      const targetId = existingTagTargets.get(row.id);
+      const base = { groupId: row.id, action: existingTagAction, ...(existingTagAction === 'replace' && targetId ? { targetId } : {}) };
+      if (existingTagAction === 'keep' || !row.assignments) return base;
+      const paperIds = (existingTagAction === 'remove' ? removalPapers(row) : replacementPapers(row)) || [];
+      const included = new Set(paperIds);
+      const paperTargets = row.assignments.flatMap(assignment => {
+        const key = `${row.id}:${assignment.paperId}`, target = existingTagAction === 'replace' ? existingPaperTargets.get(key) : undefined;
+        if (!included.has(assignment.paperId) || (!overriddenExistingPapers.has(key) && !(selectedExistingPapers.has(key) && target))) return [];
+        return [{ paperId: assignment.paperId, targetIds: existingTagAction === 'remove' ? [] : target ? [target] : assignment.targetIds, ...(overriddenExistingPapers.has(key) ? { overrideConflicts: true } : {}) }];
+      });
+      return { ...base, paperIds, paperTargets };
+    };
+    const running = existing?.status === 'running' || existing?.status === 'queued';
+    existingTagPage = Math.min(existingTagPage, Math.max(0, Math.ceil(rows.length / 30) - 1));
+    const visible = rows.slice(existingTagPage * 30, (existingTagPage + 1) * 30);
+    const toolbar = h('div', 'toolbar', input('existing-tag-search', existingTagQuery, value => { existingTagQuery = value;existingTagPage = 0;render(); }, 'Search existing names and meanings…', 'search'), select('existing-tag-status', existingTagFilter, [['all', 'All existing tags'], ['match', 'Matched to Smart Tags'], ['choice', 'Needs your choice'], ['unmatched', 'Other tags']], value => { existingTagFilter = value;existingTagPage = 0;render(); }, 'Existing tag group'), select('existing-tag-category', existingTagFacet, [['all', 'All categories'], ...facets.map(facet => [facet, facetNames[facet]] as [string,string])], value => { existingTagFacet = value;existingTagPage = 0;render(); }, 'Existing tag category'));
+    const controls = h('div', 'inline', button('Read library tags', () => run('refresh-existing-tags', {}, 'Existing tags refreshed.'), '', running), button('Analyze selected names', () => run('analyze-existing-tags', { groupIds: selected.map(row => row.id) }, 'Checking selected tag meanings.'), '', !selected.length || running || !canAnalyze() || !existing?.applied), button('Create DIY tags…', () => { modalPage = 0;modal = { kind: 'create-diy', ids: selected.map(row => row.id) };render(); }, '', !selected.length || running));
+    const bulk = h('div', 'notice inline between', h('span', '', `${selected.length} selected · ${rows.length} shown`), h('div', 'inline', button('Select this page', () => { for (const row of visible) selectedExistingTags.add(row.id);render(); }, 'quiet'), button('Clear selection', () => { selectedExistingTags.clear();render(); }, 'quiet')));
+    const actions = h('div', 'toolbar', select('existing-tag-action', existingTagAction, [['replace', 'Use matched Smart Tags name'], ['remove', 'Remove from papers'], ['keep', 'Keep as it is']], value => { existingTagAction = value;render(); }, 'Action for selected existing tags'), button('Review paper changes', () => run('preview-existing-tag-changes', { selections: selected.map(selection) }), 'primary', !selected.length || running || (existingTagAction === 'replace' && selected.some(row => !canReplace(row))) || (existingTagAction === 'remove' && selected.some(row => row.assignments && !removalPapers(row)?.length))));
+    const list = h('section', 'card existing-tags-list');
+    if (!existing) list.append(empty('Start with the tags already in your library', 'Read their names and counts first. Analysis and any paper changes remain separate steps.', button('Read library tags', () => run('refresh-existing-tags', {}), 'primary')));
+    else if (!rows.length) list.append(empty('No matching tags', 'Try another search or group.'));
+    for (const row of visible) {
+      const status = row.status === 'match' ? 'Matched' : row.status === 'choice' ? 'Needs your choice' : 'Other tag';
+      const targetChoices = currentState().tags.filter(tag => row.targetNames.includes(tag.name)).map(tag => [tag.id, tag.name] as [string,string]);
+      const article = h('article', 'existing-tag-row', checkbox(`existing-${row.id}`, selectedExistingTags.has(row.id), row.name, checked => { checked ? selectedExistingTags.add(row.id) : selectedExistingTags.delete(row.id);render(); }), h('div', 'inline', badge(status), h('span', 'muted', `${row.affectedCount} papers · ${row.manualCount} manual`)), row.meaning ? h('p', '', `${row.meaningInferred ? 'Inferred meaning' : 'Meaning'}: ${row.meaning}`) : null, row.targetNames.length ? h('p', '', `Smart Tags: ${row.targetNames.join(', ')}`) : null, row.status === 'choice' && !row.assignments && targetChoices.length ? select(`existing-target-${row.id}`, existingTagTargets.get(row.id) || '', [['', 'Choose a matching tag'], ...targetChoices], value => { existingTagTargets.set(row.id, value);render(); }, `Matching tag for ${row.name}`) : null, h('p', 'card-description', row.diyQuestion || row.reason));
+      if (row.assignments?.length && (row.status !== 'match' || row.assignments.some(assignment => assignment.conflict))) {
+        article.append(button(`${expandedExistingGroups.has(row.id) ? 'Hide' : 'Review'} paper matches`, () => { expandedExistingGroups.has(row.id) ? expandedExistingGroups.delete(row.id) : expandedExistingGroups.add(row.id);render(); }, 'small'));
+        const paperPage = Math.min(existingPaperPages.get(row.id) || 0, Math.max(0, Math.ceil(row.assignments.length / 30) - 1));
+        if (expandedExistingGroups.has(row.id)) for (const assignment of row.assignments.slice(paperPage * 30, (paperPage + 1) * 30)) {
+          const key = `${row.id}:${assignment.paperId}`;
+          const choices = currentState().tags.filter(tag => tag.status === 'approved').map(tag => [tag.id, tag.name] as [string,string]);
+          article.append(h('div', 'existing-paper-choice', paperButton(assignment.paperId), assignment.meaning ? h('p', '', `Inferred meaning: ${assignment.meaning}`) : null, h('p', 'card-description', assignment.status === 'match' ? `Matched: ${assignment.targetNames.join(', ')}` : assignment.reason), assignment.status !== 'match' ? h('div', 'toolbar', checkbox(`existing-paper-${row.id}-${assignment.paperId}`, selectedExistingPapers.has(key), 'Use my selected match', checked => { checked ? selectedExistingPapers.add(key) : selectedExistingPapers.delete(key);render(); }), select(`existing-paper-target-${row.id}-${assignment.paperId}`, existingPaperTargets.get(key) || '', [['', 'Leave unchanged'], ...choices], value => { value ? existingPaperTargets.set(key, value) : existingPaperTargets.delete(key);render(); }, `Matching tag for ${paperTitle(assignment.paperId)}`)) : null, assignment.conflict ? h('div', 'section-gap', h('p', 'card-description', 'An earlier manual choice protects this paper. It stays unchanged unless you replace that choice.'), checkbox(`existing-override-${row.id}-${assignment.paperId}`, overriddenExistingPapers.has(key), 'Replace my earlier choice for this paper', checked => { checked ? overriddenExistingPapers.add(key) : overriddenExistingPapers.delete(key);render(); })) : null));
+        }
+        if (expandedExistingGroups.has(row.id)) article.append(pagination(row.assignments.length, paperPage, next => { existingPaperPages.set(row.id, next); }, 30, `paper matches for ${row.name}`));
+      }
+      list.append(article);
+    }
+    const preview = existing?.preview;
+    let review: HTMLElement | null = null;
+    if (preview) {
+      const changes = h('div', 'native-change-preview');
+      existingPreviewPage = Math.min(existingPreviewPage, Math.max(0, Math.ceil(preview.changes.length / 50) - 1));
+      for (const change of preview.changes.slice(existingPreviewPage * 50, (existingPreviewPage + 1) * 50)) changes.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
+      changes.append(pagination(preview.changes.length, existingPreviewPage, next => { existingPreviewPage = next; }, 50, 'paper changes'));
+      review = card('Review paper tag changes', preview.changes.length ? `${preview.changes.length} papers. These changes include any existing manual tags shown below.` : 'The selected choices leave paper tags unchanged.', changes, button(preview.changes.length ? 'Apply reviewed tag changes' : 'Confirm reviewed choices', async () => { await run('apply-existing-tag-changes', { previewId: preview.id }, 'Reviewed choices saved.');selectedExistingTags.clear();render(); }, 'primary'));
+    }
+    return h('div', 'stack', toolbar, controls, existing?.message ? h('p', 'card-description', humanMessage(existing.message)) : null, bulk, actions, list, pagination(rows.length, existingTagPage, next => { existingTagPage = next; }, 30, 'existing tags'), review);
+  }
+
+  function paperAttention() {
+    const attention = currentState().paperAttention;
+    if (!attention) return empty('No papers need attention', 'Papers with missing information or failed analysis will appear here.');
+    const all = [...new Map(attention.papers.map(paper => [paper.id, paper])).values()];
+    const papers = all.filter(paper => (attentionFilter === 'all' || (attentionFilter === 'attention' ? paper.status === 'needsInformation' || paper.status === 'failed' : paper.status === attentionFilter))
+      && (!attentionQuery || paper.title.toLocaleLowerCase().includes(attentionQuery.toLocaleLowerCase())));
+    attentionPage = Math.min(attentionPage, Math.max(0, Math.ceil(papers.length / 25) - 1));
+    const visible = papers.slice(attentionPage * 25, (attentionPage + 1) * 25);
+    const selected = all.filter(paper => selectedAttentionPapers.has(paper.id));
+    const list = h('div', 'paper-attention-list');
+    list.append(h('div', 'toolbar', input('attention-search', attentionQuery, value => { attentionQuery = value;attentionPage = 0;render(); }, 'Find a paper…', 'search'), select('attention-status', attentionFilter, [['attention', 'Needs attention'], ['all', 'All checked papers'], ['usable', 'Ready to use'], ['needsInformation', 'Needs information'], ['failed', 'Analysis failed'], ['skipped', 'Skipped']], value => { attentionFilter = value;attentionPage = 0;render(); }, 'Paper information status')));
+    list.append(h('div', 'actions', button('Select this page', () => { for (const paper of visible) selectedAttentionPapers.add(paper.id);render(); }), button('Clear selection', () => { selectedAttentionPapers.clear();render(); }, 'quiet'), button('Retry selected', () => run('retry-papers', { ids: selected.filter(paper => paper.canRetry).map(paper => paper.id) }, 'Selected papers queued.'), '', !selected.some(paper => paper.canRetry)), button('Skip selected for this build', () => run('skip-paper-analysis', { ids: selected.filter(paper => paper.canSkip).map(paper => paper.id) }, 'Selected papers skipped for this build.'), 'quiet', !selected.some(paper => paper.canSkip))));
+    if (!papers.length) list.append(empty('No papers in this view', 'Completed papers remain available in your library.'));
+    const labels = { usable: 'Ready to use', needsInformation: 'Needs information', failed: 'Analysis failed', skipped: 'Skipped for this build' };
+    for (const paper of visible) list.append(h('article', 'paper-attention-row', checkbox(`attention-${paper.id}`, selectedAttentionPapers.has(paper.id), paper.title, checked => { checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); }), h('div', 'inline', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message)), h('div', 'actions', button('Open in Zotero', () => openPaper(paper.id), 'small'), paper.canLookupMetadata ? button('Find metadata', () => { metadataIdentifier = '';return run('preview-metadata', { id: paper.id }); }, 'small') : null, paper.canRecheck ? button('Recheck PDF', () => run('recheck-paper-inputs', { id: paper.id }, 'Local paper information checked.'), 'small') : null, paper.canRetry ? button('Retry analysis', () => run('retry-papers', { ids: [paper.id] }, 'Paper queued.'), 'small') : null, paper.canSkip ? button('Skip for this build', () => run('skip-paper-analysis', { ids: [paper.id] }, 'Paper skipped for this build.'), 'small quiet') : null)));
+    list.append(pagination(papers.length, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
+    return list;
+  }
+
+  function metadataReview() {
+    const preview = currentState().metadataPreview;
+    if (!preview) return null;
+    const body = h('div', '', h('p', '', humanMessage(preview.message)), h('div', 'toolbar', input('metadata-identifier', metadataIdentifier, value => { metadataIdentifier = value;render(); }, 'DOI or other supported identifier'), button('Find with identifier', () => run('preview-metadata', { id: preview.paperId, identifier: metadataIdentifier.trim() }), '', !metadataIdentifier.trim())));
+    const names: Record<string,string> = { abstractNote: 'Abstract', publicationTitle: 'Publication', title: 'Title', date: 'Date', DOI: 'DOI' };
+    for (const change of preview.changes) body.append(h('div', 'metadata-change', h('strong', '', names[change.field] || change.field), h('p', '', `Before: ${change.before || 'Empty'}`), h('p', '', `After: ${change.after}`)));
+    return card('Review missing metadata', 'Only empty fields are filled. Existing information stays under your control.', body, button('Apply metadata', () => run('apply-metadata', { previewId: preview.id }, 'Missing metadata filled.'), 'primary', !preview.changes.length));
+  }
+
   function suggestionCard(suggestion: DisplaySuggestion) {
     const tag = tagById(suggestion.tagId);
     const check = h('input');
@@ -524,26 +643,6 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       button(suggestion.locked ? 'Unlock assignment' : 'Lock assignment', () => run(suggestion.locked ? 'unlock-assignment' : 'lock-assignment', { paperId: suggestion.paperId, tagId: suggestion.tagId }, suggestion.locked ? 'Assignment unlocked.' : 'Assignment locked.'), 'small quiet')));
     return h('article', 'paper-card suggestion', check, body);
   }
-  function cleanupSection() {
-    const cleanup = currentState().cleanup;
-    const body = h('div', '');
-    if (!cleanup.length) body.append(empty('No older tag duplicates found', 'You can look for duplicate names in Settings. Any paper changes are shown before applying them.'));
-    else {
-      const table = h('table');
-      table.append(h('thead', '', h('tr', '', h('th', '', ''), h('th', '', 'Existing tag → proposed tag'), h('th', '', 'Affected papers'), h('th', '', 'Manually tagged'), h('th', '', 'Reason'))));
-      const tbody = h('tbody');
-      for (const item of cleanup) {
-        const check = h('input');
-        check.type = 'checkbox'; check.checked = selectedCleanup.has(item.id); check.disabled = busy;
-        check.setAttribute('aria-label', `Select merge ${item.from} to ${item.to}`);
-        check.addEventListener('change', () => { check.checked ? selectedCleanup.add(item.id) : selectedCleanup.delete(item.id); render(); });
-        tbody.append(h('tr', '', h('td', '', check), h('td', '', h('strong', '', item.from), ' → ', h('strong', '', item.to)), h('td', '', String(item.affectedCount)), h('td', '', item.manualCount ? badge(String(item.manualCount), 'draft') : '0'), h('td', '', item.reason)));
-      }
-      table.append(tbody);
-      body.append(h('div', 'table-wrap', table));
-    }
-    return h('section', 'card section-gap', h('div', 'card-header', h('div', '', h('h2', '', 'Existing-tag cleanup'), h('p', 'card-description', 'Merges can affect manually assigned tags. Review the specific changes before applying.')), button('Find cleanup proposals', () => run('preview-cleanup', undefined, 'Cleanup proposals refreshed. Select the replacements you want to review.'))), body, cleanup.length ? h('div', 'card-footer', button('Review selected cleanup', async () => { const ids = [...selectedCleanup]; await run('preview-cleanup', { ids }); modal = { kind: 'cleanup', ids }; render(); }, 'primary', !selectedCleanup.size)) : null);
-  }
   function renderReview() {
     const s = currentState();
     const suggestions = relevantSuggestions();
@@ -559,7 +658,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const list = h('section', 'card');
     if (!suggestions.length) list.append(empty(s.queue.status === 'running' ? 'Preparing paper suggestions…' : 'No paper suggestions here yet', s.queue.status === 'running' ? 'Your tag list is ready. Paper matches will appear here as they finish.' : 'Apply your tag list or choose another paper view.', button('Go to Overview', () => nav('overview'), 'quiet')));
     for (const suggestion of visible) list.append(suggestionCard(suggestion));
-    return h('div', 'stack', toolbar, actions, list, pagination(suggestions.length, reviewPage, next => { reviewPage = next; }), cleanupSection());
+    return h('div', 'stack', toolbar, actions, list, pagination(suggestions.length, reviewPage, next => { reviewPage = next; }));
   }
 
   function matchingPaperIds(filter: ConceptFilter): Set<string> {
@@ -685,19 +784,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const q = s.queue;
     const number = (value?: number) => value === undefined ? '—' : `$${value.toFixed(4)}`;
     const runProvider = q.provider || s.settings.provider;
-    const progress = h('div', '', h('div', 'inline between', badge(q.status, q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} completed · ${q.failed} need attention · ${q.total} total`)), q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
+    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? `Estimated cost so far: ${number(q.spentUSD)} · estimated total: ${number(q.estimatedUSD)}. Requests stay within your chosen spending limit.` : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('vocabulary'), 'small')));
-    const jobs = h('div', '');
-    if (!q.jobs?.length) jobs.append(empty('No queued work', 'Start an analysis from Overview. Completed results are cached for later runs.'));
-    else {
-      const table = h('table', '', h('thead', '', h('tr', '', h('th', '', 'Paper'), h('th', '', 'Status'), h('th', '', 'Details'))));
-      const tbody = h('tbody');
-      for (const job of q.jobs.slice(0, 150)) tbody.append(h('tr', '', h('td', '', job.title || 'Paper'), h('td', '', badge(job.status)), h('td', '', job.error ? humanMessage(job.error) : '')));
-      table.append(tbody); jobs.append(h('div', 'table-wrap', table));
-      if (q.jobs.length > 150) jobs.append(h('div', 'notice', 'Showing the first 150 jobs. Counts above include the full queue.'));
-    }
     const history = h('div', '');
     if (!s.history.length) history.append(empty('No applied changes yet', 'Approved tag assignments and cleanup batches will appear here with their undo status.'));
     else {
@@ -709,9 +799,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
       table.append(tbody); history.append(h('div', 'table-wrap', table));
     }
-    const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy);
+    const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && warning.code !== 'evidence-gap');
     const notices = active.length ? card('Needs attention', '', h('div', '', ...active.map(warning => warningEntry(warning, true)))) : null;
-    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, h('section', 'card', h('div', 'card-header', h('h2', '', 'Papers')), jobs), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    return h('div', 'stack', card('Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress), notices, card('Papers that need attention', s.paperAttention ? `${s.paperAttention.queued} papers queued. Each paper appears once.` : '', paperAttention()), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
   function renderSettings() {
@@ -783,8 +873,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const vocabulary = h('div', '', numberField('coreConceptLimit', 'Preferred number of tags', '60 is a starting point. Distinct topics can stay separate when more tags are useful.', '1'));
     const transfers = h('details', 'section-gap', h('summary', '', 'Import, export, and previous tag lists'), h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null);
     for (const archive of s.taxonomyArchives || []) transfers.append(h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')));
-    transfers.append(h('div', 'actions', button('Find older tag duplicates', async () => { await run('preview-cleanup', undefined, 'Older tag duplicates checked.');nav('review'); })));
-    return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), card('Automatic assignment', 'Use your tag list for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')), transfers);
+    transfers.append(h('div', 'actions', button('Manage existing tags', () => nav('existing-tags'))));
+    const navigationLabels = { starting: 'Starting', ready: 'Available', hidden: 'Sidebar hidden', unavailable: 'Unavailable in this window' };
+    const navigation = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('p', '', `Library navigation: ${s.navigation ? navigationLabels[s.navigation.status] : 'Open Zotero to check'}`), s.navigation?.message ? h('p', 'card-description', humanMessage(s.navigation.message)) : null, h('div', 'actions', button('Show tag navigation', () => run('show-tag-navigation')), button('Restore navigation', () => run('show-tag-navigation', { restore: true })), button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
+    return h('div', 'stack', card('Smart Tags in Zotero', 'Use Smart Tags or Collections in Zotero’s left library pane.', navigation), h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), card('Automatic assignment', 'Use your tag list for new papers.', automatic), h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved')), transfers);
   }
   async function saveSettings() {
     if (!settingsDraft) return;
@@ -816,17 +908,19 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       for (const item of suggestions.slice(modalPage * PAGE_SIZE, (modalPage + 1) * PAGE_SIZE)) tbody.append(h('tr', '', h('td', '', paperTitle(item.paperId)), h('td', '', badge(item.operation === 'remove' ? 'Remove' : 'Add', item.operation === 'remove' ? 'removal' : 'approved')), h('td', '', h('strong', '', tagName(item.tagId))), h('td', '', item.evidence[0]?.text || 'Review manually')));
       table.append(tbody); body.append(h('div', 'table-wrap', table), pagination(suggestions.length, modalPage, next => { modalPage = next; }));
       apply = async () => { await run('apply-suggestions', { ids: active.ids }, 'Reviewed tag assignments applied.'); selectedSuggestions.clear(); modal = null; render(); };
-    } else if (active.kind === 'cleanup') {
-      const changes = currentState().cleanup.filter(item => active.ids.includes(item.id));
-      title = 'Review existing-tag cleanup';
-      applyLabel = `Apply ${changes.length} reviewed merges`;
-      const manualCount = changes.reduce((total, item) => total + item.manualCount, 0);
-      body.append(h('div', `notice ${manualCount ? 'warning' : ''}`, manualCount ? `These merges affect ${manualCount} manually tagged item assignments. Applying explicitly approves the displayed replacements.` : 'These replacements will be recorded in change history with undo.'));
-      const table = h('table', 'section-gap', h('thead', '', h('tr', '', h('th', '', 'Replace'), h('th', '', 'With'), h('th', '', 'Papers'), h('th', '', 'Manual assignments'))));
-      const tbody = h('tbody');
-      for (const item of changes) tbody.append(h('tr', '', h('td', '', item.from), h('td', '', item.to), h('td', '', String(item.affectedCount)), h('td', '', String(item.manualCount))));
-      table.append(tbody); body.append(h('div', 'table-wrap', table));
-      apply = async () => { await run('apply-cleanup', { ids: active.ids }, 'Reviewed cleanup applied.'); selectedCleanup.clear(); modal = null; render(); };
+    } else if (active.kind === 'create-diy') {
+      title = 'Create DIY tags';
+      applyLabel = 'Analyze and create DIY tags';
+      body.append(h('p', '', 'The selected names and supporting paper information will be analyzed through your chosen connection. This uses your ChatGPT allowance or API budget. Clear meanings become available automatically; unresolved choices appear for review.'));
+      modalPage = Math.min(modalPage, Math.max(0, Math.ceil(active.ids.length / 25) - 1));
+      for (const id of active.ids.slice(modalPage * 25, (modalPage + 1) * 25)) {
+        const row = currentState().existingTags?.rows.find(row => row.id === id);
+        if (!row) continue;
+        const draft = existingDIYDrafts.get(id) || { name: row.name, description: '' };existingDIYDrafts.set(id, draft);
+        body.append(h('div', 'section-gap', field('Tag name', input(`diy-name-${id}`, draft.name, value => { draft.name = value; })), field('Meaning (optional)', textarea(`diy-meaning-${id}`, draft.description, value => { draft.description = value; }, row.diyQuestion || 'Add a meaning if this name could refer to several topics.'))));
+      }
+      body.append(pagination(active.ids.length, modalPage, next => { modalPage = next; }, 25, 'DIY names'));
+      apply = async () => { await run('create-diy-from-existing', { groupIds: active.ids, choices: active.ids.map(groupId => ({ groupId, ...(existingDIYDrafts.get(groupId) || { name: currentState().existingTags?.rows.find(row => row.id === groupId)?.name, description: '' }) })) }, 'DIY tag meanings are being checked.');modal = null;render(); };
     } else {
       title = 'Save a Zotero tag search';
       applyLabel = 'Create saved search';
@@ -873,7 +967,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     navigation.setAttribute('aria-label', 'Library pages');
     const utilities = h('nav', 'nav');
     utilities.setAttribute('aria-label', 'Library tools');
-    const navItems: [ManagerPage, number?][] = [['overview'], ['vocabulary', workingTags().length], ['review', s.suggestions.filter(item => item.status === 'pending' && !item.applied).length], ['library'], ['activity'], ['settings']];
+    const navItems: [ManagerPage, number?][] = [['overview'], ['vocabulary', workingTags().length], ['existing-tags'], ['review', s.suggestions.filter(item => item.status === 'pending' && !item.applied).length], ['library'], ['activity'], ['settings']];
     for (const [target, count] of navItems) {
       const navButton = button('', () => nav(target), `nav-button ${page === target ? 'active' : ''}`);
       navButton.id = `nav-${target}`;
@@ -904,7 +998,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const warnings = activeWarnings();
     if (warnings) workspace.append(warnings);
-    const contents = page === 'overview' ? renderOverview() : page === 'vocabulary' ? renderVocabulary() : page === 'review' ? renderReview() : page === 'library' ? renderLibrary() : page === 'activity' ? renderActivity() : renderSettings();
+    const contents = page === 'overview' ? renderOverview() : page === 'vocabulary' ? renderVocabulary() : page === 'existing-tags' ? renderExistingTags() : page === 'review' ? renderReview() : page === 'library' ? renderLibrary() : page === 'activity' ? renderActivity() : renderSettings();
     workspace.append(contents);
     const shell = h('div', 'shell', sidebar, h('div', 'workspace-frame', topbar, workspace));
     if (toast) {

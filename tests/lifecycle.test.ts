@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { initialState } from '../src/controller.ts';
 
-async function bundleMain(disposeGate = false, mockUI = false) {
+async function bundleMain(disposeGate = false, mockUI = false, mockNavigator = false) {
   const result = await build({
     entryPoints: ['src/main.ts'], bundle: true, write: false, format: 'iife',
     globalName: 'SmartTags', target: 'firefox140', platform: 'browser',
@@ -30,11 +30,23 @@ async function bundleMain(disposeGate = false, mockUI = false) {
       name: 'observe-manager-mount',
       setup(plugin: any) {
         plugin.onLoad({ filter: /[/\\]ui\.ts$/ }, () => ({ loader: 'ts', contents: `
-          export function mountManager() {
+          export function mountManager(_win, api) {
             const observer = (globalThis as any).__lifecycleUI;
+            observer.api = api;
             observer.mounts++;
             if (observer.fail) throw new Error('A deliberate manager mount failure');
             return {refresh: async () => {}, destroy() {observer.destroys++;}};
+          }
+        ` }));
+      },
+    }] : []), ...(mockNavigator ? [{
+      name: 'observe-native-navigation',
+      setup(plugin: any) {
+        plugin.onLoad({ filter: /[/\\]navigator\.ts$/ }, () => ({ loader: 'ts', contents: `
+          export function navigatorReady(win) { return !!win.document.getElementById?.('zotero-collections-pane') && !!win.ZoteroPane?.itemsView && !!win.ZoteroPane?.collectionsView; }
+          export function mountNavigator() {
+            const observer = (globalThis as any).__lifecycleUI;observer.navMounts++;
+            let mode = 'collections';return {available:true,message:'',get mode(){return mode;},refresh:async()=>{},setMode:async value=>{mode=value;},destroy:async()=>{observer.navDestroys++;}};
           }
         ` }));
       },
@@ -199,9 +211,15 @@ function runNextTimer(timers: Map<number, () => void>) {
   timers.delete(next[0]); next[1]();
 }
 
+async function startNative(native: ReturnType<typeof nativeHarness>) {
+  await native.app.startup(startup);
+  // Most lifecycle fixtures have no sidebar; finish its independent bounded wait.
+  for (let attempt = 0; attempt < 200 && native.timers.size; attempt++) runNextTimer(native.timers);
+}
+
 test('native startup registers UI and notifier, persists only plugin state, and makes no AI or library writes', async () => {
   const native = nativeHarness(await normalBundle);
-  await native.app.startup(startup);
+  await startNative(native);
   assert.deepEqual([...native.menus.keys()], ['smart-tags-tools', 'smart-tags-items', 'smart-tags-collections']);
   assert.equal(native.sections.size, 0, "right item and information panes stay unchanged");
   assert.equal(native.observers.size, 1);
@@ -210,7 +228,7 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
   const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, 4);
+  assert.equal(state.schemaVersion, 5);
   assert.deepEqual(state.warnings, []);
   assert.equal(state.settings.autoAssign, false);
   assert.equal(state.run, null);
@@ -236,17 +254,17 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
   delete old.evidenceCatalog;delete old.taxonomyEvidence;
   const original = `${JSON.stringify(old, null, 3)}\r\n`;
   const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v4.json`;
+  const occupiedBackup = `${statePath}.pre-v5.json`;
   native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
   native.files.set(occupiedBackup, 'An older immutable migration backup.');
-  await native.app.startup(startup);
+  await startNative(native);
   try {
     const migrated = JSON.parse(native.files.get(statePath)!);
-    assert.equal(migrated.schemaVersion, 4);assert.equal(migrated.vocabularyVersion, 7);
+    assert.equal(migrated.schemaVersion, 5);assert.equal(migrated.vocabularyVersion, 7);
     assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
     assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v4.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v4.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v5.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v5.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
     assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
     assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
     assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
@@ -261,10 +279,10 @@ test('native backup recovery records an active warning without restoring legacy 
   const backup = initialState();backup.vocabularyVersion = 4;
   const statePath = '/test-profile/smart-tags/state.json';
   native.files.set(statePath, '{invalid json');native.files.set(`${statePath}.bak`, JSON.stringify(backup));
-  await native.app.startup(startup);
+  await startNative(native);
   try {
     const restored = JSON.parse(native.files.get(statePath)!);
-    assert.equal(restored.schemaVersion, 4);assert.equal(restored.vocabularyVersion, 4);
+    assert.equal(restored.schemaVersion, 5);assert.equal(restored.vocabularyVersion, 4);
     assert.ok(restored.warnings.some((warning: any) => warning.status === 'active' && /restored.*previous valid state/i.test(warning.message)));
     assert.ok(restored.warnings.every((warning: unknown) => warning && typeof warning === 'object'));
     assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
@@ -273,7 +291,7 @@ test('native backup recovery records an active warning without restoring legacy 
 
 test('native collection menus use Zotero 10 plural context without registering item-pane sections', async () => {
   const native = nativeHarness(await normalBundle);
-  await native.app.startup(startup);
+  await startNative(native);
   try {
     let visible: boolean | undefined, enabled: boolean | undefined;
     const menu = native.menus.get('smart-tags-collections').menus[0];
@@ -293,7 +311,7 @@ test('native collection menus use Zotero 10 plural context without registering i
 
 test('shutdown clears debounced item work before it can analyze a paper', async () => {
   const native = nativeHarness(await normalBundle);
-  await native.app.startup(startup);
+  await startNative(native);
   const observer = native.observers.get('smart-tags').observer;
   await observer.notify('modify', 'item', [42]);
   assert.equal(native.timers.size, 1);
@@ -311,7 +329,7 @@ test('main shutdown awaits asynchronous provider disposal before waiting on cont
   const gate = new Promise<void>(resolve => { release = resolve; });
   const atDispose = new Promise<void>(resolve => { entered = resolve; });
   const native = nativeHarness(await bundleMain(true), { disposeGate: () => { entered(); return gate; } });
-  await native.app.startup(startup);
+  await startNative(native);
   const app = native.Zotero.SmartTags.controller;
   const originalShutdown = app.shutdown.bind(app);
   let controllerStarted = false, finished = false;
@@ -344,7 +362,7 @@ test('manager polling mounts once when native load events were missed and clears
   const dialog = managerDialog();
   const ui = { mounts: 0, destroys: 0, fail: false };
   const native = nativeHarness(await bundleMain(false, true), { manager: dialog.win, ui });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   assert.equal(ui.mounts, 0);
   assert.equal(native.timers.size, 1);
@@ -363,7 +381,7 @@ test('manager mount failures replace the opening placeholder with an actionable 
   const dialog = managerDialog(); dialog.ready();
   const ui = { mounts: 0, destroys: 0, fail: true };
   const native = nativeHarness(await bundleMain(false, true), { manager: dialog.win, ui });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   assert.equal(ui.mounts, 1);
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'error');
@@ -379,7 +397,7 @@ test('closing the manager before its document is ready cancels pending polling',
   const dialog = managerDialog();
   const ui = { mounts: 0, destroys: 0, fail: false };
   const native = nativeHarness(await bundleMain(false, true), { manager: dialog.win, ui });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   assert.equal(native.timers.size, 1);
   dialog.win.close();
@@ -392,7 +410,7 @@ test('closing the manager before its document is ready cancels pending polling',
 test('the real manager renders in an XML chrome document using explicit HTML namespaces', async () => {
   const dialog = managerDialog(); dialog.ready();
   const native = nativeHarness(await normalBundle, { manager: dialog.win });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready', dialog.app!.textContent);
@@ -406,7 +424,7 @@ test('the real manager renders in an XML chrome document using explicit HTML nam
 test('a failed first snapshot shows a retryable error instead of keeping the opening placeholder', async () => {
   const dialog = managerDialog(); dialog.ready();
   const native = nativeHarness(await normalBundle, { manager: dialog.win });
-  await native.app.startup(startup);
+  await startNative(native);
   const controller = native.Zotero.SmartTags.controller;
   const originalSnapshot = controller.snapshot.bind(controller);
   controller.snapshot = async () => { throw new Error('Local settings are temporarily unavailable'); };
@@ -429,7 +447,7 @@ test('manager readiness polling is bounded when no app document arrives', async 
   const dialog = managerDialog();
   const ui = { mounts: 0, destroys: 0, fail: false };
   const native = nativeHarness(await bundleMain(false, true), { manager: dialog.win, ui });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   for (let attempt = 0; attempt < 200; attempt++) runNextTimer(native.timers);
   assert.equal(native.timers.size, 0);
@@ -444,7 +462,7 @@ test('final-document loader survives initial about:blank unload and mounts the a
   const final = managerDialog();
   const ui = { mounts: 0, destroys: 0, fail: false };
   const native = nativeHarness(await bundleMain(false, true), { manager: initial.win, ui });
-  await native.app.startup(startup);
+  await startNative(native);
   await native.app.openManager();
   initial.win.dispatch('unload');
   assert.equal(native.timers.size, 1, 'initial about:blank unload must not cancel the parent-owned fallback timer');
@@ -466,4 +484,31 @@ test('final-document loader survives initial about:blank unload and mounts the a
 test('the manager XHTML references its own final-document loader', async () => {
   const markup = await readFile('addon/content/manager.xhtml', 'utf8');
   assert.match(markup, /<script[^>]+src="chrome:\/\/smart-tags\/content\/manager-loader\.js"[^>]+defer="defer"/);
+});
+
+test('late sidebar readiness mounts once and manager controls restore navigation through native commands',async()=>{
+  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false,navMounts:0,navDestroys:0};
+  const native=nativeHarness(await bundleMain(false,true,true),{manager:dialog.win,ui});await native.app.startup(startup);
+  assert.equal(native.Zotero.SmartTags.getNavigator(native.win),undefined);assert.equal(native.timers.size,1);runNextTimer(native.timers);assert.equal(ui.navMounts,0);
+  let collapsed=false,updates=0;const sidebar:any={hidden:false,getAttribute:()=>collapsed?'true':null,removeAttribute(){collapsed=false;}};
+  const nodes:any={'zotero-collections-pane':sidebar,'view-menuitem-collections-pane':{doCommand(){sidebar.hidden=false;collapsed=false;}},menu_addons:{doCommand(){updates++;}}};
+  (native.win.document as any).getElementById=(id:string)=>nodes[id];runNextTimer(native.timers);assert.equal(ui.navMounts,0);
+  (native.win as any).ZoteroPane={itemsView:{},collectionsView:{}};runNextTimer(native.timers);assert.equal(ui.navMounts,1);assert.equal(native.timers.size,0);
+  native.app.onMainWindowLoad(native.win);assert.equal(ui.navMounts,1);await native.app.openManager();
+  let snapshot=await ui.api.snapshot();assert.equal(snapshot.pluginVersion,startup.version);assert.equal(snapshot.navigation.status,'ready');
+  collapsed=true;assert.equal((await ui.api.snapshot()).navigation.status,'hidden');await ui.api.invoke('show-tag-navigation');assert.equal(collapsed,false);assert.equal(native.Zotero.SmartTags.getNavigator(native.win).mode,'tags');
+  const state=JSON.stringify(native.Zotero.SmartTags.controller.state);await ui.api.invoke('show-tag-navigation',{restore:true});assert.equal(ui.navMounts,2);assert.equal(ui.navDestroys,1);assert.equal(JSON.stringify(native.Zotero.SmartTags.controller.state),state);
+  await ui.api.invoke('check-plugin-updates');assert.equal(updates,1);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();assert.equal(ui.navDestroys,2);
+});
+
+test('an open manager switches native controls to a surviving library window only after its original closes',async()=>{
+  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false,navMounts:0,navDestroys:0};
+  const native=nativeHarness(await bundleMain(false,true,true),{manager:dialog.win,ui});await native.app.startup(startup);
+  let firstFocused=0,secondFocused=0,secondUpdates=0;
+  const pane={hidden:false,getAttribute:()=>null};(native.win.document as any).getElementById=(id:string)=>id==='zotero-collections-pane'?pane:null;
+  (native.win as any).ZoteroPane={itemsView:{},collectionsView:{}};(native.win as any).focus=()=>{firstFocused++;};runNextTimer(native.timers);await native.app.openManager();
+  const second:any={closed:false,focus(){secondFocused++;},ZoteroPane:{itemsView:{},collectionsView:{}},document:{getElementById:(id:string)=>id==='zotero-collections-pane'?pane:id==='menu_addons'?{doCommand(){secondUpdates++;}}:null}};
+  native.Zotero.getMainWindow=()=>second;native.app.onMainWindowLoad(second);await ui.api.invoke('show-tag-navigation');assert.equal(firstFocused,1);assert.equal(secondFocused,0);
+  (native.win as any).closed=true;native.app.onMainWindowUnload(native.win);await ui.api.invoke('show-tag-navigation');await ui.api.invoke('check-plugin-updates');
+  assert.equal(firstFocused,1);assert.equal(secondFocused,1);assert.equal(secondUpdates,1);assert.equal((await ui.api.snapshot()).navigation.mode,'tags');assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();
 });

@@ -212,10 +212,10 @@ test('Activity gives the next useful step without repeating tag questions or tec
   const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.ok(h.button('Open tags'));assert.doesNotMatch(h.app.textContent,/registry|private-id|private source text|correctionAttempts/);await h.click('Open tags');assert.ok(h.button('Apply tag list'));
 });
 
-test('private analysis export and optional older-tag cleanup are confined to Settings',async t=>{
+test('private analysis export stays in Settings and existing tags has a dedicated workspace',async t=>{
   const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.button('Export analysis with paper text…'),undefined);
   h.ui.navigate({page:'settings'});h.expand('Import, export, and previous tag lists');assert.match(h.app.textContent,/private export includes paper text and quotations/);await h.click('Export analysis with paper text…');assert.deepEqual(h.actions[0],{action:'export-tag-analysis',payload:{id:'prepared'}});
-  await h.click('Find older tag duplicates');assert.equal(h.actions[1].action,'preview-cleanup');assert.match(h.app.textContent,/Existing-tag cleanup/);
+  await h.click('Manage existing tags');assert.equal(h.actions.length,1);assert.match(h.app.textContent,/Bring useful library tags into Smart Tags/);assert.equal(h.button('Apply reviewed tag changes'),undefined);
 });
 
 test('successful messages expire after four seconds through the same notification lifecycle',async t=>{
@@ -277,4 +277,76 @@ test('a pending ChatGPT sign-in keeps Cancel available while other actions are b
 
 test('action notifications share one final refresh and later external changes remain visible',async t=>{
   const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'vocabulary',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
+});
+
+test('Settings shows the installed version and explicit native navigation/update controls',async t=>{
+  const data=snapshot();data.pluginVersion='0.5.0';data.navigation={status:'hidden',mode:'collections',message:'The library sidebar is hidden.'};
+  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Installed version 0\.5\.0/);assert.match(h.app.textContent,/Library navigation: Sidebar hidden/);
+  await h.click('Show tag navigation');await h.click('Restore navigation');await h.click('Check for updates');
+  assert.deepEqual(h.actions,[{action:'show-tag-navigation',payload:undefined},{action:'show-tag-navigation',payload:{restore:true}},{action:'check-plugin-updates',payload:undefined}]);
+});
+
+test('Existing tags starts unselected, filters and paginates without writing paper tags',async t=>{
+  const data=snapshot();data.existingTags={id:'scan',applied:false,status:'ready',rows:Array.from({length:65},(_,i)=>({id:`group-${i}`,name:`Legacy ${i}`,status:i===0?'match':'unmatched',meaning:'A paper topic',targetNames:i===0?['FC']:[],paperIds:['a'],manualCount:1,affectedCount:1,reason:'Review this name.'}))};
+  const before=structuredClone(data.papers);const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());
+  assert.equal(h.all().filter(node=>node.className==='existing-tag-row').length,30);assert.equal(h.button('Review paper changes').disabled,true);assert.equal(h.doc.getElementById('existing-group-0').checked,false);
+  await h.click('Next existing tags');assert.equal(h.doc.getElementById('existing-group-0'),null);h.choose('existing-tag-status',1);assert.equal(h.all().filter(node=>node.className==='existing-tag-row').length,1);
+  h.change('existing-group-0',true);await h.click('Review paper changes');assert.deepEqual(h.actions,[{action:'preview-existing-tag-changes',payload:{selections:[{groupId:'group-0',action:'replace'}]}}]);assert.deepEqual(data.papers,before);
+  data.existingTags.preview={id:'reviewed-native',changes:[{paperId:'a',title:'Context match',before:['Legacy 0','Manual project'],after:['FC','Manual project']}]};await h.emitUpdate();assert.match(h.app.textContent,/Before: Legacy 0, Manual project/);assert.match(h.app.textContent,/After: FC, Manual project/);
+  await h.click('Apply reviewed tag changes');assert.deepEqual(h.actions.at(-1),{action:'apply-existing-tag-changes',payload:{previewId:'reviewed-native'}});
+});
+
+test('DIY from existing names confirms AI usage and editable names before dispatch',async t=>{
+  const data=snapshot();data.existingTags={id:'scan',applied:false,status:'ready',rows:[{id:'rcl-old',name:'RCL',status:'unmatched',targetNames:[],paperIds:['a'],manualCount:1,affectedCount:1,reason:'Keep a useful research topic.'}]};
+  const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());h.change('existing-rcl-old',true);await h.click('Create DIY tags…');assert.equal(h.actions.length,0);assert.match(h.app.textContent,/uses your ChatGPT allowance or API budget/);
+  h.change('diy-name-rcl-old','RCL');h.change('diy-meaning-rcl-old','Catalyst-layer resistance');await h.click('Analyze and create DIY tags');
+  assert.deepEqual(h.actions,[{action:'create-diy-from-existing',payload:{groupIds:['rcl-old'],choices:[{groupId:'rcl-old',name:'RCL',description:'Catalyst-layer resistance'}]}}]);assert.equal(data.settings.autoAssign,false);
+});
+
+test('mixed existing tag meanings leave uncertain papers unchanged unless a paper-specific target is chosen',async t=>{
+  const data=snapshot();data.existingTags={id:'mixed',applied:false,status:'ready',rows:[{id:'ambiguous',name:'Legacy mixed topic',status:'choice',targetNames:['FC','EIS'],paperIds:['a','b'],manualCount:2,affectedCount:2,reason:'The same name has different meanings.',assignments:[{paperId:'a',status:'match',targetNames:['FC'],targetIds:['fc'],reason:'Fuel cell study.'},{paperId:'b',status:'choice',targetNames:['FC','EIS'],targetIds:['fc','eis'],reason:'Choose the meaning used in this paper.'}]}]};
+  const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());h.change('existing-ambiguous',true);await h.click('Review paper changes');
+  assert.deepEqual(h.actions[0],{action:'preview-existing-tag-changes',payload:{selections:[{groupId:'ambiguous',action:'replace',paperIds:['a'],paperTargets:[]}]}});
+  await h.click('Review paper matches');assert.equal(h.doc.getElementById('existing-paper-ambiguous-b').checked,false);h.change('existing-paper-ambiguous-b',true);h.choose('existing-paper-target-ambiguous-b',3);await h.click('Review paper changes');
+  assert.deepEqual(h.actions[1],{action:'preview-existing-tag-changes',payload:{selections:[{groupId:'ambiguous',action:'replace',paperIds:['a','b'],paperTargets:[{paperId:'b',targetIds:['eis']}]}]}});
+});
+
+test('paper attention deduplicates papers and keeps usable evidence gaps out of global notices',async t=>{
+  const data=snapshot();const paper={id:'a',title:'Needs abstract',status:'needsInformation' as const,message:'Add information before trying again.',phase:'facts',canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:true};
+  data.paperAttention={queued:1,papers:[paper,{...paper}, {...paper,id:'b',title:'Ready paper',status:'usable'}]};data.warnings=[warning('gap',{code:'evidence-gap',message:'Raw evidence gap message'})];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.equal(h.all().filter(node=>node.className==='paper-attention-row').length,1);assert.doesNotMatch(h.app.textContent,/Raw evidence gap message|fact-extraction/);
+  await h.click('Open in Zotero');await h.click('Find metadata');await h.click('Recheck PDF');h.change('attention-a',true);await h.click('Retry selected');await h.click('Skip selected for this build');
+  assert.deepEqual(h.actions,[{action:'show-paper',payload:{id:'a'}},{action:'preview-metadata',payload:{id:'a'}},{action:'recheck-paper-inputs',payload:{id:'a'}},{action:'retry-papers',payload:{ids:['a']}},{action:'skip-paper-analysis',payload:{ids:['a']}}]);
+  h.choose('attention-status',2);assert.equal(h.all().filter(node=>node.className==='paper-attention-row').length,1);assert.match(h.app.textContent,/Ready paper/);
+});
+
+test('existing tag conflicts stay protected until their paper-specific override is selected',async t=>{
+  const data=snapshot();data.existingTags={id:'protected',applied:true,status:'ready',rows:[{id:'locked-group',name:'Locked alias',status:'match',targetNames:['FC'],paperIds:['a'],manualCount:1,affectedCount:1,reason:'Matches FC.',assignments:[{paperId:'a',status:'match',targetNames:['FC'],targetIds:['fc'],reason:'Matches FC.',conflict:true}]}]};
+  const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());h.change('existing-locked-group',true);assert.equal(h.button('Review paper changes').disabled,true);await h.click('Review paper matches');assert.match(h.app.textContent,/earlier manual choice protects this paper/);
+  h.change('existing-override-locked-group-a',true);await h.click('Review paper changes');
+  assert.deepEqual(h.actions[0],{action:'preview-existing-tag-changes',payload:{selections:[{groupId:'locked-group',action:'replace',paperIds:['a'],paperTargets:[{paperId:'a',targetIds:['fc'],overrideConflicts:true}]}]}});
+});
+
+test('Keep supports a reviewed choice with zero native tag patches',async t=>{
+  const data=snapshot();data.existingTags={id:'keep',applied:true,status:'ready',rows:[{id:'keep-group',name:'Project topic',status:'unmatched',targetNames:[],paperIds:['a'],manualCount:1,affectedCount:1,reason:'A useful manual tag.'}],preview:{id:'keep-preview',changes:[]}};
+  const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/leave paper tags unchanged/);await h.click('Confirm reviewed choices');assert.deepEqual(h.actions,[{action:'apply-existing-tag-changes',payload:{previewId:'keep-preview'}}]);
+});
+
+test('Remove carries only explicit paper-specific overrides and leaves other protected papers unchanged',async t=>{
+  const data=snapshot();data.existingTags={id:'remove-protected',applied:true,status:'ready',rows:[{id:'kept',name:'Kept native tag',status:'choice',targetNames:['FC'],paperIds:['a','b'],manualCount:2,affectedCount:2,reason:'Earlier choices protect these papers.',assignments:[{paperId:'a',status:'choice',targetNames:['FC'],targetIds:['fc'],reason:'Kept by the researcher.',conflict:true},{paperId:'b',status:'choice',targetNames:['FC'],targetIds:['fc'],reason:'Locked by the researcher.',conflict:true}]}]};
+  const h=await harness(data,{page:'existing-tags'});t.after(()=>h.ui.destroy());h.change('existing-kept',true);h.choose('existing-tag-action',1);assert.equal(h.button('Review paper changes').disabled,true);await h.click('Review paper matches');h.change('existing-override-kept-a',true);await h.click('Review paper changes');
+  assert.deepEqual(h.actions,[{action:'preview-existing-tag-changes',payload:{selections:[{groupId:'kept',action:'remove',paperIds:['a'],paperTargets:[{paperId:'a',targetIds:[],overrideConflicts:true}]}]}}]);assert.equal(h.doc.getElementById('existing-override-kept-b').checked,false);
+});
+
+test('metadata recovery shows before/after values and applies only the reviewed preview',async t=>{
+  const data=snapshot();data.metadataPreview={id:'metadata-review',paperId:'a',itemID:1,status:'ready',message:'One missing field was found.',changes:[{field:'abstractNote',before:'',after:'Recovered abstract.'}]};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Before: Empty/);assert.match(h.app.textContent,/After: Recovered abstract/);assert.match(h.app.textContent,/Only empty fields are filled/);assert.equal(h.actions.length,0);
+  h.change('metadata-identifier','10.1000/example');await h.click('Find with identifier');assert.deepEqual(h.actions[0],{action:'preview-metadata',payload:{id:'a',identifier:'10.1000/example'}});
+  await h.click('Apply metadata');assert.deepEqual(h.actions[1],{action:'apply-metadata',payload:{previewId:'metadata-review'}});
+});
+
+test('finished paper reading does not present tag organization as complete',async t=>{
+  const data=snapshot();data.queue={status:'running',phase:'organizing',phaseProgress:{completed:2,total:8,label:'Parts organized'},completed:744,total:744,failed:0,needsInformation:3,skipped:2};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Organizing tags/);assert.match(h.app.textContent,/Parts organized: 2 of 8/);assert.match(h.app.textContent,/744 papers read · 0 failed · 3 need information · 2 skipped/);assert.doesNotMatch(h.app.textContent,/Analysis complete/);
+  const bar=h.all().find(node=>node.className==='progress-bar');assert.equal(bar.children[0].style.width,'25%');
 });

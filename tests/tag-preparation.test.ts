@@ -6,7 +6,7 @@ import {createEmptyEvidenceCatalog,createRegistrySnapshot,validateRegistrySnapsh
 import {terminologyKey,terminologyFor} from '../src/naming.ts';
 import {confirmProposalMapping,createTaxonomyProposal,refreshProposalEvidence} from '../src/taxonomy.ts';
 import type {PaperFacts} from '../src/taxonomy.ts';
-import {prepare,applyRepair,answer,buildRepairPrompt,validTagPreparationState} from '../src/tag-preparation.ts';
+import {prepare,applyRepair,answer,buildRepairPrompt,validTagPreparationState,PREPARATION_REQUEST_BYTE_LIMIT} from '../src/tag-preparation.ts';
 const fact=(id:string,name:string,quote=`The source studies ${name}.`):PaperFacts=>({paperId:id,metadataFingerprint:`metadata-${id}`,inputFingerprint:`input-${id}`,provider:'original-provider',model:'original-model',extractionVersion:1,summary:name,needsPDF:false,concepts:[{name,evidence:[{source:'abstract',text:quote}]}]});
 const rawTag=(key:string,name:string,supportRegistryIds:string[],extra:Record<string,unknown>={})=>({key,name,fullName:name,description:`Scope of ${name}.`,facet:'phenomenon',supportRegistryIds,...extra});
 function fixture(facts=[fact('one','proton transport resistance')]){const snapshot=createRegistrySnapshot(facts,createEmptyEvidenceCatalog()),registryIds=Object.keys(snapshot.entries),proposal=createTaxonomyProposal({tags:[rawTag('resistance','catalyst-layer resistance',registryIds,{aliases:['proton transport resistance']})]},facts,[],{snapshot});return {facts,snapshot,registryIds,proposal};}
@@ -78,7 +78,7 @@ test('a known extracted label does not substitute for relevance in its actual qu
 });
 
 test('contextual unrelated verdicts are not overwritten by curated naming on the next pass',()=>{
-  const data=fixture([fact('one','WE','Water electrolysis is discussed only as a comparison.')]);data.proposal.tags[0].name='WE';data.proposal.tags[0].fullName='water electrolysis';data.proposal.tags[0].aliases=[];const initial=prepare(data.proposal),tag=initial.proposal.tags[0],sourceId=Object.keys(data.snapshot.sources)[0];
+  const data=fixture([fact('one','WE','Water electrolysis is discussed only as a comparison.')]);data.proposal.tags[0].name='WE';data.proposal.tags[0].fullName='water electrolysis';data.proposal.tags[0].aliases=[];data.proposal.externalIssues=['The source’s incidental use needs contextual reevaluation.'];const initial=prepare(data.proposal),tag=initial.proposal.tags[0],sourceId=Object.keys(data.snapshot.sources)[0];
   const result=applyRepair({judgements:[{tagId:tag.id,registryId:data.registryIds[0],sourceIds:[sourceId],relation:'unrelated',reason:'Electrolysis is incidental rather than the studied subject.'}]},initial,{repairAttempts:1});assert.ok(!result.proposal.tags.some(value=>value.id===tag.id));assert.equal(result.state.judgements[`${tag.id}|${sourceId}`].origin,'ai');
 });
 
@@ -129,4 +129,33 @@ test('library growth never inserts new version-two-only wording into an immutabl
   assert.deepEqual(validateRegistrySnapshot(expanded),[]);assert.equal(fingerprint(catalog.entries[originalId]),originalEntry);assert.equal(fingerprint(snapshot),originalSnapshot);assert.deepEqual(expanded.entries[originalId].sourceIds,[first.concepts[0].factConceptId]);
   const newEntry=Object.values(expanded.entries).find(value=>value.sourceIds.includes(newFact.concepts[0].factConceptId!))!;assert.notEqual(newEntry.registryId,originalId);assert.equal(newEntry.key,catalog.entries[originalId].key);assert.equal(newEntry.normalizationVersion,2);assert.deepEqual(validateRegistrySnapshot({...expanded,entries:catalog.entries,sources:catalog.sources}),[]);
   const repeated=createRegistrySnapshot([first,newFact],catalog);assert.deepEqual(Object.keys(repeated.entries).sort(),Object.keys(expanded.entries).sort());assert.deepEqual(validateRegistrySnapshot(repeated),[]);
+});
+
+test('large semantic checks use bounded exact-source chunks, retain pending concepts, and continue from saved judgements on Retry',()=>{
+  const facts=Array.from({length:360},(_,index)=>fact(`paper-${index}`,'proton transport resistance',`Proton transport resistance in catalyst layers is measured in paper ${index}. ${'Validated scientific source text. '.repeat(45)}`)),snapshot=createRegistrySnapshot(facts,createEmptyEvidenceCatalog()),proposal=createTaxonomyProposal({tags:[rawTag('parent','electrode resistance',[],{parentKeys:[]}),rawTag('child','protonic resistance',Object.keys(snapshot.entries),{aliases:['proton transport resistance'],parentKeys:['parent']})]},facts,[],{snapshot}),original=fingerprint(snapshot);
+  let current=prepare(proposal),seen=new Set<string>();assert.equal(current.state.contextTruncated,true);assert.equal(current.state.pendingSourceCount,360);
+  for(let attempt=1;attempt<=3;attempt++){
+    const prompt=buildRepairPrompt(current),data=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);assert.ok(new TextEncoder().encode(prompt).length<=PREPARATION_REQUEST_BYTE_LIMIT);assert.equal(data.contextTruncated,true);assert.ok(data.sources.length>0&&data.sources.length<360);
+    for(const entry of data.permittedRegistry){assert.ok(Array.isArray(entry.sourceIds));assert.ok(entry.sourceIds.every((id:string)=>data.sources.some((source:{sourceId:string;registryId:string})=>source.sourceId===id&&source.registryId===entry.registryId)));}
+    for(const source of data.sources)assert.ok(data.permittedRegistry.find((entry:{registryId:string;sourceIds:string[]})=>entry.registryId===source.registryId).sourceIds.includes(source.sourceId));
+    for(const source of data.sources){assert.ok(!seen.has(source.sourceId),'completed source judgements are not requested again');seen.add(source.sourceId);assert.deepEqual(source.evidence,snapshot.sources[source.sourceId].evidence,'included evidence is exact, not sampled source authorization');}
+    const unshown=Object.keys(snapshot.sources).find(id=>!data.sources.some((value:{sourceId:string})=>value.sourceId===id)&&!seen.has(id))!;
+    current=applyRepair({judgements:[...data.sources.map((source:{tagId:string;registryId:string;sourceId:string})=>({tagId:source.tagId,registryId:source.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The supplied passage establishes protonic transport resistance.'})),{tagId:current.proposal.tags.find(tag=>tag.name==='protonic resistance')!.id,registryId:Object.keys(snapshot.entries)[0],sourceIds:[unshown],relation:'equivalent',reason:'This source was not actually in the request.'}]},current,{repairAttempts:attempt});
+    assert.ok(!Object.values(current.state.judgements).some(value=>value.sourceId===unshown));
+  }
+  assert.equal(current.state.status,'failed');assert.equal(current.repairRequest,false);assert.ok(current.state.pendingSourceCount!>0);assert.ok(current.proposal.tags.some(tag=>tag.name==='protonic resistance'));assert.ok(current.proposal.tags.some(tag=>tag.name==='electrode resistance'));assert.deepEqual(current.state.questions,[]);assert.equal(fingerprint(current.proposal.evidenceSnapshot),original);
+  const resumed=prepare(JSON.parse(JSON.stringify(current.proposal)),undefined,{repairAttempts:0}),nextData=JSON.parse(buildRepairPrompt(resumed).split('INPUT_DATA_JSON:\n')[1]);assert.equal(resumed.repairRequest,true);assert.ok(nextData.sources.every((value:{sourceId:string})=>!seen.has(value.sourceId)));assert.ok(Object.keys(resumed.state.judgements).length>=seen.size);
+  const removal=applyRepair({tags:[{tagId:resumed.proposal.tags.find(tag=>tag.name==='protonic resistance')!.id,remove:true}]},resumed,{repairAttempts:3});assert.ok(removal.proposal.tags.some(tag=>tag.name==='protonic resistance'),'an AI cannot drop a concept whose unshown evidence still needs evaluation');
+});
+
+test('naming normalization cannot disguise a contradictory scientific full name as an approved alias',()=>{
+  const facts=[fact('one','Co','Co nanoparticles form a cobalt catalyst.')],snapshot=createRegistrySnapshot(facts,createEmptyEvidenceCatalog()),proposal=createTaxonomyProposal({tags:[rawTag('metal','Co',Object.keys(snapshot.entries),{fullName:'carbon monoxide',facet:'component'})]},facts,[],{snapshot});
+  assert.equal(proposal.tags[0].name,'Co');assert.equal(proposal.tags[0].fullName,'carbon monoxide');assert.ok(proposal.validationIssues!.some(issue=>issue.code==='scientific-contradiction'));
+  const prepared=prepare(proposal);assert.equal(prepared.proposal.tags[0].fullName,'carbon monoxide');assert.ok(!prepared.proposal.tags[0].aliases.includes('carbon monoxide'));assert.equal(prepared.repairRequest,true);assert.ok(prepared.proposal.validationIssues!.some(issue=>issue.code==='scientific-contradiction'));
+});
+
+test('bounded repair retains the public registry sourceIds contract for a shorthand PEMWE passage',()=>{
+  const wording='proton exchange membrane water electrolysis',facts=[fact('one',wording,'We measure catalyst-layer resistance in PEM water electrolysis')],snapshot=createRegistrySnapshot(facts,createEmptyEvidenceCatalog()),proposal=createTaxonomyProposal({tags:[rawTag('pemwe','PEMWE',Object.keys(snapshot.entries),{fullName:wording,facet:'system'})]},facts,[],{snapshot}),initial=prepare(proposal),data=JSON.parse(buildRepairPrompt(initial).split('INPUT_DATA_JSON:\n')[1]);
+  const technology=data.tags.find((value:{name:string})=>value.name==='PEMWE'),source=data.sources.find((value:{name:string})=>value.name===wording),entry=data.permittedRegistry.find((value:{sourceIds:string[]})=>value.sourceIds.includes(source.sourceId));assert.ok(entry);
+  const result=applyRepair({judgements:[{tagId:technology.id,registryId:entry.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The actual passage explicitly describes PEM water electrolysis.'}]},initial,{repairAttempts:1});assert.equal(result.state.status,'ready');assert.deepEqual(result.state.questions,[]);assert.deepEqual(result.proposal.support[technology.id].paperIds,['one']);
 });

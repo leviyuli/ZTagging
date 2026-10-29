@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+- Added **Existing tags** to inventory native tags, compare them with the applied vocabulary, review meanings per paper, and preview exact replacements, removals, or unchanged assignments before applying them.
+- Added explicit creation of suggestion-only DIY definitions from selected existing names, with editable meanings and researcher review for ambiguous topics. This does not rename native assignments or enable automation.
+- Added paper recovery in **Activity** with usable/needs-information/failed/skipped statuses, local PDF checks, identifier-based metadata lookup, reviewed empty-field additions, selected-paper retries, and run-scoped skips.
+- Kept papers with validated concepts usable when the model requests more context. Missing local files, unavailable PDF text, read errors, and unknown availability are reported separately.
+- Used Zotero’s identifier translators in unsaved mode for DOI, PMID, ISBN, and arXiv lookup. Results must confirm the identifier; existing bibliographic values and creators are preserved, and no duplicate items or attachments are created.
+- Added metadata and definition journals with exact before/after checks, atomic native metadata batches, interrupted-write recovery, and undo that protects later researcher edits. Superseded factual analysis remains in local history.
+- Added persistent maintenance work that waits behind ongoing library analysis, using the selected provider and existing authentication/budget controls.
+- Split large-library consolidation into bounded parts followed by global reconciliation. Completed parts, raw replies, evidence identities, and selected-paper coverage survive restart; reading, organization, scientific checking, and review have separate progress states.
+- Upgraded local state to schema 5 with an immutable exact-byte backup. Retained factual extraction, proposals, researcher choices, completed jobs, source identities, queue replies, settings, credentials, and spent budgets; cleared obsolete derived cleanup previews.
+
 ## 0.4.1
 
 - Added **Use another account or workspace** to ChatGPT settings, including when a previous sign-in never completed. It starts a fresh connection without reusing the earlier workspace or removing saved accounts.

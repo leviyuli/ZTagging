@@ -5,23 +5,23 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.4.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.4.0.xpi).
+2. Select [`smart-tags-0.5.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.0.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Choose **Pilot · 50 papers** on Overview and click **Prepare tags**. Smart Tags reads the papers, brings related concepts together, and checks names, categories, and scientific meanings using your selected model.
 6. Open **Tags**. Browse the suggested tags, edit or remove entries, and answer any items in **Questions**. When the list is ready, click **Apply tag list**. This saves the vocabulary and starts paper-tag suggestions for the same papers.
 7. Open **Paper suggestions**, inspect the supporting passages, and accept or reject matches. Use **Apply accepted…** or **Review selected changes**, then confirm the displayed batch. This separate action writes native Zotero tags and records an undoable change.
-8. Mark the completed tagging pilot reviewed. You can then enable automatic assignment for incoming papers. Applying or editing the active core vocabulary resets this gate; editing a DIY detail refreshes only that detail’s suggestions.
+8. Mark the completed tagging pilot reviewed. You can then enable automatic assignment for incoming papers. Changing the active core vocabulary resets this gate; creating DIY details or confirming an equivalent legacy alias preserves it.
 
 The classifier usually proposes up to five core tags plus matching custom tags; it does not pad papers to a minimum. Routine assignment uses approved definitions. New topics are presented for vocabulary review rather than silently added as native tags.
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md) and [migration notes](MIGRATION.md) when upgrading an existing review.
+Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.4.0** replaces routine mapping confirmations with automatic scientific checks and a short Questions view. Each preparation run can make up to **three additional AI requests** to improve the initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+Version **0.5.0** adds **Existing tags** for reviewing names already assigned in Zotero, paper-information recovery in **Activity**, and bounded consolidation for larger libraries. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
 
-The expandable **Tags/Collections** navigator stays in Zotero’s left pane. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
+The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 
 ## Compact vocabulary and navigation
 
@@ -31,9 +31,11 @@ Paper analysis is cached independently of the tag list. Factual summaries, conce
 
 An unchanged rebuild reuses completed facts and saved consolidation output. You can prepare a new list over a paused, unapproved rebuild; it replaces the pending review while retaining cached paper analysis. Pause or close Zotero during a run, then resume from saved progress. Changed metadata or newly available PDF evidence refreshes affected papers.
 
+For larger libraries, consolidation processes bounded portions, reconciles their candidates, and produces one global proposal. Saved parts retain their original evidence IDs and resume without repeating completed paper extraction. Progress distinguishes **Reading papers**, **Organizing tags**, **Checking tag meanings**, and **Ready for review**. Reading every paper finishes the extraction phase; the global tag list still needs to be organized and checked. Consolidation requests are separate from the three additional preparation checks, and each uses the selected connection and budget controls.
+
 Prefer familiar abbreviations such as **FC**, **PEMFC**, and **AEMFC**. Full names, aliases, and definitions remain searchable. A subtype relation means “is a”; contextual links mean “related to.” A catalyst layer can be related to FC without becoming a type of FC. Scientific checks keep these relationships separate, reject contradictory meanings, and preserve chemical distinctions such as `Co` and `CO`.
 
-After the first tag list is applied, **Tags** becomes the default navigator. Broad tags are visible under four categories; narrower branches expand as you browse. Expansion and selection have separate controls. Selecting FC finds its direct assignments and approved descendants, including AEMFC and PEMFC, without adding redundant FC tags to those papers. Assignment normally proposes up to five most-specific tags. A comparison paper can receive both subtypes.
+After the first tag list is applied, **Smart Tags** becomes the default navigator. Broad tags are visible under four categories; narrower branches expand as you browse. Expansion and selection have separate controls. Selecting FC finds its direct assignments and approved descendants, including AEMFC and PEMFC, without adding redundant FC tags to those papers. Assignment normally proposes up to five most-specific tags. A comparison paper can receive both subtypes.
 
 Search matches names, full names, aliases, and definitions across the vocabulary, with deduplicated results and their locations. Clearing search restores the tree and retains selections. Multiple selections use **All** by default; **Any** is available. Shared details selected within a branch remain compound clauses: `(FC AND Schottky barrier) OR EIS`. Selecting a detail from global search finds it across fields.
 
@@ -65,21 +67,39 @@ After the initial consolidation, preparation can send **up to three additional c
 
 The attempt count and completed responses survive pause/restart. A budget rejection before dispatch does not consume an attempt; a dispatched request does. Resume continues saved work. After unsuccessful checks, **Try again** explicitly starts another bounded preparation run while retaining prior replies, choices, and spent budget. Your connection stays unchanged unless you select another one in Settings. Preparing tags does not enable unattended assignment.
 
-## Active warnings and history
+## Recovering paper information
 
-**Activity** shows actionable notices with affected-paper links, **Dismiss**, and **Dismiss all** controls. Dismissal is remembered; successful reevaluation resolves only the corresponding paper and processing phase. Cached gaps recheck local PDF availability, including papers whose extraction jobs were already completed. Changed conditions supersede older episodes; recurring conditions can become active again. Unfamiliar-topic notices clear when a fresh analysis of that paper and phase no longer finds the condition. Completed merge reviews go straight to history.
+Open **Activity → Papers that need attention**. Each paper appears once, with a status such as **Ready to use**, **Needs information**, or **Analysis failed**. A paper with validated concepts remains usable when the model asks for additional context. That request does not mean its validated passages were lost or its analysis failed.
+
+Use **Open in Zotero** to inspect the record. **Find metadata** searches through Zotero’s identifier translators using a DOI, PMID, ISBN, or arXiv identifier. You can supply an identifier with **Find with identifier**. Review the proposed additions, then choose **Apply metadata**. Only empty supported bibliographic fields and an empty creator list can be filled; existing values, item type, native tags, and collections are preserved. A result must confirm the identifier, and conflicting or ambiguous results are left for review. Lookup does not create another library item or download attachments.
+
+**Recheck PDF** checks locally attached files and explicitly retries local text indexing. It distinguishes a missing attachment, a file unavailable locally, readable text, unavailable text, a read error, and an unverified state. It does not download the PDF or run OCR. When text is unavailable, inspect the attachment in Zotero and provide a local readable copy or improve its metadata.
+
+After improving the inputs, choose **Retry analysis** or **Retry selected**. These are explicit model requests through your chosen connection, subject to its budget and authentication controls. Requested recovery work waits behind an ongoing library build. Applying metadata also queues a retry for the affected paper. Old factual evidence is retained in local history; only affected analysis is refreshed. **Skip for this build** excludes a paper from the current build without removing its item or native tags. Manual native tags and DIY assignments remain available and do not become factual evidence merely because you assigned them.
+
+## Notices and history
+
+**Activity** keeps evidence-related paper recovery separate from other notices, which retain affected-paper links, **Dismiss**, and **Dismiss all** controls. Dismissal is remembered; successful reevaluation resolves only the corresponding paper and processing phase. Dismissal acknowledges a condition rather than repairing its inputs. Cached gaps recheck local PDF availability, including papers whose extraction jobs were already completed. Changed conditions supersede older episodes; recurring conditions can become active again. Unfamiliar-topic notices clear when a fresh analysis of that paper and phase no longer finds the condition. Completed merge reviews go straight to history.
 
 Resolved, dismissed, superseded, and legacy notices remain in Activity’s history. Old string banners remain historical, unverified notices because their original paper associations and dates are unknown. Successful actions use brief confirmations instead of persistent warning banners.
 
 ## Custom topics and review
 
-The initial **RCL** draft means “catalyst-layer resistance in water electrolysis or fuel cells.” Edit and save its definition, aliases, inclusion/exclusion rules, and example paper titles before matching it. Matching does not require the acronym to appear. Scanned/unreadable PDFs remain an evidence gap; OCR and automatic PDF downloading are outside this version.
+The initial **RCL** draft means “catalyst-layer resistance in water electrolysis or fuel cells.” Edit and save its definition, aliases, inclusion/exclusion rules, and example paper titles before matching it. Matching does not require the acronym to appear. If metadata provides insufficient support and PDF text is unavailable, use the paper-recovery actions in Activity. OCR and automatic PDF downloading are outside this version.
 
 **Add tag** makes a shared user-defined topic, optionally linked to a concept for contextual browsing. It defaults to **Suggest matches**: preview evidence across existing papers, then review assignments. **Manual only** disables matching. **Automatic** requires explicit per-detail selection and the global automation/pilot gate. **Assign to selected papers** records a manual, locked assignment with undo. AI preparation does not create DIY details.
 
 Selected papers, selected collections (including descendants), the 50-paper pilot, and the whole personal library are supported. Group libraries, notes, and child attachments are excluded from tagging targets. Imported automatic tags are retained as source-keyword evidence; they are not universally identifiable as original author keywords.
 
-**Settings → Find older tag duplicates** previews case/spelling duplicates and approved aliases. Native renaming/merging is a separate reviewed operation. Merges display affected manual assignments and require explicit application. Recognized legacy assignments prevent duplicate canonical assignments. Historical IDs, rejection/lock decisions, and undo journals remain available after tag preparation.
+## Reviewing existing Zotero tags
+
+Open **Existing tags → Read library tags** to list native names, affected-paper counts, and manual assignments across the personal library. Before applying a Smart Tags list, this is an inventory. After applying one, matching uses the approved vocabulary rather than treating an unapproved draft as authoritative.
+
+Select names and choose **Analyze selected names** when their meaning needs paper context. Review results per paper: a broad label such as FC may stay broad, or a paper may support AEMFC, PEMFC, or both. Related concepts are not automatically merged. Scientific symbols such as Co and CO remain distinct. Unmatched names stay available until you choose an action.
+
+Choose **Use matched Smart Tags name**, **Remove from papers**, or **Keep as it is**, then **Review paper changes**. Inspect the exact before/after labels before **Apply reviewed tag changes**. This workflow can change the displayed existing manual tags because you explicitly review that cleanup; ordinary automatic assignment continues to preserve manual choices. Locks and remembered rejections remain protected unless you explicitly replace the earlier choice for the affected paper. Approved equivalent legacy names can also be retained as aliases, avoiding duplicate assignments during later tagging.
+
+Select niche names and choose **Create DIY tags…** to define shared details outside the core vocabulary. Keep or edit the name and optionally supply its meaning. When needed, **Analyze and create DIY tags** uses the chosen model to interpret the selected names and paper context; ambiguous meanings require your input. Created definitions default to suggestion-only matching. Creating these definitions does not rename the existing native assignments or enable automatic matching. Definitions and reviewed native cleanup batches have separate undo records in **Activity**.
 
 Existing manual tags are never acquired as extension-owned assignments. Manual removal, rejections, and locks are remembered. Obsolete extension-owned tags receive review-only removal proposals. History undo checks for later edits and refuses to overwrite conflicting changes. Native Zotero undo is also available for applied batches.
 
@@ -87,9 +107,9 @@ Under **Find papers**, combine hierarchical tags, inspect related papers, and sa
 
 ## Local storage
 
-Definitions, source metadata, selected PDF passages, proposals, decisions, queue checkpoints, and change journals live in `smart-tags/state.json` inside the current Zotero profile. Atomic writes keep a previous `.bak` generation. An interrupted native write is reconciled against its recorded before/after tag snapshots on startup.
+Definitions, source metadata, selected PDF passages, proposals, decisions, queue checkpoints, and change journals live in `smart-tags/state.json` inside the current Zotero profile. Atomic writes keep a previous `.bak` generation. Interrupted native changes are reconciled against their recorded tag or metadata snapshots on startup. Definition changes are journaled with affected IDs; recovery and undo preserve unrelated definitions and refuse conflicting later edits.
 
-Version 0.4.0 migrates to **state schema 4** after creating an exact-byte **state.json.pre-v4.json** backup. Different existing backups receive numbered suffixes and remain untouched. Schema-3 pending reviews, saved edits, human choices, factual evidence, settings, and spent budget are retained. The earlier correction counter remains in its history; the new preparation stage has its own bounded attempts. Completed factual extraction keeps its original extractor version. See [migration notes](MIGRATION.md).
+Version 0.5.0 migrates to **state schema 5** after creating an exact-byte **state.json.pre-v5.json** backup. Different existing backups receive numbered suffixes and remain untouched. Schema-4 pending reviews, saved edits, human choices, factual evidence, completed jobs, queue responses, settings, and spent budget are retained. Old cleanup previews are cleared so they can be reviewed against the applied vocabulary. Completed factual extraction keeps its original extractor version. Consolidation continues to use protocol 2. See [migration notes](MIGRATION.md).
 
 Unused legacy generated drafts are removed from extension definitions only when an original backup proves their definitions are unchanged and no active or historical references need them. DIY, edited, approved, and referenced definitions remain. If that baseline is unavailable, definitions are kept. This cleanup creates no separate legacy archive and removes no native paper tags. Regular approved vocabulary history and undo journals remain available. The store refuses newer state schemas rather than overwriting them through an older backup.
 

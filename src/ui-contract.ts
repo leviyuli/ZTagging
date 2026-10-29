@@ -1,7 +1,7 @@
 import type { TaxonomyProposal } from './taxonomy';
 import type { WarningRecord } from './warnings';
 /** The manager receives display data only. Credentials never belong in a snapshot. */
-export type ManagerPage = 'overview' | 'vocabulary' | 'review' | 'library' | 'activity' | 'settings';
+export type ManagerPage = 'overview' | 'vocabulary' | 'existing-tags' | 'review' | 'library' | 'activity' | 'settings';
 export type Scope = 'pilot' | 'selected' | 'collections' | 'library';
 export interface DisplayTag {
   id: string;
@@ -99,6 +99,18 @@ export interface ManagerSettings {
   coreConceptLimit?: number;
 }
 export interface ManagerSnapshot {
+  pluginVersion?: string;
+  navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
+  existingTags?: {
+    id: string;
+    applied: boolean;
+    status: 'ready' | 'queued' | 'running' | 'paused';
+    message?: string;
+    rows: { id: string; name: string; status: 'match' | 'choice' | 'unmatched'; meaning?: string; meaningInferred?: boolean; facet?: DisplayTag['facet']; targetNames: string[]; paperIds: string[]; manualCount: number; affectedCount: number; reason: string; diyQuestion?: string; assignments?: { paperId: string; status: 'match' | 'choice' | 'unmatched'; targetNames: string[]; targetIds: string[]; reason: string; conflict?: boolean; meaning?: string }[] }[];
+    preview?: { id: string; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
+  };
+  paperAttention?: { papers: { id: string; title: string; status: 'usable' | 'needsInformation' | 'failed' | 'skipped'; message: string; phase: string; queued?: boolean; canLookupMetadata: boolean; canRecheck: boolean; canRetry: boolean; canSkip: boolean }[]; queued: number };
+  metadataPreview?: { paperId: string; itemID: number; status: string; message: string; identifier?: string; changes: { field: string; before: string; after: string }[]; id: string };
   vocabularyVersion: number;
   pilotReviewed: boolean;
   taxonomyReady?: boolean;
@@ -113,6 +125,10 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    phase?: 'reading' | 'organizing' | 'checking' | 'ready';
+    phaseProgress?: { completed: number; total: number; label: string };
+    needsInformation?: number;
+    skipped?: number;
     provider?: ManagerSettings['provider'];
     status: 'idle' | 'running' | 'paused';
     total: number;

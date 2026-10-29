@@ -3,6 +3,8 @@ import { paperFingerprint } from './core.ts';
 import type { TagDefinition } from './core.ts';
 import type { ConceptFilter } from './concept-filter.ts';
 import { buildConceptSearch } from './native-filter.ts';
+import { METADATA_FIELDS, buildMetadataPreview, extractPaperIdentifiers, normalizeMetadataCreators, parsePaperIdentifier, sameMetadata } from './paper-recovery.ts';
+import type { MetadataPatch, MetadataPreview, MetadataSnapshot, PaperIdentifier, PaperInputAssessment, PDFInputStatus } from './paper-recovery.ts';
 
 export interface NativeTag { tag: string; type: number }
 export interface TagPatch { paperId: string; itemID: number; before: NativeTag[]; after: NativeTag[] }
@@ -15,6 +17,10 @@ export interface LibraryHost {
   show(itemID: number): Promise<void>;
   saveSearch(name: string, tags: string[]): Promise<void>;
   saveConceptSearch?(name:string,filter:ConceptFilter,definitions:TagDefinition[]):Promise<void>;
+  inspectInputs?(itemID:number,recheck?:boolean):Promise<PaperInputAssessment>;
+  lookupMetadata?(itemID:number,identifier?:string|PaperIdentifier):Promise<MetadataPreview>;
+  readMetadata?(itemID:number):Promise<MetadataSnapshot>;
+  applyMetadata?(patches:MetadataPatch[],label:string):Promise<void>;
 }
 
 function stripHTML(value: string): string {
@@ -80,6 +86,85 @@ export class ZoteroHost implements LibraryHost {
       try { const text = await attachment.attachmentText; if (text?.trim()) return text; } catch { /* Report an evidence gap in the controller. */ }
     }
     return '';
+  }
+  async inspectInputs(itemID:number,recheck=false):Promise<PaperInputAssessment> {
+    const item=await Zotero.Items.getAsync(itemID);
+    if(!this.personal(item))throw new Error('Item is unavailable or outside your personal library.');
+    const paper=this.record(item),pdfs=[];
+    for(const id of item.getAttachments()) {
+      const attachment=await Zotero.Items.getAsync(id);
+      if(attachment.attachmentContentType==='application/pdf')pdfs.push(attachment);
+    }
+    let localCount=0,characters=0,readError=false,unknown=false,rechecked=false;
+    for(const attachment of pdfs) {
+      try {
+        if(typeof attachment.isFileAttachment==='function'&&!attachment.isFileAttachment())continue;
+        const local=typeof attachment.fileExists==='function'?await attachment.fileExists():typeof attachment.getFilePathAsync==='function'?!!await attachment.getFilePathAsync():undefined;
+        if(local===false)continue;
+        if(local===undefined){unknown=true;continue;}
+        localCount++;
+        if(recheck){
+          if(typeof Zotero.Fulltext?.indexItems!=='function')throw new Error('Local PDF reindexing is unavailable.');
+          await Zotero.Fulltext.indexItems([attachment.id],{complete:true});rechecked=true;
+        }
+        const content=await attachment.attachmentText;
+        if(typeof content==='string'&&content.trim())characters=Math.max(characters,content.trim().length);
+      }catch{readError=true;}
+    }
+    const status:PDFInputStatus=!pdfs.length?'missing':characters?'readable':readError?'readError':localCount?'textUnavailable':unknown?'unknown':'nonlocal';
+    return {paperId:paper.id,itemID,checkedAt:new Date().toISOString(),metadata:{title:!!paper.title,abstract:!!paper.abstract,keywords:paper.keywords.length>0},pdf:{status,attachmentCount:pdfs.length,localCount,characters,rechecked}};
+  }
+  async readMetadata(itemID:number):Promise<MetadataSnapshot> {
+    const item=await Zotero.Items.getAsync(itemID);
+    if(!this.personal(item))throw new Error('Item is unavailable or outside your personal library.');
+    const fields:Record<string,string>={};
+    for(const name of METADATA_FIELDS){
+      const id=Zotero.ItemFields.getID(name);
+      if(id&&Zotero.ItemFields.isValidForType(id,item.itemTypeID))fields[name]=String(item.getField(name,true)||'');
+    }
+    return {paperId:`${item.libraryID}:${item.key}`,itemID,itemType:item.itemType,fields,creators:normalizeMetadataCreators(item.getCreatorsJSON()),identifiers:extractPaperIdentifiers({...fields,extra:item.getField('extra')})};
+  }
+  async lookupMetadata(itemID:number,identifier?:string|PaperIdentifier):Promise<MetadataPreview> {
+    const before=await this.readMetadata(itemID),selected=identifier===undefined?before.identifiers[0]:parsePaperIdentifier(identifier);
+    if(!selected)return buildMetadataPreview(before,[],identifier);
+    const translate=new Zotero.Translate.Search();
+    translate.setIdentifier({[selected.kind]:selected.value});
+    const translators=await translate.getTranslators();
+    if(!translators.length)return buildMetadataPreview(before,[],selected);
+    translate.setTranslator(translators);
+    const candidates:unknown[]=await translate.translate({libraryID:false,saveAttachments:false});
+    const creatorValid=(creator:{creatorType:string})=>Zotero.CreatorTypes.isValidForItemType(Zotero.CreatorTypes.getID(creator.creatorType),Zotero.ItemTypes.getID(before.itemType));
+    return buildMetadataPreview(before,candidates.map(value=>{
+      if(!value||typeof value!=='object'||Array.isArray(value))return value;
+      const candidate=value as Record<string,unknown>;
+      return {...candidate,creators:normalizeMetadataCreators(candidate.creators).filter(creatorValid)};
+    }),selected);
+  }
+  async applyMetadata(patches:MetadataPatch[],_label:string):Promise<void> {
+    if(!patches.length)return;
+    if(new Set(patches.map(patch=>patch.itemID)).size!==patches.length)throw new Error('A metadata batch cannot change the same paper twice.');
+    for(const patch of patches)this.mutating.add(patch.itemID);
+    try{
+      await Zotero.DB.executeTransaction(async()=>{
+        const items=[];
+        for(const patch of patches){
+          const item=await Zotero.Items.getAsync(patch.itemID),current=await this.readMetadata(patch.itemID);
+          if(!sameMetadata(current,patch.before))throw new Error('Metadata changed after the preview. Refresh before applying.');
+          if(patch.paperId!==current.paperId||patch.after.paperId!==current.paperId||patch.after.itemID!==current.itemID||patch.after.itemType!==current.itemType)throw new Error('The metadata patch does not match this paper.');
+          if(Object.entries(patch.after.fields).some(([name,value])=>!Object.hasOwn(current.fields,name)||typeof value!=='string')||Object.keys(current.fields).some(name=>!Object.hasOwn(patch.after.fields,name)))throw new Error('The metadata patch contains unsupported fields.');
+          if(JSON.stringify(normalizeMetadataCreators(patch.after.creators))!==JSON.stringify(patch.after.creators))throw new Error('The metadata patch contains invalid creators.');
+          for(const creator of patch.after.creators)if(!Zotero.CreatorTypes.isValidForItemType(Zotero.CreatorTypes.getID(creator.creatorType),item.itemTypeID))throw new Error('The metadata patch contains an unsupported creator role.');
+          items.push(item);
+        }
+        Zotero.UndoHistory.stageAction('smart-tags-undo');
+        for(const [index,patch] of patches.entries()){
+          const item=items[index];
+          for(const [field,value] of Object.entries(patch.after.fields))if(value!==patch.before.fields[field])item.setField(field,value);
+          if(JSON.stringify(patch.after.creators)!==JSON.stringify(patch.before.creators))item.setCreators(patch.after.creators,{strict:true});
+          await item.save();
+        }
+      });
+    }finally{for(const patch of patches)this.mutating.delete(patch.itemID);}
   }
   async apply(patches: TagPatch[], _label: string) {
     for (const patch of patches) this.mutating.add(patch.itemID);

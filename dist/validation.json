@@ -1,19 +1,18 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.4.1",
-  "verifiedAt": "2026-10-29T04:00:17.247Z",
+  "version": "0.5.0",
+  "verifiedAt": "2026-10-29T05:41:01.124Z",
   "target": "Zotero 10.0.6 on Windows",
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "consolidationProtocolVersion": 2,
-  "preparationPolicyVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 503,
+    "passed": 606,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 83,
+    "passed": 104,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -346,44 +345,212 @@
       {
         "name": "v041ContinueRetainsSavedConnection",
         "passed": true
+      },
+      {
+        "name": "v050IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v050IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v050StateSchema",
+        "passed": true
+      },
+      {
+        "name": "v050NativeVersionAndRecoveryControls",
+        "passed": true
+      },
+      {
+        "name": "v050NativeNavigationRestoresOnce",
+        "passed": true
+      },
+      {
+        "name": "v050ExistingNamesStartUnselected",
+        "passed": true
+      },
+      {
+        "name": "v050ExistingNativePreviewIsReadOnly",
+        "passed": true
+      },
+      {
+        "name": "v050DIYShowsConsentBeforeAI",
+        "passed": true
+      },
+      {
+        "name": "v050PaperAttentionIsUnique",
+        "passed": true
+      },
+      {
+        "name": "v050MetadataPreviewIsReadOnly",
+        "passed": true
+      },
+      {
+        "name": "v050MetadataFillsOnlyMissingFields",
+        "passed": true
+      },
+      {
+        "name": "v050MetadataUndoRestoresEmptyField",
+        "passed": true
+      },
+      {
+        "name": "v050UpdatePackagesKeepStableIdentity",
+        "passed": true
+      },
+      {
+        "name": "v050UpdateURLRemainsSecureAndStable",
+        "passed": true
+      },
+      {
+        "name": "v050LocalUpdateManifestMatchesPackage",
+        "passed": true
+      },
+      {
+        "name": "v050NativeUpgradeStartsFromTestAddon",
+        "passed": true
+      },
+      {
+        "name": "v050OldPackageStaysDisabled",
+        "passed": true
+      },
+      {
+        "name": "v050OldPackageCannotRewriteNewerState",
+        "passed": true
+      },
+      {
+        "name": "v050NativePackageUpgradeWithoutUninstall",
+        "passed": true
+      },
+      {
+        "name": "v050NativeUpgradePreservesPluginState",
+        "passed": true
+      },
+      {
+        "name": "v050NativeUpgradePreservesLibraryAndColumns",
+        "passed": true
       }
     ],
-    "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
+    "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection.",
+    "nativePackageUpgrade": {
+      "from": "0.4.1",
+      "to": "0.5.0",
+      "method": "Native AddonManager.getInstallForFile",
+      "oldPackageDisabled": true,
+      "uninstallEvents": 0,
+      "packageHash": "c89f74e24db037f9faf8f8e8896c30ca80a3219c60052ad42c641c217127f269",
+      "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
+    }
   },
   "nativeBundleMatchesInstaller": true,
-  "authenticationRecovery": {
-    "freshAction": "Use another account or workspace",
-    "freshRegistrationBypassesSavedAndPendingClients": true,
-    "oldAccountHintsOmitted": true,
-    "stableHostIdentityPreserved": true,
-    "oldCredentialsAndAccountsPreservedOnCancel": true,
-    "ordinaryContinueRetainsSelectedConnection": true,
-    "actionAvailableWithoutSavedAccounts": true,
-    "cancelRemainsAvailableDuringSignIn": true,
-    "realAuthenticationPerformed": false
+  "reconciliation": {
+    "appliedNamesAuthoritative": true,
+    "unmatchedUnchangedByDefault": true,
+    "perPaperMixedMeanings": true,
+    "sourceLabelsExact": true,
+    "manualConflictsRequireExplicitOverride": true,
+    "aliasesSubtypesAndRelatedTopicsSeparate": true,
+    "chemicalSymbolDistinctionsPreserved": true,
+    "reviewedApplyAndConflictAwareUndo": true,
+    "confirmedDIYDefaultsToSuggest": true
+  },
+  "paperRecovery": {
+    "usablePartialResultsDoNotTriggerUrgentNotice": true,
+    "localPDFRecheckNoModelRequest": true,
+    "explicitRetriesBypassCache": true,
+    "repairsQueuedBehindMainRun": true,
+    "lateCancelledRepliesDoNotApply": true,
+    "metadataLookupUsesIdentifierTranslators": true,
+    "metadataPreviewAndFillEmptyOnly": true,
+    "noDuplicateItems": true,
+    "metadataApplyAndUndoNativeVerified": true,
+    "offlineMetadataApplyPausesAIRecheck": true
+  },
+  "consolidation": {
+    "boundedRequests": true,
+    "maxRequestUTF8Bytes": 100000,
+    "resumableMapReduceAndGlobalMerge": true,
+    "originalEvidenceIdsPreserved": true,
+    "completedExtractionReused": true,
+    "malformedRepliesRetainedDiagnosticOnly": true,
+    "explicitResumeCanRestartNonproductiveOrganization": true,
+    "preparationRepairRequestsMaximum": 3,
+    "providerNeverChangesAutomatically": true
+  },
+  "privateReadOnlyReplay": {
+    "status": "passed",
+    "working744": {
+      "selectedPapers": 744,
+      "cachedFactsRetained": 752,
+      "completedJobsRetained": 744,
+      "exactByteBackup": true,
+      "evidenceAndProvenancePreserved": true,
+      "settingsAndHistoryPreserved": true,
+      "requestsSimulated": 30,
+      "maxPromptUTF8Bytes": 99884,
+      "restarts": 2,
+      "completedPartsReused": true,
+      "pendingReplyReplayedWithoutDispatch": true,
+      "foreignRegistryIds": 0
+    },
+    "historical51": {
+      "selectedPapers": 51,
+      "cachedFactsRetained": 97,
+      "completedJobsRetained": 51,
+      "exactByteBackup": true,
+      "evidenceAndProvenancePreserved": true,
+      "settingsAndHistoryPreserved": true,
+      "requestsSimulated": 4,
+      "maxPromptUTF8Bytes": 99904,
+      "restarts": 2,
+      "completedPartsReused": true,
+      "pendingReplyReplayedWithoutDispatch": true,
+      "foreignRegistryIds": 0
+    },
+    "workingProfileChanged": false,
+    "liveProviderRequests": 0,
+    "extractionRequests": 0,
+    "nativeWrites": 0,
+    "scientificRecommendationQualityEvaluated": false
   },
   "migration": {
-    "schemaUnchanged": true,
-    "noNewMigration": true
+    "exactByteCollisionSafeBackup": true,
+    "noModelRequests": true,
+    "obsoleteCleanupPreviewsDiscarded": true,
+    "cachedFactsIdentitiesConfirmationsSettingsAndHistoryPreserved": true
   },
-  "deslopCleanup": {
-    "applied": true,
-    "scope": "Shared sign-in handler and typed new error assertions; no provider or account-storage changes."
+  "navigation": {
+    "leftPaneOnly": true,
+    "smartTagsCollectionsSwitch": true,
+    "delayedMountAndRestore": true,
+    "nativeSearchAndColumnsPreserved": true,
+    "independentWindows": true,
+    "nativeFallbackRestoration": true
   },
   "rightItemAndInformationPaneSection": false,
+  "skills": {
+    "deslop": "Focused diff cleanup; no broad style rewrite.",
+    "codebaseDesign": "Domain workflows through small module interfaces; persistence and side effects through public controller actions; manager through accessible controls."
+  },
   "workingLibraryModified": false,
   "publicArtifactPrivateDataScan": "passed",
-  "limits": "Sign-in recovery was verified with synthetic authorization and native UI action capture. The user must complete real OpenAI authorization; workspace policy and plan eligibility are enforced by OpenAI. No private working-profile credentials were read or changed.",
+  "limits": [
+    "No live AI request or real account authorization was performed.",
+    "Private replays used synthetic replies to verify request bounds, queue recovery and evidence identity accounting; they do not evaluate scientific recommendations.",
+    "Native UI checks are programmatic; no screenshot-based visual review was performed.",
+    "Native package upgrade was verified through AddonManager without uninstall; remote update-feed discovery was not exercised before publication.",
+    "Identifier lookup translators were checked with controlled responses; live publisher completeness is not guaranteed."
+  ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.4.1.xpi",
-      "bytes": 324035,
-      "sha256": "b7ef3d501f58d4aebe020baad35409b866b93e561b61824be39ddb4b41ab2f77"
+      "file": "smart-tags-0.5.0.xpi",
+      "bytes": 407564,
+      "sha256": "c89f74e24db037f9faf8f8e8896c30ca80a3219c60052ad42c641c217127f269"
     },
     "source": {
-      "file": "smart-tags-0.4.1-source.zip",
-      "bytes": 335870,
-      "sha256": "0f8b22037d1698163986931241bcc9578bca081a2fd7d51a240db197a2dc5fd7"
+      "file": "smart-tags-0.5.0-source.zip",
+      "bytes": 419285,
+      "sha256": "7e18d2b5cbedb620d5b02107380bca1c4a9d5fd6d665c6d256b22546149c5a4d"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { conceptLocations, mountNavigator, readLibraryTagItems, searchNavigatorConcepts } from '../src/navigator.ts';
+import { conceptLocations, mountNavigator, navigatorReady, readLibraryTagItems, searchNavigatorConcepts } from '../src/navigator.ts';
 import type { DisplayTag } from '../src/ui-contract.ts';
 
 function tag(id: string, name: string, extra: Partial<DisplayTag> = {}): DisplayTag {
@@ -157,6 +157,13 @@ test('Collections remains the default before approval; the first approved taxono
   h.setSnapshot({ vocabularyVersion: 3 }); await h.runTimers(); await navigator.refresh();
   assert.equal(navigator.mode, 'collections', 'background updates respect the user switching back');
   await navigator.destroy();
+});
+
+test('Smart Tags remains discoverable with no approved list and readiness covers all required native nodes',async()=>{
+  const h=harness(false);h.setSnapshot({tags:[]});assert.equal(navigatorReady(h.win),true);
+  const navigator=mountNavigator(h.win,h.api);await navigator.refresh();assert.ok(h.text('Smart Tags'));assert.ok(h.text('Collections'));assert.equal(navigator.mode,'collections');assert.equal(navigator.available,true);
+  await navigator.setMode('tags');assert.match(h.sidebar.textContent,/Prepare and apply a tag list/);assert.doesNotMatch(h.sidebar.textContent,/consolidated vocabulary/);
+  await navigator.destroy();const delayed=h.nodes().find(node=>node.id==='zotero-tag-selector-container')!;delayed.remove();assert.equal(navigatorReady(h.win),false);h.sidebar.append(delayed);assert.equal(navigatorReady(h.win),true);
 });
 
 test('unsupported native interfaces display a fallback and preserve Collections', async () => {

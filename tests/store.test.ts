@@ -136,7 +136,7 @@ function legacyState() {
 
 test('schema-one migration preserves 107 drafts, manual decisions, ownership, and native snapshots',()=>{
   const old=legacyState(),before=JSON.stringify(old),migrated=migrateState(old);
-  assert.equal(migrated.schemaVersion,4);assert.equal(validState(migrated),true);assert.equal(migrated.tags.filter(t=>!t.custom).length,107);
+  assert.equal(migrated.schemaVersion,5);assert.equal(validState(migrated),true);assert.equal(migrated.tags.filter(t=>!t.custom).length,107);
   assert.equal(migrated.taxonomyReady,false);assert.equal(migrated.taxonomyProposal,null);assert.deepEqual(migrated.facts,{});
   assert.equal(migrated.settings.coreConceptLimit,60);assert.equal(migrated.tags[0].matchingMode,'suggest');
   assert.deepEqual(migrated.decisions,old.decisions);assert.deepEqual(migrated.ownership,old.ownership);assert.deepEqual(migrated.nativeTags,old.nativeTags);
@@ -153,10 +153,10 @@ test('the store writes an exact version-aware backup before migrating or persist
   assert.equal(JSON.parse(mem.files.get('state.json')!).schemaVersion,3);
 });
 
-test('application migration uses the schema-four backup and structural legacy validator',async()=>{
+test('application migration uses the schema-five backup and structural legacy validator',async()=>{
   const mem=memoryIO(),original=JSON.stringify(legacyState(),null,2)+'\n';mem.files.set('state.json',original);
   const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  assert.equal((await store.load()).schemaVersion,4);assert.equal(mem.files.get('state.json.pre-v4.json'),original);
+  assert.equal((await store.load()).schemaVersion,5);assert.equal(mem.files.get('state.json.pre-v5.json'),original);
 });
 
 test('a later migration retains an earlier source backup and preserves different source bytes separately',async()=>{

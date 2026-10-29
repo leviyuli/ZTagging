@@ -1,5 +1,5 @@
 /** Prepare an isolated native Zotero test. This never changes dist/ or the normal profile. */
-import { cp, mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, access, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { build } from 'esbuild';
 
@@ -36,6 +36,8 @@ const needle = 'await smartTagsScope.SmartTags.startup({ id, version, rootURI })
 if (!bootstrap.includes(needle)) throw new Error('Cannot locate the extension startup hook.');
 const injected = `${needle}\n  smartTagsScope.__SMART_TAGS_SMOKE_CONFIG = ${JSON.stringify(configuration)};\n  Services.scriptloader.loadSubScript(rootURI + 'content/native-smoke.js', smartTagsScope);`;
 await writeFile(bootstrapPath, bootstrap.replace(needle, injected));
+// The final upgrade check leaves a packaged installation in this isolated profile.
+await rm(path.join(profile, 'extensions', manifest.applications.zotero.id + '.xpi'), { force: true });
 await writeFile(path.join(profile, 'extensions', manifest.applications.zotero.id), nativeAddon, 'utf8');
 const preferences = {
   'extensions.zotero.useDataDir': true,

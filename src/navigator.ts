@@ -18,8 +18,20 @@ export interface NavigatorHandle {
   setMode(mode: Mode): Promise<void>;
   readonly mode: Mode;
   readonly filter: ConceptFilter;
+  readonly available: boolean;
+  readonly message: string;
 }
 export interface LibraryTagItem { itemID: number; names: string[] }
+
+export function navigatorReady(win: any): boolean {
+  const pane = win.ZoteroPane;
+  return !!win.document?.getElementById?.('zotero-collections-pane')
+    && ['zotero-toolbar-collection-tree', 'zotero-collections-tree-container', 'zotero-tags-splitter', 'zotero-tag-selector-container'].every(id => !!win.document.getElementById(id))
+    && !!(pane?.itemsView?.changeCollectionTreeRows && pane.itemsView.setFilter
+      && pane.collectionsView?.getSelectedRows && pane.collectionsView?.getRowIndexByID
+      && pane.collectionsView?.selection?.select && pane.getCollectionTreeRows
+      && typeof Zotero.Search === 'function' && typeof Zotero.CollectionTreeRow === 'function');
+}
 
 /** Native data supplies counts and retrieval, including papers outside the analysis pilot. */
 export async function readLibraryTagItems(): Promise<LibraryTagItem[]> {
@@ -271,7 +283,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
         heading.setAttribute('aria-expanded', String(detailExpanded)); tree.append(heading);
         if (detailExpanded) for (const tag of details) renderConcept(tag, tree);
       }
-      if (!definitions().length) tree.append(el('p', 'smart-tags-empty', 'Approve a consolidated vocabulary in the manager to browse your library by concepts.'));
+      if (!definitions().length) tree.append(el('p', 'smart-tags-empty', 'Prepare and apply a tag list in Smart Tags to browse your papers here.'));
     }
     content.append(tree);
     const actions = el('div', 'smart-tags-actions');
@@ -328,7 +340,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   if (pane && doc.createElementNS && typeof pane.insertBefore === 'function') {
     root = el('div', 'smart-tags-navigator'); root.id = 'smart-tags-navigator';
     const bar = el('div', 'smart-tags-tabs'); bar.setAttribute('role', 'tablist'); bar.setAttribute('aria-label', 'Library navigation');
-    tabs = { tags: button('Tags', () => setMode('tags')), collections: button('Collections', () => setMode('collections')) };
+    tabs = { tags: button('Smart Tags', () => setMode('tags')), collections: button('Collections', () => setMode('collections')) };
     tabs.tags.setAttribute('role', 'tab'); tabs.collections.setAttribute('role', 'tab');
     bar.append(tabs.tags, tabs.collections);
     status = el('div', 'smart-tags-status'); status.setAttribute('role', 'status'); status.hidden = true;
@@ -348,6 +360,8 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   return {
     refresh, setMode,
     get mode() { return mode; },
+    get available() { return !!root && adapter.available && nativeDOMAvailable; },
+    get message() { return error; },
     get filter() { return { mode: filter.mode, selections: filter.selections.map(selection => ({ ...selection })) }; },
     async destroy() {
       if (destroyed) return;
