@@ -1,32 +1,32 @@
-# v0.5.2 validation
+# v0.5.3 validation
 
 Target: Zotero 10.0.6 on Windows. Machine-readable results and installer/source hashes are in [dist/validation.json](dist/validation.json).
 
 ## Automated checks
 
-`npm run verify` passed TypeScript checks, all 652 tests, and the production build. New manager regressions verify compact empty views, selection-only batch controls, action eligibility, selections cleared by search/status changes, keyboard navigation, popup-only scrolling, Escape/Tab, outside focus, and cleanup on refresh or destruction. Existing per-paper and batch actions still reach the same controller operations through their accessible menus.
+`npm run verify` passed TypeScript checks, all 669 tests, and the production build. Consolidation tests cover local recovery, correction, a bounded fresh reply, automatic splitting, provisional source fallback, short input-scoped references, historical large replies, and accepting the final permitted dispatched response. Controller tests exercise the full recovery loop, durable request limits, restart with a saved fresh reply, pre-dispatch persistence rollback, budget rejection, authentication and other provider failures, and cancellation. Completed parts, factual evidence, selected connections, and native tags are checked for preservation.
 
-The full suite retains coverage for consolidation recovery, budgets, authentication pauses, evidence identities, Dismiss and no_tag, manual choices, stale previews, metadata preservation, migration, and undo. Analysis, persistence, provider, and native-data modules were unchanged in this patch.
+Manager tests verify automatic-repair progress, active-part counts, remaining-cost estimates, and unavailable estimates without adding retry controls. Existing attention menus, navigator, evidence identities, manual decisions, stale previews, metadata preservation, migration, native-data protection, and undo remain covered.
 
-Tests exercise the TagReconciliation, TagPreparation, paper recovery, and consolidation module interfaces. Persistence tests use public controller actions; manager tests use accessible controls. The release diff received the requested codebase-design and deslop review.
+Tests exercise consolidation and public controller interfaces, with manager assertions through accessible controls. The release diff received the requested codebase-design and deslop review; recovery policy stays within the consolidation module while the controller owns dispatch, persistence, and budgets.
 
 ## Isolated Zotero checks
 
-129 native checks passed in a separate profile and data directory. New checks verify empty-state controls, selection-only actions, one recovery action per row, long-title containment, menu placement, keyboard focus, Escape restoration, and no provider calls. The full run also checks native title/PDF/note/annotation searches, independent windows, Collections restoration and columns, editor scrolling, metadata preview/apply/undo, Dismiss, exclusion, Include again, and standalone no_tag retrieval. The PDF checks use an actual locally extracted and indexed PDF; exact results are recorded in dist/validation.json.
+138 native checks passed in a separate profile and data directory. A new retained-work scenario uses 64 synthetic papers and 256 factual concepts, including a legacy 172-input portion and malformed replies. One Resume completes automatic repair and splitting through ten synthetic provider requests, without another pause for reply format. Rendered repair progress is checked. Completed work, cached facts, selected connection, budget accounting, and native assignments remain protected, with no AI, PDF-extraction, or native-tag-write calls in that scenario.
 
-Zotero's AddonManager installed the production 0.5.2 package over a disabled 0.5.1 installation without an uninstall, preserving the extension ID, local state, library tags, and item columns. The HTTPS update manifest and installer SHA-256 hash were checked. Remote feed discovery was not exercised before publication.
+The full native run also checks title/PDF/note/annotation searches, independent windows, Collections restoration and columns, editor scrolling, metadata preview/apply/undo, Dismiss, exclusion, Include again, standalone no_tag retrieval, compact attention controls, menu placement, and keyboard focus. PDF checks use an actual locally extracted and indexed PDF; results are recorded in dist/validation.json.
 
-The old package remained disabled throughout this test so its older code could not write schema-5 state. No plugin section was added to the item or information panes.
+Zotero's AddonManager installed the production 0.5.3 package over a disabled 0.5.2 installation without uninstalling, preserving the extension ID, local state, library tags, and item columns. The HTTPS update manifest and installer SHA-256 hash were checked. Remote feed discovery was not exercised before publication. The old package remained disabled so its code could not write newer local state. No plugin section was added to the item or information panes.
 
-## Retained backend validation
+## Private retained-work replay
 
-The prior 0.5.1 release replayed a read-only copy of the paused 744-paper state, including its failed model response. All 752 cached factual records, original quotations, provenance, evidence IDs, catalog, and selected snapshot stayed unchanged. That backend is unchanged in this interface-only patch; this release did not reopen the working profile or send a live AI request.
+A read-only copy of the current 744-paper build retained 752 cached factual records and two completed organization parts. Its saved failed 172-input response recovered locally into 167 candidates, without a provider request. Both completed parts, retained raw history, factual wording, quotations, provenance, catalog, and selected evidence snapshot remained unchanged.
 
-In that prior replay, the actual first response advanced locally to 1 of 29 completed parts without another provider request. Controller Resume reproduced all 744 cached inputs and requested the next part rather than resending that response.
+A synthetic continuation completed organization in 97 replies: 78 map, 18 reduction, and one global reply. Prompts stayed at or below 71,840 UTF-8 bytes; map/reduction portions contained at most 64 inputs. All 5,174 registry identities were retained or explicitly excluded, with no foreign evidence imported.
 
-Synthetic continuation exercised the remaining parts, two reduction steps, and the final global step within the 100,000-byte request limit. Original outputs and deferred-link history were retained, and unresolved final links required recorded decisions.
+A public-controller replay used 99 synthetic organization responses, including failed correction, automatic fresh generation, interruption, and saved-response restart. It preserved the selected model, spent budget, completed jobs, facts, snapshot, and native-tag snapshots. It then intentionally stopped at the scientific-preparation boundary rather than invent scientific judgments. That request contained six tags and 29 factual sources in 33,665 UTF-8 bytes, without context truncation. The original copied state remained byte-for-byte unchanged.
 
-Those private replays tested persistence and identity accounting, not scientific recommendation quality, and made no live provider requests or native library writes.
+These replays test queue recovery, persistence, input bounds, and identity accounting. They do not establish the scientific quality of synthetic recommendations. No live provider request, repeated extraction, or native library write occurred, and the working run was not interrupted.
 
 ## Scope of verification
 

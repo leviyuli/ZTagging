@@ -139,6 +139,7 @@ export interface ManagerSnapshot {
     message?: string;
     spentUSD?: number;
     estimatedUSD?: number;
+    estimatePending?: boolean;
     jobs?: DisplayJob[];
     consolidation?: {
       phase: string;

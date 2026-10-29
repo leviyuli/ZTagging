@@ -353,6 +353,13 @@ test('finished paper reading does not present tag organization as complete',asyn
   const bar=h.all().find(node=>node.className==='progress-bar');assert.equal(bar.children[0].style.width,'25%');
 });
 
+test('automatic repairs stay in progress and uncertain remaining API work is not shown as a completed total',async t=>{
+  const data=snapshot();data.queue={status:'running',phase:'organizing',phaseProgress:{completed:1,total:29,label:'Parts organized'},completed:744,total:744,failed:0,message:'Repairing part 2 of 29…',provider:'deepseek',spentUSD:0.628,estimatedUSD:0.628,estimatePending:true};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Repairing part 2 of 29/);assert.match(h.app.textContent,/Estimated cost so far: \$0\.6280\. Remaining work is still being estimated\./);assert.doesNotMatch(h.app.textContent,/estimated total|estimated remaining: \$0\.0000|Resume to request/);assert.equal(h.button('Resume').disabled,true);assert.equal(h.button('Retry'),undefined);
+  data.queue.message='Reducing batch size and continuing automatically…';data.queue.estimatePending=false;data.queue.estimatedUSD=1.128;await h.emitUpdate();assert.match(h.app.textContent,/Reducing batch size and continuing automatically/);assert.match(h.app.textContent,/estimated remaining: \$0\.5000/);assert.equal(h.button('Resume').disabled,true);
+  data.queue.status='paused';data.queue.message='The next request exceeds the remaining estimated API budget.';await h.emitUpdate();assert.equal(h.button('Resume').disabled,false);assert.match(h.app.textContent,/usage or spending limit/);
+});
+
 test('attention offers per-paper and batch Dismiss without excluding or changing native tags',async t=>{
   const data=snapshot(),entry={id:'a',title:'Notice one',status:'needsInformation' as const,message:'Some information is missing.',phase:'facts',canDismiss:true,canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:false};
   data.paperAttention={queued:0,papers:[entry,{...entry,id:'b',title:'Notice two',status:'failed'},{...entry,id:'c',title:'Ready paper',status:'usable',canDismiss:false}]};const before=structuredClone(data.papers);const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());

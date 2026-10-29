@@ -1,19 +1,19 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.5.2",
-  "verifiedAt": "2026-10-29T07:03:48.496Z",
+  "version": "0.5.3",
+  "verifiedAt": "2026-10-29T07:46:32.945Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Attention-panel interface only",
+  "scope": "Automatic bounded consolidation recovery",
   "schemaVersion": 5,
   "consolidationProtocolVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 652,
+    "passed": 669,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 129,
+    "passed": 138,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -348,6 +348,42 @@
         "passed": true
       },
       {
+        "name": "v053IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v053IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v053RecoversWithoutManualResume",
+        "passed": true
+      },
+      {
+        "name": "v053RepairsThenRetriesAndSplits",
+        "passed": true
+      },
+      {
+        "name": "v053CompletedPartNeverRepeated",
+        "passed": true
+      },
+      {
+        "name": "v053BoundedRequestsAndRetainedDiagnostics",
+        "passed": true
+      },
+      {
+        "name": "v053RecoveryNeverPausedForFormatting",
+        "passed": true
+      },
+      {
+        "name": "v053RetainedFactsAndNativeTagsUnchanged",
+        "passed": true
+      },
+      {
+        "name": "v053ActivityShowsRemainingRatherThanFalseTotal",
+        "passed": true
+      },
+      {
         "name": "v052IsolatedDataGuard",
         "passed": true
       },
@@ -534,13 +570,24 @@
     ],
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection.",
     "nativePackageUpgrade": {
-      "from": "0.5.1",
-      "to": "0.5.2",
+      "from": "0.5.2",
+      "to": "0.5.3",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "a4edaa517fe13be0b359ae44948334271cae0cf44bbfa461003a735afe14bed0",
+      "packageHash": "a6b33d4d5aa3307fabdd458138442e57e8594e4a673e40eec972d7e7f2952340",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
+    },
+    "automaticRecovery": {
+      "papers": 64,
+      "concepts": 256,
+      "legacyPartInputs": 172,
+      "syntheticProviderRequests": 10,
+      "realAIRequests": 0,
+      "nativeTagWrites": 0,
+      "pdfExtractions": 0,
+      "repairVisible": true,
+      "automaticRecovery": true
     },
     "attentionLayout": {
       "rows": 2,
@@ -551,26 +598,102 @@
     }
   },
   "nativeBundleMatchesInstaller": true,
-  "attentionUI": {
-    "emptyViewOmitsSelectionActionsPagerHelpAndFooter": true,
-    "oneRecoveryActionPerPaper": true,
-    "paperTitleOpensZotero": true,
-    "secondaryRowActionsInMore": true,
-    "bulkControlsOnlyAfterSelection": true,
-    "secondaryBulkActionsInActionsMenu": true,
-    "headerMoreRetainsZoteroSelectionExclusion": true,
-    "onlyApplicableCommandsIncluded": true,
-    "searchAndStatusChangesClearSelection": true,
-    "keyboardNavigationAndFocusRestoration": true,
-    "popupScrollKeepsActiveCommandVisible": true,
-    "outsideClickTabAndEscapeClose": true,
-    "popupListenersCleanedOnRefreshAndDestroy": true,
-    "longTitlesWrapWithinTheirColumn": true
+  "recoveryPolicy": {
+    "localSavedResponseFirst": true,
+    "correctionAttemptsPerGeneration": 1,
+    "automaticFreshAttemptsPerSplitLineage": 1,
+    "maxPartInputs": 64,
+    "maxPromptUTF8Bytes": 100000,
+    "minSplitInputs": 8,
+    "maxSplitDepth": 4,
+    "maxDispatchedOrganizationRequests": 512,
+    "countersSurviveRestartAndResume": true,
+    "budgetRejectionBeforeDispatchConsumesAttempt": false,
+    "sourceFallbackIsProvisional": true,
+    "scientificValidationRequired": true,
+    "noAutomaticProviderSwitch": true,
+    "noAutomaticTransportRetry": true
+  },
+  "privateRetainedWorkReplay": {
+    "status": "passed",
+    "startedAt": "2026-10-29T07:37:55.434Z",
+    "scope": "Copied-state persistence and transport replay only; synthetic replies are not scientific recommendations.",
+    "liveProviderRequests": 0,
+    "extractionRequests": 0,
+    "nativeWrites": 0,
+    "localRecovery": {
+      "status": "passed",
+      "selectedCompletedJobs": 744,
+      "cachedFacts": 752,
+      "originalCompletedParts": 2,
+      "recoveredSavedInputs": 172,
+      "recoveredOutputs": 167,
+      "originalCompletedPartsImmutable": true,
+      "retainedRawHistoryImmutable": true,
+      "sourceObjectUnchanged": true,
+      "nextMapInputs": 64,
+      "nextPromptUTF8Bytes": 40781,
+      "durableRequestLimit": 512,
+      "liveProviderRequests": 0,
+      "extractionRequests": 0
+    },
+    "syntheticCompletion": {
+      "status": "passed",
+      "syntheticReplies": 97,
+      "phases": {
+        "map": 78,
+        "reduce": 18,
+        "final": 1
+      },
+      "maxPromptUTF8Bytes": 71840,
+      "maxMapReduceInputs": 64,
+      "registryIdentities": 5174,
+      "allSourcesRetainedOrExplicitlyExcluded": true,
+      "foreignSources": 0,
+      "completedAndRecoveredCandidatesImmutable": true,
+      "liveProviderRequests": 0,
+      "extractionRequests": 0
+    },
+    "controllerResume": {
+      "status": "passed",
+      "selectedCompletedJobs": 744,
+      "syntheticRequests": 99,
+      "firstKinds": [
+        "initial",
+        "correction",
+        "initial"
+      ],
+      "automaticFreshGeneration": true,
+      "interruptedFreshReplyReplayed": true,
+      "requestCountDurable": true,
+      "selectedProviderAndModelPreserved": true,
+      "spentBudgetPreserved": true,
+      "factsCatalogSnapshotAndNativeTagsUnchanged": true,
+      "completedOriginalPartsImmutable": true,
+      "metadataReads": 1488,
+      "localPDFReads": 322,
+      "scientificPreparationGuards": 1,
+      "scientificJudgmentsFabricated": false,
+      "liveProviderRequests": 0,
+      "extractionRequests": 0,
+      "nativeWrites": 0,
+      "scientificPreparationBoundary": {
+        "kind": "scientific-tag-preparation",
+        "promptUTF8Bytes": 33665,
+        "suppliedTags": 6,
+        "suppliedSources": 29,
+        "contextTruncated": false
+      }
+    },
+    "originalPrivateCopyBytesUnchanged": true,
+    "finishedAt": "2026-10-29T07:38:55.353Z"
   },
   "unchangedBehavior": {
-    "controller": true,
-    "analysisAndConsolidation": true,
-    "persistenceAndSchema": true,
+    "factualExtractor": true,
+    "evidenceIdentities": true,
+    "sourceWordingAndProvenance": true,
+    "historicalFingerprintPolicy": true,
+    "persistenceSchema": true,
     "providerAndBudgetControls": true,
     "nativeAssignmentAndUndo": true,
     "incomingAutomation": true,
@@ -578,34 +701,30 @@
   },
   "rightItemAndInformationPaneSection": false,
   "skills": {
-    "deslop": "Focused UI/CSS diff cleanup and reviewer audit.",
-    "codebaseDesign": "Menu behavior kept behind a small manager interface and tested through accessible controls; existing controller endpoint assertions retained."
+    "deslop": "Focused recovery/controller/UI diff cleanup and independent read-only audit.",
+    "codebaseDesign": "Recovery policy behind consolidation interfaces; controller owns persistence, dispatch and budget; tests cover module and accessible manager interfaces."
   },
   "workingLibraryModified": false,
+  "workingRunInterrupted": false,
   "liveProviderRequests": 0,
-  "newPrivateLibraryReplay": false,
-  "priorBackendValidation": {
-    "version": "0.5.1",
-    "unchangedBackend": true,
-    "reference": "https://github.com/leviyuli/ZTagging/releases/tag/v0.5.1"
-  },
   "publicArtifactPrivateDataScan": "passed",
   "limits": [
     "Native checks used rendered Zotero controls, focus state and layout measurements.",
     "Desktop screenshot review was unavailable because the computer-use helper could not connect.",
     "No live AI requests or real account authorization were performed.",
+    "Private replay used synthetic transport and intentionally stopped at scientific preparation; recommendation quality is not certified.",
     "Native package upgrade was tested without uninstall; remote feed discovery was not exercised before publication."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.5.2.xpi",
-      "bytes": 433375,
-      "sha256": "a4edaa517fe13be0b359ae44948334271cae0cf44bbfa461003a735afe14bed0"
+      "file": "smart-tags-0.5.3.xpi",
+      "bytes": 441309,
+      "sha256": "a6b33d4d5aa3307fabdd458138442e57e8594e4a673e40eec972d7e7f2952340"
     },
     "source": {
-      "file": "smart-tags-0.5.2-source.zip",
-      "bytes": 453407,
-      "sha256": "f5a35ddff2e7de1052c84c8450b228d26a231718c2a65fa752f4cb4528d6e9d3"
+      "file": "smart-tags-0.5.3-source.zip",
+      "bytes": 466687,
+      "sha256": "87072f55b81fc50a3b61081adc330c203bc3d996e7d6be535bad053fec8a08df"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

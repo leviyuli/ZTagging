@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.5.2.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.2.xpi).
+2. Select [`smart-tags-0.5.3.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.5.3.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. In **Settings**, configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Choose **Pilot · 50 papers** on Overview and click **Prepare tags**. Smart Tags reads the papers, brings related concepts together, and checks names, categories, and scientific meanings using your selected model.
@@ -19,7 +19,7 @@ The extension checks this repository's [update manifest](updates.json) for new v
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.5.2** simplifies the paper-attention panel: one recovery action per paper, secondary choices under **More**, and batch controls only after selection. Saved-response recovery, **Dismiss**, reviewed exclusions, and the **no_tag** marker remain available. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
+Version **0.5.3** automatically recovers from routine tag-building reply errors, rather than asking for Resume after each failed part. If your build is already paused, update and click **Resume** once. Completed paper analysis and saved parts are retained. The compact paper-attention panel, **Dismiss**, reviewed exclusions, and **no_tag** remain available. **Existing tags** compares native Zotero tags with your applied tag list, while **Activity** provides paper recovery. Each preparation run can make up to **three additional AI requests** to improve its completed initial tag list. The preferred count of **60 tags is a starting point**, allowing distinct topics to remain separate. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
 
 The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
 
@@ -33,7 +33,9 @@ An unchanged rebuild reuses completed facts and saved consolidation output. You 
 
 For larger libraries, consolidation processes bounded portions, reconciles their candidates, and produces one global proposal. Saved parts retain their original evidence IDs and resume without repeating completed paper extraction. Progress distinguishes **Reading papers**, **Organizing tags**, **Checking tag meanings**, and **Ready for review**. Reading every paper finishes the extraction phase; the global tag list still needs to be organized and checked. Consolidation requests are separate from the three additional preparation checks, and each uses the selected connection and budget controls.
 
-If a saved part stopped because of a routine relationship error, **Resume** first tries to recover its existing reply locally. Cross-category associations are kept as related links, and links to tags in other batches are retained for the global pass. Remaining invalid outputs can receive one bounded automatic correction per part generation; scientifically contradictory mappings remain blocked. An explicit Resume after an exhausted correction requests a new reply for that part while retaining completed parts and budget history.
+Tag building first tries to recover a saved reply locally. Cross-category associations are kept as related links, links to tags in other batches are retained for the global pass, and duplicate or ambiguous generated aliases are withheld. If the reply still cannot be used, the extension requests one correction, then at most one fresh reply, and splits a repeatedly failing part into smaller portions automatically. Very small source portions can fall back to their validated factual concepts as provisional candidates for global checking; this does not approve a tag or a scientific mapping. New map/reduction requests contain at most 64 inputs and all organization requests stay within 100,000 UTF-8 bytes. The number of parts can increase when work is divided.
+
+Recovery uses your selected model and budget. Attempt counters survive restart and ordinary Resume, with at most 512 dispatched organization requests per build. Authentication, quota, permission, connection, or budget problems still pause the run, as do scientific or structural failures that remain after bounded recovery. A new build is an explicit choice; Resume does not reset the limits. The cost display shows spending so far and an estimate of remaining work, or says when that estimate is not yet available.
 
 ## Dismiss or exclude an item
 
@@ -71,7 +73,7 @@ DeepSeek uses its official Chat Completions endpoint with JSON output. Empty, tr
 
 ## Evidence identities and validation
 
-Validated factual concepts, registry entries, and new vocabulary concepts receive locally allocated opaque identities. Each consolidation uses a persisted protocol-v2 snapshot with the exact selected papers and source revisions. Every library size uses `supportRegistryIds`; labels never serve as evidence identifiers. Presentation renames preserve links and coverage. Meaning or scope edits require revalidation. Original wording, quotations, and provider/model provenance remain intact.
+Validated factual concepts, registry entries, and new vocabulary concepts receive locally allocated opaque identities. Each consolidation uses a persisted protocol-v2 snapshot with the exact selected papers and source revisions. Requests provide short references scoped to their current inputs; replies expand locally to those exact persistent identities. Historical `supportRegistryIds` and candidate-ID replies remain readable. Labels never serve as evidence identifiers. Presentation renames preserve links and coverage. Meaning or scope edits require revalidation. Original wording, quotations, and provider/model provenance remain intact.
 
 AEMWE is preferred over repeated long/plural forms, with **anion-exchange membrane water electrolyzer** in details and AEMWEs/AEM-WE as searchable aliases. Ordinary core wording is lowercase with conservative singular forms. Scientific casing such as Co, CO, pH, and EIS remains protected. DIY names are unchanged.
 

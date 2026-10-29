@@ -909,9 +909,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const q = s.queue;
     const number = (value?: number) => value === undefined ? '—' : `$${value.toFixed(4)}`;
     const runProvider = q.provider || s.settings.provider;
+    const remainingUSD = q.estimatedUSD !== undefined && q.spentUSD !== undefined ? Math.max(0, q.estimatedUSD - q.spentUSD) : undefined;
+    const apiCost = q.estimatePending ? `Estimated cost so far: ${number(q.spentUSD)}. Remaining work is still being estimated.` : `Estimated cost so far: ${number(q.spentUSD)} · estimated remaining: ${number(remainingUSD)}. Requests stay within your chosen spending limit.`;
     const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'actions', button('Resume', () => run('resume'), 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
-      h('p', 'card-description', runProvider !== 'chatgpt' ? `Estimated cost so far: ${number(q.spentUSD)} · estimated total: ${number(q.estimatedUSD)}. Requests stay within your chosen spending limit.` : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
+      h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('vocabulary'), 'small')));
     const history = h('div', '');
     if (!s.history.length) history.append(empty('No applied changes yet', 'Approved tag assignments and cleanup batches will appear here with their undo status.'));

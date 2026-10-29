@@ -1,4 +1,12 @@
-# Upgrading to Smart Tags 0.5.2
+# Upgrading to Smart Tags 0.5.3
+
+## Version 0.5.3
+
+Install the update through Zotero without uninstalling the existing extension. If a build is already paused, click **Resume** once after updating. Routine reply repair then continues automatically. Saved completed parts, original replies, cached extraction, selected evidence, settings, credentials, manual choices, and spent budget are retained. Loading the update makes no provider request or native library change.
+
+State remains schema 5 and consolidation remains protocol 2. Optional queue fields record dispatched organization requests, fresh-reply allowance, split depth, and superseded portions. Completed old portions are not repartitioned or resent. Unstarted oversized portions can be divided before dispatch; replaced parent portions retain their replies and are marked complete with no output, while active child portions carry the remaining work. Short transport references resolve against each portion's exact persistent input IDs; original evidence identities, wording, and historical proofs are unchanged. No factual-extractor or terminology-policy version changes are required.
+
+An existing complete failed reply is rechecked locally before another request. Each portion can receive one correction per generation and at most one automatic fresh generation along its split lineage. Splits stop at a bounded size/depth, and each build allows at most 512 dispatched organization requests. Budget rejection before dispatch does not consume an attempt. Counters survive restart and ordinary Resume. The three-request scientific-preparation allowance remains separate. Changing provider or starting another build still requires an explicit user choice; spent budget is not reset by automatic recovery.
 
 ## Version 0.5.2
 

@@ -22,7 +22,7 @@ import {classifyPaperAttention,sameMetadata,reverseMetadataPatch} from './paper-
 import type {PaperInputAssessment,MetadataPreview,MetadataPatch} from './paper-recovery.ts';
 import {createReconciliationPlan,buildReconciliationPrompt,applyReconciliationAnalysis,compileReconciliationChanges,buildDIYDefinitionPrompt,applyDIYDefinitions,prepareDIYDefinitions} from './tag-reconciliation.ts';
 import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYDefinitionChoice,ReviewedReconciliationChanges} from './tag-reconciliation.ts';
-import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork,recoverConsolidationWork,noteConsolidationFailure,applyConsolidationCorrection,retryConsolidationTask} from './library-consolidation.ts';
+import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult,finishedConsolidation,validConsolidationWork,noteConsolidationFailure,applyConsolidationCorrection,currentConsolidationTask,consolidationProgress,advanceConsolidationRecovery,MAX_CONSOLIDATION_AUTOMATIC_REQUESTS} from './library-consolidation.ts';
 import type {ConsolidationWork} from './library-consolidation.ts';
 import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
 
@@ -425,7 +425,7 @@ export class AppController implements ManagerAPI {
     return result;
   }
   private processingMessage(message:string):string {
-    if(/AI could not combine|tag-building part.*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
+    if(/AI could not combine|automatic tag repair|model could not finish a valid tag list|tag-building part.*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
     if(/maximum context|context.length|too many tokens|request.*too large/i.test(message))return 'The tag-building request was too large. Resume to organize the saved analysis in smaller parts.';
     if(/comparison.*changed|preview.*(?:stale|out of date)|refresh.*comparison/i.test(message))return 'Paper information or tags changed. Refresh the comparison before applying it.';
     if(/tag-building part|consolidation response|one part/i.test(message))return 'One part of tag building could not finish. Resume to retry that part; completed paper analysis is saved.';
@@ -798,10 +798,11 @@ export class AppController implements ManagerAPI {
     const attention=this.paperAttentionDisplay(),skipped=run?run.jobs.filter(job=>run.skippedIds?.includes(job.paperId)||this.excluded(job.paperId)).length:0;
     const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(this.state.tagPreparation?'checking':'organizing'):'reading';
     const stage=run?.consolidation?.work;
-    const phaseProgress=phase==='organizing'&&stage?{completed:stage.tasks.filter(task=>task.completed).length,total:stage.tasks.length,label:'Parts organized'}:phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
+    const phaseProgress=phase==='organizing'&&stage?{...consolidationProgress(stage),label:'Parts organized'}:phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
     const maintenance=(!run||run.status==='idle')?this.state.maintenanceTasks?.find(task=>task.status==='running'||task.status==='paused'):undefined;
     const queueRun=maintenance?.run??run;
     const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):run?.message??'Ready';
+    const queueEstimate=queueRun?this.estimateRun(queueRun):{value:0,pending:false};
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,
       existingTags:this.existingTagDisplay(),paperAttention:attention,metadataPreview:metadataDisplay,
@@ -811,7 +812,7 @@ export class AppController implements ManagerAPI {
       taxonomyArchives:this.state.taxonomyArchives.map(a=>({id:a.id,date:a.date,version:a.version,reason:a.reason,count:a.tags.length})),
       suggestions:this.state.suggestions.map(s=>({...s,locked:!!this.state.decisions[pair(s.paperId,s.tagId)]?.locked,applied:s.applied||false})),
       cleanup:this.state.cleanup.map(({patches,...display})=>display),history:this.state.history.map(h=>({id:h.id,date:h.date,label:h.label,count:h.patches.length+(h.metadataPatches?.length??0)+Object.keys(h.afterDefinitions??{}).length,canUndo:h.status==='applied',status:h.status})),neighbors:this.state.neighbors,
-      queue:{phase:maintenance?'reading':phase,phaseProgress:maintenance?undefined:phaseProgress,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueRun?this.estimateRun(queueRun):0,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
+      queue:{phase:maintenance?'reading':phase,phaseProgress:maintenance?undefined:phaseProgress,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueEstimate.value,estimatePending:queueEstimate.pending,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
       settings:{...this.state.settings},models:[...this.state.models],connection:{apiKeyStored:apiKey,deepseekKeyStored:deepseekKey,chatgptSignedIn:session.connected&&session.sharing,accountLabel:session.email??undefined,verified:this.state.verifiedConnections.includes(this.connectionKey()),credentialStorage:this.env.credentialStatus?.()??'OS-encrypted',accounts:session.accounts.map(a=>({id:a.id,label:a.label})),selectedAccountId:session.accountId??undefined},warnings:[...this.state.warnings]
     };
   }
@@ -920,12 +921,6 @@ export class AppController implements ManagerAPI {
           if(this.state.run.scope==='pilot'&&this.state.run.kind==='tag'){this.state.pilotIds=[];this.state.pilotExpected=this.state.run.jobs.length;this.state.pilotReviewed=false;}
         }
         if(this.state.run.kind==='rebuild')for(const job of this.state.run.jobs)if(!this.state.facts[job.paperId])job.status='pending';
-        if(this.state.run.consolidation?.work?.status==='failed'){
-          this.rememberPreparation();delete this.state.run.consolidation;delete this.state.run.preparation;delete this.state.tagPreparation;this.state.taxonomyProposal=null;
-        }
-        const saved=this.state.run.consolidation;
-        const failedPart=saved?.work?.tasks.find(task=>!task.completed&&task.validationError&&(task.correctionAttempts??0)>=1);
-        if(saved?.work&&failedPart&&!saved.pendingResponse)saved.work=retryConsolidationTask(saved.work,failedPart.id);
         this.state.run.status='running';this.state.run.message='Resuming…';
         for(const task of this.state.maintenanceTasks??[])if(task.status==='paused'){task.status='queued';task.run.status='running';task.run.settings=copy(this.state.settings);delete task.error;}
         await this.save();this.launch();break;
@@ -1314,17 +1309,22 @@ export class AppController implements ManagerAPI {
     return paidProvider(s.provider)?((new TextEncoder().encode(SYSTEM+prompt).length+2048)*s.inputPricePerMillion+s.maxOutputTokens*s.outputPricePerMillion)/1_000_000:0;
   }
   private estimateRun(run:Run) {
-    if(!paidProvider(run.settings.provider))return 0;
+    if(!paidProvider(run.settings.provider))return {value:0,pending:false};
+    const result=(remaining:number,pending=false)=>({value:run.spentUSD+remaining,pending});
     const maintenance=this.state.maintenanceTasks?.find(task=>task.run===run);
-    if(maintenance&&maintenance.kind!=='retry')return run.spentUSD;
+    if(maintenance&&maintenance.kind!=='retry')return result(0);
     const pending=run.jobs.filter(j=>j.status!=='completed'&&!this.excluded(j.paperId)).reduce((sum,j)=>{const paper=this.state.papers[j.paperId];return sum+(paper?this.estimate(run.kind==='rebuild'?buildFactExtractionPrompt(paper):buildAnalysisPrompt(paper,this.state.tags),run.settings):0);},0);
-    if(maintenance)return run.spentUSD+pending;
+    if(maintenance)return result(pending);
     const work=run.consolidation?.work;
-    if(work){const next=nextConsolidationRequest(work);return run.spentUSD+pending+(next?this.estimate(next.prompt,run.settings)*work.tasks.filter(task=>!task.completed).length:0);}
+    if(work){
+      const progress=consolidationProgress(work),remaining=progress.total-progress.completed;
+      try{const next=nextConsolidationRequest(work);return result(pending+(next?this.estimate(next.prompt,run.settings)*remaining:0),remaining>0&&!next);}
+      catch{return result(pending,true);}
+    }
     const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean);
     const snapshot=run.consolidation?.snapshot??(run.kind==='rebuild'?createRegistrySnapshot(copy(facts),copy(this.state.evidenceCatalog)):undefined);
     const consolidation=run.kind==='rebuild'&&!run.vocabFinished&&run.consolidation?.value===undefined?this.estimate(buildConsolidationPrompt(facts,this.state.tags,run.settings.coreConceptLimit??60,snapshot),run.settings):0;
-    return run.spentUSD+pending+consolidation;
+    return result(pending+consolidation);
   }
   private async request(prompt:string,run:Run,onDispatch?:()=>void|(()=>void)):Promise<CompletionResult> {
     const signal=(this.state.run===run?this.abort:this.maintenanceAbort)?.signal;
@@ -1402,17 +1402,21 @@ export class AppController implements ManagerAPI {
     if(checkpoint.value===undefined&&(checkpoint.work||new TextEncoder().encode(buildConsolidationPrompt(facts,existing,run.settings.coreConceptLimit??60,checkpoint.snapshot)).length>100_000)){
       checkpoint.work??=createConsolidationWork(facts,existing,checkpoint.snapshot,run.settings.coreConceptLimit??60);
       if(checkpoint.pendingResponse)this.applyConsolidationReply(checkpoint);
-      checkpoint.work=recoverConsolidationWork(checkpoint.work);
-      checkpoint.failed=!!checkpoint.work.tasks.find(task=>!task.completed)?.validationError;await this.save();
-      for(let request=nextConsolidationRequest(checkpoint.work);request;request=nextConsolidationRequest(checkpoint.work)){
+      for(;;){
         if(run.status!=='running'||this.shuttingDown)return;
-        run.message=request.kind==='correction'?'Repairing one part of your tag list…':`Organizing your tag list: ${request.phase==='final'?'global merge':request.phase==='reduce'?'combining topics':'part '+(request.completed+1)+' of '+request.total}…`;await this.save();
+        checkpoint.work=advanceConsolidationRecovery(checkpoint.work);
+        checkpoint.failed=checkpoint.work.status==='failed';await this.save();
+        const request=nextConsolidationRequest(checkpoint.work);if(!request)break;
+        const part=currentConsolidationTask(checkpoint.work)!;
+        run.message=request.kind==='correction'?`Repairing part ${request.completed+1} of your tag list automatically…`:(part.splitDepth??0)>0?`Organizing smaller parts of your tag list: ${request.completed+1} of ${request.total}…`:(part.automaticFreshAttempts??0)>0?'Trying a fresh reply for this part automatically…':`Organizing your tag list: ${request.phase==='final'?'global merge':request.phase==='reduce'?'combining topics':'part '+(request.completed+1)+' of '+request.total}…`;await this.save();
         try{
-          const response=await this.request(request.prompt,run,request.kind==='correction'?()=>{
-            const task=checkpoint.work!.tasks.find(task=>task.id===request!.id)!,before=task.correctionAttempts??0;
-            task.correctionAttempts=before+1;task.correctionPending=false;
-            return ()=>{task.correctionAttempts=before;task.correctionPending=true;};
-          }:undefined);
+          const response=await this.request(request.prompt,run,()=>{
+            const work=checkpoint.work!,before=work.automaticRequests??0,attempts=part.correctionAttempts,pending=part.correctionPending;
+            if(before>=MAX_CONSOLIDATION_AUTOMATIC_REQUESTS)throw new Error('Automatic tag repair reached its request limit. Completed analysis and organized parts are saved.');
+            work.automaticRequests=before+1;
+            if(request.kind==='correction'){part.correctionAttempts=(attempts??0)+1;part.correctionPending=false;}
+            return ()=>{work.automaticRequests=before;if(attempts===undefined)delete part.correctionAttempts;else part.correctionAttempts=attempts;if(pending===undefined)delete part.correctionPending;else part.correctionPending=pending;};
+          });
           checkpoint.pendingResponse={requestId:request.id,raw:response.value,kind:request.kind};await this.save();
         }catch(error){
           const failure=error as ProviderFailure|null;
@@ -1426,7 +1430,7 @@ export class AppController implements ManagerAPI {
         this.applyConsolidationReply(checkpoint);await this.save();
       }
       checkpoint.value=finishedConsolidation(checkpoint.work);
-      if(checkpoint.value===undefined){checkpoint.failed=true;await this.save();throw new Error(checkpoint.work.status==='failed'?'The AI could not combine these topics into a compact list. Resume to organize the saved paper analysis again.':'One tag-building part still needs repair. Resume to request a new reply for that part; completed paper analysis is saved.');}
+      if(checkpoint.value===undefined){checkpoint.failed=true;await this.save();throw new Error((checkpoint.work.automaticRequests??0)>=MAX_CONSOLIDATION_AUTOMATIC_REQUESTS?'Automatic tag repair reached its request limit. Completed analysis and organized parts are saved. Start a new tag build to try again.':'The model could not finish a valid tag list after automatic repair. Completed analysis and organized parts are saved. Choose another model if needed, then start a new tag build.');}
       checkpoint.phase='validating';await this.save();
     }
     if(checkpoint.value===undefined){

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- Recover routine tag-building reply errors automatically: reuse saved replies locally, request a bounded correction and fresh reply, then split failing portions without another Resume click. Completed paper analysis and completed parts are retained.
+- Divide new map/reduction work into at most 64 inputs and keep organization prompts within 100,000 UTF-8 bytes. Short, input-scoped response references reduce copying errors while expanding to the original persistent evidence IDs.
+- Repair duplicate retained/excluded entries and withhold ambiguous generated aliases locally. Very small failed source portions remain provisional factual candidates for global checking; invalid evidence and scientific contradictions cannot authorize approval.
+- Persist dispatched-request counts, correction history, fresh-reply allowance, and split depth across restart. Ordinary Resume does not reset limits. Authentication, connection, quota, permission, budget, and exhausted recovery still pause with a clear explanation; providers never switch automatically.
+- Show automatic repair activity and remaining-cost estimates, including an explicit unavailable-estimate state. Part counts reflect active portions after splitting.
+- Keep state schema 5, factual extraction, evidence identities, native tags, manual choices, collections, columns, and incoming-paper automation unchanged during upgrading.
+
 ## 0.5.2
 
 - Simplified the paper-attention panel: empty views no longer show selection controls, disabled batch buttons, repeated help text, a pager, or a large footer action.
