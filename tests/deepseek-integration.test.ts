@@ -88,7 +88,7 @@ test('DeepSeek transport feeds reviewed, reversible native tag changes through t
   assert.deepEqual(h.tags(), [{ tag: 'Project manuscript', type: 0 }], 'analysis alone does not change native tags');
   const suggestion = h.state.suggestions[0];
   assert.equal(suggestion.tagId, 'custom-rcl');
-  assert.equal(suggestion.status, 'pending');
+  assert.equal(suggestion.status, 'accepted');assert.equal(suggestion.decisionOrigin,'automatic');assert.equal(suggestion.applied??false,false);
   await h.controller.invoke('accept-suggestion', { id: suggestion.id });
   await h.controller.invoke('apply-suggestions', { ids: [suggestion.id] });
   assert.deepEqual(h.tags().map(tag => tag.tag).sort(), ['Project manuscript', 'RCL']);

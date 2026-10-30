@@ -94,7 +94,8 @@ test('per-paper inferred meanings remain grounded and a group meaning appears on
 
 test('the no_tag marker cannot become a scientific replacement or a DIY definition',()=>{
   const value=input(['no_tag']),plan=createReconciliationPlan(value),source=plan.groups[0];
-  assert.throws(()=>compileReconciliationChanges(plan,[{groupId:source.id,action:'replace',targetIds:['we']}],value),/built-in marker/);
+  assert.throws(()=>compileReconciliationChanges(plan,[{groupId:source.id,action:'replace',targetIds:['we']}],value),/Include again/);
+  assert.throws(()=>compileReconciliationChanges(plan,[{groupId:source.id,action:'remove'}],value),/Include again/);
   assert.throws(()=>prepareDIYDefinitions(plan,[{groupId:source.id,description:'A reserved exclusion marker.'}],value),/built-in marker/);
   assert.throws(()=>applyDIYDefinitions(plan,diyResponse(plan,source)),/built-in marker/);
 });

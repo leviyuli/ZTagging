@@ -18,7 +18,7 @@ async function sha256(bytes){return [...new Uint8Array(await crypto.subtle.diges
 
 async function verifyNativePackageUpgrade(check,config){
   const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
-  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.8.0',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
+  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.8.1',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
   const oldManifest=packageManifest(oldPath),newManifest=packageManifest(newPath),oldSettings=oldManifest.applications.zotero,newSettings=newManifest.applications.zotero;
   check('v050UpdatePackagesKeepStableIdentity',oldManifest.version===oldVersion&&newManifest.version===expected&&oldSettings.id===id&&newSettings.id===id);
   check('v050UpdateURLRemainsSecureAndStable',newSettings.update_url.startsWith('https://')&&newSettings.update_url===oldSettings.update_url&&newSettings.strict_min_version==='10.0.6'&&newSettings.strict_max_version==='10.0.*');
@@ -63,7 +63,7 @@ async function verifyNativePackageUpgrade(check,config){
 export async function runNativeV050(app,check,config){
   check('v050IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v050IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
-  check('v050StateSchema',app.state.schemaVersion===7);
+  check('v050StateSchema',app.state.schemaVersion===8);
   const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldComplete=ai.completeJson,oldLookup=host.lookupMetadata;
   const main=Zotero.getMainWindow(),oldMode=Zotero.SmartTags.getNavigator(main)?.mode;
   const columnState=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal]));
@@ -85,6 +85,7 @@ export async function runNativeV050(app,check,config){
     check('v050NativeNavigationRestoresOnce',main.document.getElementById('smart-tags-navigator').textContent.includes('Smart Tags')&&columnState()===columns);
 
     await app.invoke('refresh-existing-tags',{});await open('existing-tags');
+    await click(doc,'Compare names');
     await until(()=>doc.querySelector('.existing-tag-row'),'existing tag rows');
     const search=doc.getElementById('existing-tag-search');search.value='V050 obsolete FC';search.dispatchEvent(new manager.Event('input',{bubbles:true}));
     const display=await app.snapshot(),shownGroup=display.existingTags?.rows.find(row=>row.name==='V050 obsolete FC');

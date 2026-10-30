@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.8.1",
-  "verifiedAt": "2026-10-30T04:50:09.100Z",
+  "version": "0.9.0",
+  "verifiedAt": "2026-10-30T07:39:02.471Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Recovery of a paused faster-build switch using locally verified immutable evidence",
-  "schemaVersion": 7,
+  "scope": "Exact Keep cleanup, reviewed DIY merges, assignment triage and cumulative extension",
+  "schemaVersion": 8,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 794,
+    "passed": 851,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 174,
+    "passed": 185,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -630,6 +630,50 @@
         "passed": true
       },
       {
+        "name": "v090IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v090IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v090KeepDefaultsReserveNoTag",
+        "passed": true
+      },
+      {
+        "name": "v090KeepPreviewIsWholeInventoryAndReadOnly",
+        "passed": true
+      },
+      {
+        "name": "v090KeepApplyAndUndoRestoreExactTagsAndLocks",
+        "passed": true
+      },
+      {
+        "name": "v090KeepUndoRestoresTypedNativeTags",
+        "passed": true
+      },
+      {
+        "name": "v090AssignmentTriagesWithoutNativeWrites",
+        "passed": true
+      },
+      {
+        "name": "v090FinishAppliesAcceptedAndRevealsOneReport",
+        "passed": true
+      },
+      {
+        "name": "v090DIYComparisonIsManualAndInitiallyUnselected",
+        "passed": true
+      },
+      {
+        "name": "v090DIYMergePreservesCanonicalTagAndUndo",
+        "passed": true
+      },
+      {
+        "name": "v090DIYUndoRestoresDefinitionsNativeTagsAndColumns",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -714,6 +758,15 @@
         "passed": true
       }
     ],
+    "cleanupAndAssignment": {
+      "papers": 3,
+      "syntheticProviderRequests": 2,
+      "realAIRequests": 0,
+      "nativeWriteBatches": 5,
+      "keepUndo": true,
+      "assignmentReport": true,
+      "diyMergeUndo": true
+    },
     "representativeSelection": {
       "topics": 60,
       "papers": 180,
@@ -749,12 +802,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.8.0",
-      "to": "0.8.1",
+      "from": "0.8.1",
+      "to": "0.9.0",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "d2bb02d00fe29f0f199ae39c2b76a8889a85f28957a273a0c16b09825aa33770",
+      "packageHash": "60dfc51872b368ba59ca8bb7744dbb4d6efeb2a52e4ee1dab36be7cf92451837",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -766,7 +819,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 127,
+      "largeRenderMS": 122,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -779,10 +832,12 @@
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "bundledSourceFilesMatch": 23,
+  "bundledSourceFilesMatch": 24,
   "selection": {
     "sparseTFIDFComparisonLimitPerTopic": 32,
     "defaultSoftTarget": 60,
+    "defaultAdditionalTarget": 30,
+    "cumulativeTagLimit": false,
     "shortlistMultiple": 4,
     "globalDraftBeforeChecks": true,
     "maximumExamplesPerTag": 3,
@@ -815,9 +870,29 @@
     "unchangedRerunsReuseWork": true,
     "legacyConsolidationCheckpointsRetained": true
   },
+  "reviewWorkflow": {
+    "keepUsesCompleteExactInventory": true,
+    "noTagProtected": true,
+    "uncheckedSmartTagsAssignmentsMayBeRemoved": true,
+    "cleanupDoesNotRejectConcepts": true,
+    "cleanupAndDIYMergeHaveStaleChecksAndUndo": true,
+    "diyEquivalenceRequiresReviewedMerge": true,
+    "canonicalMeaningsAndIDsRetained": true,
+    "highCoreAndDIYAcceptedBeforeBatchApply": true,
+    "lowDeclinesRunLocal": true,
+    "mediumNoTagAndRemovalsRequireReview": true,
+    "assignmentRunsIsolated": true,
+    "zeroChangeFinishSupported": true,
+    "uncoveredTopicsOnlyAfterFinish": true,
+    "selectedPaperExtensionAndReviewedInclusion": true,
+    "topicResolutionRequiresAppliedMatchingEvidence": true,
+    "topicResolutionUndoable": true,
+    "independentAdditionalTagTarget": true
+  },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Read-only current failed-switch replay with verified local PDF input and simulated judgments",
+    "scope": "Schema-eight compatibility replay of retained work with locally verified PDF and simulated judgments",
+    "schemaVersion": 8,
     "evictedFactsRecovered": 1,
     "otherCachedFactsUnchanged": true,
     "localPDFInputVerified": true,
@@ -837,8 +912,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1386,
-    "totalSimulationMS": 4048,
+    "timeToRepresentativeQueueMS": 1349,
+    "totalSimulationMS": 3705,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -868,7 +943,7 @@
   "rightItemAndInformationPaneSection": false,
   "skills": {
     "deslop": "Focused selection/controller/policy/UI review without unrelated rewrites.",
-    "codebaseDesign": "TagSelection retains its existing interface and owns representative selection, bounded scheduling, judgments and proposal preparation. Regressions cross module/public controller interfaces, accessible manager controls and native integration."
+    "codebaseDesign": "TagReconciliation owns exact removal and reviewed merge compilation; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
   },
   "workingLibraryModified": false,
   "workingRunInterrupted": false,
@@ -882,14 +957,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.8.1.xpi",
-      "bytes": 522161,
-      "sha256": "d2bb02d00fe29f0f199ae39c2b76a8889a85f28957a273a0c16b09825aa33770"
+      "file": "smart-tags-0.9.0.xpi",
+      "bytes": 573893,
+      "sha256": "60dfc51872b368ba59ca8bb7744dbb4d6efeb2a52e4ee1dab36be7cf92451837"
     },
     "source": {
-      "file": "smart-tags-0.8.1-source.zip",
-      "bytes": 581096,
-      "sha256": "622b53797a4e2a479258886c1ac21c105441335e10061ee6475618796e03ecbc"
+      "file": "smart-tags-0.9.0-source.zip",
+      "bytes": 635811,
+      "sha256": "182fd877b1f3659697513ad2cb219cd7598aa3c44007ef8a820c658d4a7c58d0"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

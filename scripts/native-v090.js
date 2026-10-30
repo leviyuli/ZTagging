@@ -1,0 +1,67 @@
+/** TEST ONLY. Reviewed cleanup, assignment completion, and DIY merges in the isolated profile. */
+import { initialState } from '../src/controller.ts';
+import { fingerprint } from '../src/core.ts';
+import { normalizeFacts } from '../src/taxonomy.ts';
+import { nativeTagDecisionKey } from '../src/tag-reconciliation.ts';
+
+const clone=value=>JSON.parse(JSON.stringify(value));
+const normalized=value=>String(value).replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+const button=(doc,label)=>[...doc.querySelectorAll('button')].find(value=>value.textContent===label||value.getAttribute('aria-label')===label);
+async function until(predicate,label){const start=Date.now();while(Date.now()-start<25_000){const value=predicate();if(value)return value;await new Promise(resolve=>setTimeout(resolve,25));}throw new Error('Native v0.9.0 timeout: '+label);}
+function inputData(prompt){const marker='INPUT_DATA_JSON:',start=prompt.lastIndexOf(marker);if(start<0)throw new Error('The synthetic v090 request lacks input data.');return JSON.parse(prompt.slice(start+marker.length));}
+const definition=(id,name,fullName,facet,custom=false)=>({id,name,fullName,description:fullName+'.',facet,aliases:[],inclusions:[],exclusions:[],examples:[],custom,status:'approved',broaderIds:[],relatedIds:[],matchingMode:custom?'suggest':'auto'});
+
+export async function runNativeV090(app,check,config){
+  check('v090IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
+  check('v090IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
+  const before=clone(app.state),host=app.env.host,librarySnapshot=app.env.librarySnapshot,ai=app.env.ai,complete=ai.completeJson,session=ai.getSession,oldList=host.list,oldApply=host.apply;
+  const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),mode=navigator?.mode,columns=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal])),columnsBefore=columns();
+  const quote='We study fuel cell systems using electrochemical impedance spectroscopy and measure platinum dissolution in a grooved catalyst layer.';
+  const items=[],requests=[];let manager,writeBatches=0;
+  const open=async page=>{manager=await Zotero.SmartTags.openManager({page});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready'&&!manager.document.querySelector('.busy-indicator'),'manager '+page);return manager.document;};
+  const click=async(doc,label)=>{const control=button(doc,label);if(!control||control.disabled)throw new Error('Missing enabled v090 control: '+label);control.click();await new Promise(resolve=>setTimeout(resolve,0));};
+  try{
+    await navigator?.setMode('collections');app.state=initialState();Object.assign(app.state.settings,{provider:'chatgpt',model:'native-v090-synthetic',autoAssign:false});
+    app.state.tags=[definition('v090-fc','FC','fuel cell','system'),definition('v090-eis','EIS','electrochemical impedance spectroscopy','method'),definition('v090-dissolution','Pt dissolution','platinum dissolution','phenomenon'),definition('v090-my-fc','My fuel cell topic','fuel cell','system',true)];app.state.taxonomyReady=true;app.state.vocabularyVersion=1;
+    for(const [index,tags] of [[0,['V090 keep project','V090 obsolete','My fuel cell topic']],[1,['V090 keep project','V090 locked obsolete']],[2,['V090 keep project','no_tag']]]){
+      const item=new Zotero.Item('journalArticle');item.libraryID=Zotero.Libraries.userLibraryID;item.setField('title',`V090QA paper ${index}`);item.setField('abstractNote',index===0?quote:'An electrochemistry record with complete metadata.');item.setTags(tags.map(tag=>({tag,type:tag==='V090 obsolete'?1:0})));await item.saveTx();items.push(item);
+    }
+    const papers=await Promise.all(items.map(item=>host.read(item.id))),nativeBefore=JSON.stringify(items.map(item=>item.getTags()));
+    for(const paper of papers){app.state.papers[paper.id]=paper;app.state.nativeTags[paper.id]=await host.readTags(paper.itemID);app.state.facts[paper.id]=normalizeFacts({summary:'Retained synthetic electrochemistry evidence.',concepts:paper.id===papers[0].id?[{name:'fuel cell',facet:'system',evidence:[{source:'abstract',text:quote}]}]:[],needsPDF:false},paper,'native-synthetic','retained-model');}
+    const lockKey=nativeTagDecisionKey(papers[1].id,'V090 locked obsolete');app.state.decisions[lockKey]={locked:true};
+    host.list=async scope=>clone(scope==='selected'?[papers[0]]:papers);host.apply=async function(patches){writeBatches++;return oldApply.call(this,patches);};
+    app.env.librarySnapshot=async()=>({papers:clone(papers),nativeTags:Object.fromEntries(items.map((item,index)=>[papers[index].id,item.getTags()]))});ai.getSession=async()=>({connected:true,sharing:true,email:null,accountId:'native-synthetic',accounts:[]});
+    ai.completeJson=async(_system,prompt)=>{
+      requests.push(prompt.split('\n')[0]);let value;
+      if(prompt.startsWith('You classify scientific papers'))value={summary:'A fuel cell experiment with impedance measurements.',concepts:['FC','EIS'],needsPDF:false,suggestions:[['v090-fc','high'],['v090-eis','medium'],['v090-dissolution','low']].map(([tagId,confidence])=>({tagId,confidence,match:'substantive',reason:'The supplied abstract establishes this scientific topic.',evidence:[{source:'abstract',text:quote}]})),newTagCandidates:[{name:'grooved catalyst layer',reason:'The approved definitions do not describe this structural detail.',evidence:[{source:'abstract',text:quote}]}]};
+      else if(prompt.startsWith('Compare the supplied researcher-created DIY definitions')){const data=inputData(prompt);value={workId:data.workId,fingerprint:data.fingerprint,requestId:data.requestId,comparisons:data.pairs.map(pair=>({pairId:pair.id,relation:pair.coreId==='v090-fc'?'equivalent':'distinct',reason:pair.coreId==='v090-fc'?'Both definitions describe the same fuel cell system.':'These definitions describe different scientific concepts.'}))};}
+      else throw new Error('Unexpected v090 request; no new extraction or automatic build is permitted.');
+      return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:40,outputTokens:40},estimatedCostUSD:0};
+    };
+    await app.save();await app.invoke('refresh-existing-tags',{});let doc=await open('existing-tags');await until(()=>doc.getElementById('keep-tag-search'),'Keep view');
+    const inventory=(await app.snapshot()).existingTags,find=name=>inventory.rows.find(row=>row.name===name);
+    const noTag=doc.getElementById('keep-name-'+find('no_tag').id);check('v090KeepDefaultsReserveNoTag',noTag.checked&&noTag.disabled&&doc.getElementById('keep-name-'+find('V090 locked obsolete').id).checked&&requests.length===0);
+    for(const name of ['V090 keep project','My fuel cell topic']){const control=doc.getElementById('keep-name-'+find(name).id);if(!control.checked)control.click();}
+    doc.getElementById('keep-name-'+find('V090 locked obsolete').id).click();await click(doc,'Preview removal of other tags');await until(()=>app.state.keepRemovalPreview&&button(doc,'Apply reviewed removals')&&!button(doc,'Apply reviewed removals').disabled,'Keep removal preview');
+    check('v090KeepPreviewIsWholeInventoryAndReadOnly',app.state.keepRemovalPreview.removedNames.includes('V090 obsolete')&&app.state.keepRemovalPreview.removedNames.includes('V090 locked obsolete')&&app.state.keepRemovalPreview.overrideCount===1&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&writeBatches===0&&requests.length===0);
+    const oldHistory=new Set(app.state.history.map(record=>record.id));await click(doc,'Apply reviewed removals');await until(()=>!app.state.keepRemovalPreview&&!items[0].getTags().some(tag=>tag.tag==='V090 obsolete')&&!items[1].getTags().some(tag=>tag.tag==='V090 locked obsolete'),'native Keep removal');await app.waitForIdle();
+    const cleanup=app.state.history.find(record=>!oldHistory.has(record.id));check('v090KeepApplyAndUndoRestoreExactTagsAndLocks',!!cleanup&&items[0].getTags().some(tag=>tag.tag==='V090 keep project')&&items[2].getTags().some(tag=>tag.tag==='no_tag')&&app.state.decisions[lockKey]?.locked===false);
+    await app.invoke('undo',{id:cleanup.id});check('v090KeepUndoRestoresTypedNativeTags',JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&app.state.decisions[lockKey]?.locked===true);
+    doc=await open('assignment');await until(()=>button(doc,'Assignment setup'),'assignment tabs');await click(doc,'Assignment setup');await until(()=>doc.getElementById('assignment-scope'),'assignment group');doc.getElementById('assignment-scope').click();await until(()=>doc.getElementById('assignment-scope-option-1'),'selected-paper option');doc.getElementById('assignment-scope-option-1').click();await click(doc,'Suggest paper tags');await until(()=>app.state.run?.kind==='tag'&&app.state.run.status==='idle'&&app.state.assignmentRuns?.some(review=>review.id===app.state.run.id),'assignment analysis completed');await app.waitForIdle();
+    const review=(await app.snapshot()).assignmentReview,scoped=app.state.suggestions.filter(suggestion=>suggestion.runId===review.id);
+    check('v090AssignmentTriagesWithoutNativeWrites',scoped.some(s=>s.tagId==='v090-fc'&&s.status==='accepted'&&s.decisionOrigin==='automatic')&&scoped.some(s=>s.tagId==='v090-eis'&&s.status==='pending')&&scoped.some(s=>s.tagId==='v090-dissolution'&&s.status==='rejected'&&s.decisionOrigin==='automatic')&&!app.state.decisions[papers[0].id+'|v090-dissolution']?.rejected&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&!review.report&&!doc.body.textContent.includes('Topics outside your saved list'));
+    await until(()=>button(doc,'Accept')&&!button(doc,'Accept').disabled,'medium match review');await click(doc,'Accept');await until(()=>button(doc,'Apply accepted and finish')&&!button(doc,'Apply accepted and finish').disabled,'explicit assignment finish');await click(doc,'Apply accepted and finish');await until(()=>app.state.assignmentRuns.find(run=>run.id===review.id)?.status==='finished'&&doc.body.textContent.includes('grooved catalyst layer'),'finished assignment report');await app.waitForIdle();
+    check('v090FinishAppliesAcceptedAndRevealsOneReport',items[0].getTags().some(tag=>tag.tag==='FC')&&items[0].getTags().some(tag=>tag.tag==='EIS')&&!items[0].getTags().some(tag=>tag.tag==='Pt dissolution')&&items[2].getTags().some(tag=>tag.tag==='no_tag')&&doc.body.textContent.includes('Topics outside your saved list')&&!app.state.settings.autoAssign&&requests.length===1);
+    doc=await open('vocabulary');const definitionsBefore=fingerprint(app.state.tags),tagsBeforeMerge=JSON.stringify(items.map(item=>item.getTags()));await click(doc,'Compare DIY tags');await until(()=>app.state.diyComparison?.status==='ready'&&doc.getElementById('diy-comparison'),'DIY comparison ready');await app.waitForIdle();
+    const comparison=(await app.snapshot()).diyComparison,equivalent=comparison.pairs.find(pair=>pair.targetId==='v090-fc'),mergeCheck=doc.getElementById('diy-merge-'+equivalent.id);
+    check('v090DIYComparisonIsManualAndInitiallyUnselected',requests.length===2&&comparison.status==='ready'&&equivalent.relation==='equivalent'&&!mergeCheck.checked&&button(doc,'Preview selected DIY merges').disabled&&fingerprint(app.state.tags)===definitionsBefore&&JSON.stringify(items.map(item=>item.getTags()))===tagsBeforeMerge);
+    mergeCheck.click();await click(doc,'Preview selected DIY merges');await until(()=>button(doc,'Apply reviewed DIY merges')&&!button(doc,'Apply reviewed DIY merges').disabled,'DIY merge preview');const beforeMergeHistory=new Set(app.state.history.map(record=>record.id));await click(doc,'Apply reviewed DIY merges');await until(()=>!app.state.tags.some(tag=>tag.id==='v090-my-fc')&&!items[0].getTags().some(tag=>tag.tag==='My fuel cell topic'),'DIY merge applied');await app.waitForIdle();
+    const merge=app.state.history.find(record=>!beforeMergeHistory.has(record.id));check('v090DIYMergePreservesCanonicalTagAndUndo',!!merge&&items[0].getTags().filter(tag=>tag.tag==='FC').length===1&&app.state.taxonomyRedirects['v090-my-fc']==='v090-fc');await app.invoke('undo',{id:merge.id});
+    check('v090DIYUndoRestoresDefinitionsNativeTagsAndColumns',fingerprint(app.state.tags)===definitionsBefore&&JSON.stringify(items.map(item=>item.getTags()))===tagsBeforeMerge&&columns()===columnsBefore);
+    return {papers:3,syntheticProviderRequests:requests.length,realAIRequests:0,nativeWriteBatches:writeBatches,keepUndo:true,assignmentReport:true,diyMergeUndo:true};
+  }finally{
+    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();if(manager&&!manager.closed)manager.close();host.list=oldList;host.apply=oldApply;ai.completeJson=complete;ai.getSession=session;app.env.librarySnapshot=librarySnapshot;
+    for(const item of items){host.mutating?.add(item.id);try{await item.eraseTx();}finally{host.mutating?.delete(item.id);}}
+    app.state=before;await app.save();await navigator?.refresh();if(mode)await navigator?.setMode(mode);
+  }
+}

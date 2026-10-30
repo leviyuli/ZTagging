@@ -10,6 +10,7 @@ import { runNativeV053 } from './native-v053.js';
 import { runNativeV060 } from './native-v060.js';
 import { runNativeV070 } from './native-v070.js';
 import { runNativeV080 } from './native-v080.js';
+import { runNativeV090 } from './native-v090.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -166,6 +167,7 @@ void (async () => {
     report.v053=await runNativeV053(app,check,config);
     report.v052=await runNativeV052(app,check,config);
     report.v051=await runNativeV051(app,check,config);
+    report.v090=await runNativeV090(app,check,config);
     report.v050=await runNativeV050(app,check,config);
     report.syntheticItemIDs = items.map(item => item.id);
     if (config.openManager) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {AppController,initialState} from '../src/controller.ts';
 import type {AppState,ControllerEnvironment} from '../src/controller.ts';
 import {paperFingerprint} from '../src/core.ts';
+import {upsertWarning} from '../src/warnings.ts';
 import type {PaperRecord} from '../src/core.ts';
 import type {NativeTag,TagPatch} from '../src/platform.ts';
 import type {CompletionResult} from '../src/providers.ts';
@@ -163,11 +164,10 @@ test('saving a tag list is independent of the connection and a paper preview sta
   h.state.settings.model='test-model';await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.suggestions.length,1);
 });
 
-test('new-topic notices stay dismissed until changed and resolve after the same paper is reevaluated',async()=>{
-  const h=harness(),normal=h.ai.handler;let topics=['Electrode porosity'];h.ai.handler=data=>data.approvedVocabulary?{...(normal(data) as object),newTagCandidates:topics}:normal(data);
-  await build(h);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();
-  const warning=h.state.warnings.find(warning=>warning.code==='unapproved-topics')!;assert.equal(warning.status,'active');assert.deepEqual(warning.paperIds,['1:PREPARATION']);
-  await h.controller.invoke('dismiss-warning',{id:warning.id});await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.warnings.find(value=>value.id===warning.id)?.status,'dismissed');
-  topics=[];h.paper.abstract+=' Updated measurements are available.';await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();
-  assert.equal(h.state.warnings.find(value=>value.id===warning.id)?.status,'resolved');assert.equal(h.state.warnings.some(value=>value.code==='unapproved-topics'&&value.status==='active'),false);
+test('historical topic notices remain dismissed while new assignments keep evidence-bound topics in run history',async()=>{
+  const h=harness(),normal=h.ai.handler;h.ai.handler=data=>data.approvedVocabulary?{...(normal(data) as object),newTagCandidates:[{name:'Electrode porosity',reason:'A relevant topic outside this approved list.',evidence:[{source:'abstract',text:data.paper.abstract}]}]}:normal(data);
+  h.state.warnings=upsertWarning(h.state.warnings,{code:'unapproved-topics',message:'A historical topic notice.',context:'assignment',paperIds:['1:PREPARATION'],conditionFingerprint:'old-generation'});const historical=h.state.warnings[0];await h.controller.invoke('dismiss-warning',{id:historical.id});
+  await build(h);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();const first=h.state.run!.id;
+  assert.equal(h.state.warnings.find(value=>value.id===historical.id)!.status,'dismissed');assert.equal(h.state.warnings.some(value=>value.code==='unapproved-topics'&&value.status==='active'),false);assert.equal((await h.controller.snapshot()).assignmentReview!.report,undefined);assert.ok(h.state.uncoveredTopics!.some(topic=>topic.runId===first&&topic.name==='Electrode porosity'&&topic.evidence[0].text===h.paper.abstract));
+  await h.controller.invoke('tag',{scope:'selected'});await h.controller.waitForIdle();assert.equal(h.state.warnings.find(value=>value.id===historical.id)!.status,'dismissed');assert.ok(h.state.uncoveredTopics!.some(topic=>topic.runId===h.state.run!.id&&topic.name==='Electrode porosity'));assert.ok(h.state.uncoveredTopics!.some(topic=>topic.runId===first));
 });

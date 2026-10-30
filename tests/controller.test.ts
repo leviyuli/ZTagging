@@ -130,7 +130,8 @@ test('complete workflow scans, drafts and approves vocabulary, reviews a pilot, 
   assert.ok(h.state.tags.every(t=>t.status==='approved'));
   await run(h,'tag','pilot');
   assert.equal(h.state.suggestions.length,4);
-  await assert.rejects(h.controller.invoke('mark-pilot-reviewed'),/pending pilot suggestions/);
+  assert.ok(h.state.suggestions.every(s=>s.status==='accepted'&&s.decisionOrigin==='automatic'&&!s.applied));assert.equal(h.host.applied.length,0);
+  await assert.rejects(h.controller.invoke('mark-pilot-reviewed'),/pending pilot suggestions|accepted.*pilot|pilot.*appl|appl.*pilot/i);
   await acceptAll(h);await applyAccepted(h);
   await h.controller.invoke('mark-pilot-reviewed');
   assert.equal(h.state.pilotReviewed,true);
@@ -175,7 +176,8 @@ test('rejecting an owned removal locks the assignment against later model recomm
   await h.controller.invoke('reject-suggestion',{id:removal.id});
   assert.equal(h.state.decisions['1:KEY1|custom-rcl'].locked,true);
   h.state.analyses={};await run(h);
-  assert.equal(h.state.suggestions.filter(s=>s.operation==='remove').length,0);
+  assert.equal(h.state.suggestions.filter(s=>s.runId===h.state.run!.id&&s.operation==='remove').length,0);
+  assert.equal(removal.status,'rejected');assert.equal(removal.decisionOrigin,'researcher');
   assert.ok((await h.host.readTags(1)).some(t=>t.tag==='RCL'));
 });
 
@@ -188,7 +190,8 @@ test('manually deleting an extension assignment is a sticky rejection, including
   assert.equal(h.state.suggestions.filter(s=>s.tagId==='custom-rcl'&&s.status!=='rejected').length,0);
   assert.deepEqual(await h.host.readTags(1),[]);
   await h.controller.invoke('clear-rejection',{paperId:'1:KEY1',tagId:'custom-rcl'});await run(h);
-  assert.ok(h.state.suggestions.some(s=>s.tagId==='custom-rcl'&&s.status==='pending'));
+  assert.ok(h.state.suggestions.some(s=>s.runId===h.state.run!.id&&s.tagId==='custom-rcl'&&s.status==='accepted'&&s.decisionOrigin==='automatic'));
+  assert.deepEqual(await h.host.readTags(1),[],'Automatic review acceptance still requires explicit native Apply.');
 });
 
 test('manually deleting a pre-existing approved canonical tag is also remembered',async()=>{
@@ -336,9 +339,9 @@ test('resume preserves completed jobs and uses the explicitly selected provider 
 test('a repeated run reuses completed analysis, while metadata edits require a new request',async()=>{
   const h=harness();await run(h);
   assert.equal(h.ai.calls.length,1);const id=h.state.suggestions[0].id;
-  await run(h);assert.equal(h.ai.calls.length,1);assert.equal(h.state.suggestions[0].id,id);
+  await run(h);assert.equal(h.ai.calls.length,1);const cached=h.state.suggestions.find(s=>s.runId===h.state.run!.id)!;assert.notEqual(cached.id,id,'Each run preserves independent review history.');assert.equal(cached.inputFingerprint,h.state.suggestions.find(s=>s.id===id)!.inputFingerprint);
   h.host.edit(1,{abstract:`${DIRECT} We compare ionomer loadings.`});await h.controller.onItemChanged(1);
-  await run(h);assert.equal(h.ai.calls.length,2);assert.notEqual(h.state.suggestions[0].id,id);
+  await run(h);assert.equal(h.ai.calls.length,2);const edited=h.state.suggestions.find(s=>s.runId===h.state.run!.id)!;assert.notEqual(edited.id,cached.id);assert.notEqual(edited.inputFingerprint,cached.inputFingerprint);assert.ok(h.state.suggestions.some(s=>s.id===id));
 });
 
 test('metadata is analyzed before targeted PDF text, and scanning does not discard valid PDF evidence',async()=>{
@@ -539,6 +542,8 @@ test('resuming a pilot after vocabulary changes cannot unlock automatic tagging 
   await assert.rejects(h.controller.invoke('mark-pilot-reviewed'),/Finish|running|complete/i);
   assert.equal(h.state.pilotReviewed,false);
   release();await h.controller.waitForIdle();await acceptAll(h);
+  await assert.rejects(h.controller.invoke('mark-pilot-reviewed'),/Apply.*pilot/);
+  await h.controller.invoke('apply-suggestions',{ids:h.state.suggestions.filter(s=>s.runId===h.state.run!.id&&s.vocabularyVersion===h.state.vocabularyVersion&&s.status==='accepted'&&!s.applied).map(s=>s.id)});
   await h.controller.invoke('mark-pilot-reviewed');
   assert.equal(h.state.pilotReviewed,true);
   assert.equal(h.state.pilotVersion,h.state.vocabularyVersion);

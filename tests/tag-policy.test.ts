@@ -55,7 +55,7 @@ test('model vocabulary input cannot generate, rename, redefine, alias, or attach
 test('explicit evidenced noMatch creates one stable review-only suggestion without requiring a persisted built-in',()=>{
   const value=paper(),first=validateSuggestions(value,[scientific()],outside(),context),second=validateSuggestions(value,[scientific(),getNoTagDefinition()],outside(),context);
   assert.equal(first.suggestions.length,1);const suggestion=first.suggestions[0];
-  assert.equal(suggestion.tagId,NO_TAG_ID);assert.equal(suggestion.status,'pending');assert.equal(suggestion.autoEligible,false);assert.equal(suggestion.match,'uncertain');assert.deepEqual(suggestion.evidence,[{source:'abstract',text:quote}]);assert.deepEqual(first.newTagCandidates,[]);
+  assert.equal(suggestion.tagId,NO_TAG_ID);assert.equal(suggestion.status,'pending');assert.equal(suggestion.autoEligible,false);assert.equal(suggestion.match,'uncertain');assert.deepEqual(suggestion.evidence,[{source:'abstract',text:quote}]);assert.deepEqual(first.newTagCandidates,['An unnecessary scope expansion']);assert.equal(first.noMatchEligible,true);
   assert.deepEqual(second.suggestions,first.suggestions);
   assert.notEqual(validateSuggestions(value,[scientific()],outside(),{vocabularyVersion:4}).suggestions[0].id,suggestion.id);
 });

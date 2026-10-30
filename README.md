@@ -5,12 +5,12 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.8.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.8.1.xpi).
+2. Select [`smart-tags-0.9.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.9.0.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
 6. Open **Review & clean up**. Browse the suggested tags, edit or remove entries, answer any scientific questions, and compare existing native tags when needed. Click **Apply tag list** to save the tag library. This does not start assignment or write paper tags.
-7. Open **Assign & automate** and choose the papers that should receive tags. This is a separate group, initially **Whole personal library**. Click **Suggest paper tags**, review the matches in **Paper suggestions**, then confirm a separate batch Apply to write native Zotero tags with undo. You can assign beyond the papers used to build the list.
+7. Open **Assign & automate** and choose the papers that should receive tags. This is a separate group, initially **Whole personal library**. Click **Suggest paper tags**, review the matches, then choose **Apply accepted and finish** to write the accepted native tags with undo and open that assignment's topic report. You can assign beyond the papers used to build the list.
 8. Use **Run assignment pilot**, review its suggestions, and mark the pilot reviewed before explicitly enabling automatic assignment for incoming papers. Changing the active core vocabulary resets this gate; creating DIY details or confirming an equivalent legacy alias preserves it.
 
 The classifier usually proposes up to five core tags plus matching custom tags; it does not pad papers to a minimum. Routine assignment uses approved definitions. New topics are presented for vocabulary review rather than silently added as native tags.
@@ -19,15 +19,15 @@ The extension checks this repository's [update manifest](updates.json) for new v
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
-Version **0.8.1** fixes a build stuck on **Switching to faster build…** after an attachment notification removed cached analysis despite unchanged paper content. Update, then click **Retry faster build** or **Resume**. Smart Tags checks current metadata and local PDF evidence before restoring missing facts from the saved snapshot, without another extraction request. If inputs changed or the required PDF is unavailable, it pauses with paper-recovery actions. Saved replies, counters, and spending are retained.
-
-Version **0.8.0** chooses a compact global list, then verifies representative examples from up to three different papers per tag. It prepares the vocabulary without exhaustively classifying every saved finding. An older unfinished build offers **Use faster build**: this explicit action selects a preferred target of 60, waits for active requests to finish, and reuses completed paper analysis and compatible decisions. Previous replies and spending stay in history. Installing the update alone does not switch an existing build.
+Version **0.9.0** adds a Keep list for native-tag cleanup, reviewed comparison of DIY and saved definitions, and a separate review for each assignment. Supported high-confidence matches start accepted; native changes still wait for Apply. Finished assignments report topics outside the saved list, with a selected-paper route to extend it. New extensions target **30 additional tags** by default, independently of the initial 60-tag preference.
 
 ## Keep using and extending your tag library
 
 Use **Tag library → Add tag** for a DIY topic, or edit an existing definition. A topic can be useful even when no current paper matches it. Matching and assignment keep their existing suggestion, review, and manual-choice protections.
 
-For papers from another field, open **Build tags**, select those papers or their collections, and use **Extend my saved tag list**. This is the default after a tag list has been applied. New suggestions are compared with the applied definitions; equivalent topics reuse existing identities, while subtypes and related topics remain separate. Tags outside this new sample stay in your library. Review the additions and apply the list, then choose the whole library or a different assignment group on **Assign & automate**.
+For papers from another field, open **Build tags**, select those papers or their collections, and use **Extend my saved tag list**. This is the default after a tag list has been applied. **New tags to suggest** starts at 30 and can be edited for each extension; **Settings → Default new tags per extension** changes that default. The initial 60-tag preference is separate: a library can grow from about 60 to 90 to 120 through successive extensions, without a combined 60-tag ceiling. These are targets, not quotas for unsupported concepts.
+
+New suggestions are compared with the applied definitions; equivalent topics reuse existing identities, while subtypes and related topics remain separate. Tags outside the new sample stay in your library. Review the additions and apply the list, then choose the whole library or a different assignment group on **Assign & automate**.
 
 **Replace full tag list** remains an explicit option when you intend to reorganize the complete vocabulary. Review that proposal before applying it. Both modes leave native paper tags unchanged until a separate reviewed paper-tag operation. Neither mode enables incoming-paper automation.
 
@@ -35,7 +35,7 @@ The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pan
 
 ## Compact vocabulary and navigation
 
-The default preference is **60 tags**, counting broad concepts and subtypes together. Category headings and user-created details do not count toward that preference. **Settings → Preferred number of tags** accepts 1–500. A useful list may exceed the preferred count; distinct scientific concepts are kept separate rather than merged to reach a number.
+The starting preference is **60 tags**, counting broad concepts and subtypes together. Category headings and user-created details do not count toward it. **Settings → Preferred number of tags** and **Default new tags per extension** each accept 1–500. Later extensions add to the saved library; distinct scientific concepts are kept separate rather than merged to reach a number.
 
 Paper analysis is cached independently of the tag list. Factual summaries, concepts, validated quotations, and provider/model provenance remain reusable as the library grows. Preparation consolidates the selected papers together and checks the source context behind each concept. Unsupported generated topics can be left out, familiar abbreviations normalized, and categories corrected. Your DIY names, remembered decisions, and saved edits remain protected. When the source context leaves a real choice, **Questions** presents the alternatives with affected papers.
 
@@ -119,23 +119,35 @@ Selected papers, selected collections (including descendants), the 50-paper pilo
 
 ## Reviewing existing Zotero tags
 
-Open **Existing tags → Read library tags** to list native names, affected-paper counts, and manual assignments across the personal library. Before applying a Smart Tags list, this is an inventory. After applying one, matching uses the approved vocabulary rather than treating an unapproved draft as authoritative.
+Open **Existing tags → Keep tags → Read library tags** to read every exact native name across the personal library. Check the names you want to retain. Search and pages help browse the same complete Keep list; hidden names are still included in the removal preview.
 
-Select names and choose **Analyze selected names** when their meaning needs paper context. Review results per paper: a broad label such as FC may stay broad, or a paper may support AEMFC, PEMFC, or both. Related concepts are not automatically merged. Scientific symbols such as Co and CO remain distinct. Unmatched names stay available until you choose an action.
+The initial checked names are **no_tag** and names covered by earlier assignment locks. no_tag is always protected; remove an exclusion through **Include again**. You can uncheck other protected choices explicitly. The preview shows how many earlier protections that choice replaces. Checking Keep adds no permanent lock or rejection.
 
-Choose **Use matched Smart Tags name**, **Remove from papers**, or **Keep as it is**, then **Review paper changes**. Inspect the exact before/after labels before **Apply reviewed tag changes**. This workflow can change the displayed existing manual tags because you explicitly review that cleanup; ordinary automatic assignment continues to preserve manual choices. Locks and remembered rejections remain protected unless you explicitly replace the earlier choice for the affected paper. Approved equivalent legacy names can also be retained as aliases, avoiding duplicate assignments during later tagging.
+Choose **Preview removal of other tags**, inspect the names, paper counts, overrides, and exact before/after labels, then **Apply reviewed removals**. Every unchecked name in that inventory is removed, including imported, manual, and Smart Tags assignments. Saved definitions remain available for later assignment. This cleanup uses no AI, does not rebuild the vocabulary, and creates an undo record in Activity. Newly added tags or changed protections require a fresh preview.
 
-Select niche names and choose **Create DIY tags…** to define shared details outside the core vocabulary. Keep or edit the name and optionally supply its meaning. When needed, **Analyze and create DIY tags** uses the chosen model to interpret the selected names and paper context; ambiguous meanings require your input. Created definitions default to suggestion-only matching. Creating these definitions does not rename the existing native assignments or enable automatic matching. Definitions and reviewed native cleanup batches have separate undo records in **Activity**.
+Keeping a native name does not create a DIY definition. **Define kept topics** opens **Compare names** for retained names; select the niche topics you want to define, then choose **Create DIY tags…**. Edit their meanings before saving. **Analyze and create DIY tags** uses the chosen model when interpretation is needed; ambiguous meanings require your input. Creation is optional, defaults to suggestion-only matching, and does not rename native assignments.
+
+**Compare names** retains the more detailed paper-by-paper cleanup. Use **Analyze selected names** when context is needed, then review replacements before applying them. FC can remain broad or be refined to supported AEMFC/PEMFC assignments. Related concepts and scientific symbols such as Co and CO stay separate.
+
+In **Tag library**, start **Compare DIY tags** when you want to compare saved DIY meanings with approved core definitions. The model distinguishes equivalent, broader, narrower, related, different, and uncertain meanings. Nothing starts selected for merging. Choose equivalent matches, use **Preview selected DIY merges**, then **Apply reviewed DIY merges**. The core name and meaning stay intact; old DIY names become searchable aliases, native assignments are deduplicated, and source IDs remain traceable through history. Conflicting locks or rejections require an explicit override. Other relations remain separate, and the reviewed merge has undo.
 
 Existing manual tags are never acquired as extension-owned assignments. Manual removal, rejections, and locks are remembered. Obsolete extension-owned tags receive review-only removal proposals. History undo checks for later edits and refuses to overwrite conflicting changes. Native Zotero undo is also available for applied batches.
 
 Under **Find papers**, combine hierarchical tags, inspect related papers, and save All/Any searches. Related papers are local text/concept similarity suggestions, not citation links. Project membership, reading status, and “fundamental” selections remain user decisions. Collections can overlap without duplicating papers.
 
+## Finishing a paper assignment
+
+Each requested assignment keeps its own papers, progress, choices, and history. In **Paper suggestions**, supported high-confidence additions from core or DIY definitions start **Accepted, not applied**. Low-confidence suggestions are declined for that assignment without creating permanent rejections. Medium-confidence or uncertain matches, no_tag, and removals wait for review. Existing manual choices remain protected; choosing Reject yourself is still remembered.
+
+Review remaining choices before **Apply accepted and finish**. It writes that assignment's accepted tags and finishes its review; if nothing remains to apply, use **Finish assignment**. You can also apply a reviewed subset earlier. Changing the selected assignment never includes accepted suggestions from another run, and saved reviews survive restart. Incoming-paper automation remains a separate, explicit setting behind the pilot gate.
+
+Only a finished assignment shows **Topics outside your saved list**. A paper can have useful matching tags and an uncovered topic, or be wholly outside the vocabulary. Missing information and failed analysis are not outside-topic evidence. Select the relevant topic papers and choose **Extend from selected topics**, with an editable additional-tag target. If selected papers carry no_tag, review **Include again** first; unrelated exclusions remain in place. Apply the new tag list, then assign its tags to the affected papers. Creating a definition alone does not resolve an earlier paper outcome.
+
 ## Local storage
 
 Definitions, source metadata, selected PDF passages, proposals, decisions, queue checkpoints, and change journals live in `smart-tags/state.json` inside the current Zotero profile. Atomic writes keep a previous `.bak` generation. Interrupted native changes are reconciled against their recorded tag or metadata snapshots on startup. Definition changes are journaled with affected IDs; recovery and undo preserve unrelated definitions and refuse conflicting later edits.
 
-Version 0.8.0 upgrades to **state schema 7** after creating an exact-byte **state.json.pre-v7.json** backup. Different existing backups receive numbered suffixes and remain untouched. Schema-6 data is retained with only its schema field changed: reviews, edits, facts, completed jobs, raw replies, decisions, settings, credentials, and spending survive. Migration makes no provider request or native change. Existing planner-3 builds keep their saved schedule unless you choose **Use faster build**; new builds use representative planner 4. Factual extraction, terminology, and source-validation policy 3 remain unchanged. See [migration notes](MIGRATION.md).
+Version 0.9.0 upgrades to **state schema 8** after an exact-byte **state.json.pre-v8.json** backup. Different existing backups receive numbered suffixes and remain untouched. Facts, completed jobs, pending reviews and faster-build recovery, raw replies, manual choices, settings, credentials, and spending survive. Migration sends no request, writes no native tags, and does not change old suggestions to the new confidence-based review states. Existing extension checkpoints without an additional-tag target keep their older selection policy. Factual extraction, terminology, and source-validation policy 3 remain unchanged. See [migration notes](MIGRATION.md).
 
 Unused legacy generated drafts are removed from extension definitions only when an original backup proves their definitions are unchanged and no active or historical references need them. DIY, edited, approved, and referenced definitions remain. If that baseline is unavailable, definitions are kept. This cleanup creates no separate legacy archive and removes no native paper tags. Regular approved vocabulary history and undo journals remain available. The store refuses newer state schemas rather than overwriting them through an older backup.
 

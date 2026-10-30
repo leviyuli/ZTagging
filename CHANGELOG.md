@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+- Added a full-library Keep list for exact native names. Every unchecked name, including Smart Tags assignments, is removed only through preview and Apply with undo. no_tag stays protected; earlier locks default to Keep and require explicit unchecking to override. Keep adds no new locks or permanent rejection.
+- Preserved saved definitions during native cleanup. Optional DIY creation uses selected retained names; manual DIY comparison checks approved definitions and offers reviewed equivalent merges with aliases, native deduplication, stable history references, and undo. Broader, narrower, related, distinct, uncertain, and chemically contradictory meanings cannot be merged as equivalents.
+- Added persistent assignment reviews. Supported high-confidence core and DIY additions start accepted without native writes; low-confidence declines are local to the assignment. Medium or uncertain matches, no_tag, and removals need review. Final Apply is scoped to that assignment and its outside-topic report appears only after finishing.
+- Reported both partly uncovered papers and papers wholly outside the saved list. Selected topics can start an extension; no_tag papers require a reviewed Include again step first. A new definition alone does not resolve an old paper outcome.
+- Separated the initial 60-tag preference from a default target of 30 additional tags per extension. Each extension keeps the saved list and can grow the combined vocabulary beyond 60.
+- Upgraded state to schema 8 with exact-byte backup and retained cached evidence, pending work, replies, manual choices, journals, credentials, and spent budget. Migration performs no AI request, native change, or retroactive assignment triage. Older pending extensions retain their previous policy when no additional-tag target was stored.
+
 ## 0.8.1
 
 - Fixed faster-build conversion stopping when an unchanged attachment notification had removed a cached factual analysis. The switch verifies current metadata and local PDF quotations, then restores compatible facts from its immutable snapshot without another extraction request.

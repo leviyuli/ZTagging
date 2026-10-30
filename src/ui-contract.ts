@@ -41,6 +41,8 @@ export interface DisplayPaper {
 }
 export interface DisplaySuggestion {
   id: string;
+  runId?: string;
+  decisionOrigin?: 'automatic' | 'researcher';
   paperId: string;
   tagId: string;
   reason: string;
@@ -101,6 +103,20 @@ export interface ManagerSettings {
   outputPricePerMillion: number;
   maxOutputTokens: number;
   coreConceptLimit?: number;
+  extensionTagTarget?: number;
+}
+export interface DisplayAssignmentReview {
+  id: string;
+  label?: string;
+  status: 'running' | 'paused' | 'ready' | 'finished';
+  scopeCount: number;
+  analysisComplete: boolean;
+  canFinish: boolean;
+  highAccepted: number;
+  needsReview: number;
+  lowRejected: number;
+  acceptedIds: string[];
+  report?: { topics: { id: string; name: string; paperIds: string[]; reason?: string; resolved?: boolean }[]; paperIds: string[] };
 }
 export interface ManagerSnapshot {
   pluginVersion?: string;
@@ -114,13 +130,23 @@ export interface ManagerSnapshot {
     assignmentPilotReady?: boolean;
   };
   navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
+  assignmentReview?: DisplayAssignmentReview;
+  assignmentReviews?: DisplayAssignmentReview[];
+  diyComparison?: {
+    id: string;
+    status: 'ready' | 'queued' | 'running' | 'paused';
+    message?: string;
+    pairs: { id: string; diyId: string; diyName: string; targetId: string; targetName: string; relation: 'equivalent' | 'broader' | 'narrower' | 'related' | 'distinct' | 'uncertain'; reason: string; conflict?: boolean }[];
+    preview?: { id: string; changes: { paperId: string; title: string; before: string[]; after: string[] }[]; mergeCount: number; overrideCount: number };
+  };
   existingTags?: {
     id: string;
     applied: boolean;
     status: 'ready' | 'queued' | 'running' | 'paused';
     message?: string;
-    rows: { id: string; name: string; status: 'match' | 'choice' | 'unmatched'; meaning?: string; meaningInferred?: boolean; facet?: DisplayTag['facet']; targetNames: string[]; paperIds: string[]; manualCount: number; affectedCount: number; reason: string; diyQuestion?: string; assignments?: { paperId: string; status: 'match' | 'choice' | 'unmatched'; targetNames: string[]; targetIds: string[]; reason: string; conflict?: boolean; meaning?: string }[] }[];
+    rows: { id: string; name: string; kept?: boolean; protected?: boolean; locked?: boolean; status: 'match' | 'choice' | 'unmatched'; meaning?: string; meaningInferred?: boolean; facet?: DisplayTag['facet']; targetNames: string[]; paperIds: string[]; manualCount: number; affectedCount: number; reason: string; diyQuestion?: string; assignments?: { paperId: string; status: 'match' | 'choice' | 'unmatched'; targetNames: string[]; targetIds: string[]; reason: string; conflict?: boolean; meaning?: string }[] }[];
     preview?: { id: string; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
+    keepPreview?: { id: string; removedNames: string[]; paperCount: number; overrideCount: number; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
   };
   paperAttention?: { papers: { id: string; title: string; status: 'usable' | 'needsInformation' | 'failed' | 'skipped' | 'excluded'; message: string; phase: string; queued?: boolean; canDismiss?: boolean; canLookupMetadata: boolean; canRecheck: boolean; canRetry: boolean; canSkip: boolean }[]; queued: number };
   paperExclusionPreview?: { id: string; exclude: boolean; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };

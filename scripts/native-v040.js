@@ -15,7 +15,7 @@ const completed=value=>({value,usageKnown:true,usage:{inputTokens:100,outputToke
 export async function runNativeV040(app,check,config){
   check('v040IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v040IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
-  check('v040StateSchema',app.state.schemaVersion===7);
+  check('v040StateSchema',app.state.schemaVersion===8);
   const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldList=host.list,oldComplete=ai.completeJson,oldApply=host.apply,oldInvoke=app.invoke;
   const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),oldMode=navigator?.mode;
   const nativePaper=Object.values(before.papers).find(paper=>paper.title==='Smart Tags smoke: catalyst-layer resistance in PEM electrolysis');
@@ -96,7 +96,7 @@ export async function runNativeV040(app,check,config){
     const beforeApplyRequests=requests;button(doc,'Apply tag list').click();await until(()=>app.state.taxonomyReady&&!app.state.tagPreparation,'tag list saved');await app.waitForIdle();
     check('v040ApplySavesWithoutAssignment',requests===beforeApplyRequests&&app.state.run?.kind!=='tag'&&!app.state.suggestions.length&&nativeWrites===0&&!app.state.settings.autoAssign);
     await app.invoke('tag',{scope:'selected'});await app.waitForIdle();await open('review');
-    check('v040ExplicitGroupCreatesSeparatePaperPreview',app.state.suggestions.some(suggestion=>suggestion.paperId===nativePaper.id&&suggestion.status==='pending'&&!suggestion.applied)&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags&&!app.state.settings.autoAssign);
+    check('v040ExplicitGroupCreatesSeparatePaperPreview',app.state.suggestions.some(suggestion=>suggestion.paperId===nativePaper.id&&suggestion.status==='accepted'&&suggestion.decisionOrigin==='automatic'&&!suggestion.applied)&&nativeWrites===0&&JSON.stringify(item.getTags())===nativeTags&&!app.state.settings.autoAssign);
 
     phase='question';app.state.settings.coreConceptLimit=61;await app.invoke('prepare-tags',{scope:'selected',mode:'replace'});await app.waitForIdle();
     check('v040OnlyUnresolvedScopeBecomesQuestion',app.state.tagPreparation?.status==='questions'&&app.state.tagPreparation.questions.length===1,{status:app.state.tagPreparation?.status,questions:app.state.tagPreparation?.questions.length,runMessage:app.state.run?.message,diagnostics:app.state.tagPreparation?.diagnostics});

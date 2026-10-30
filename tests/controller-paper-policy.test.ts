@@ -93,9 +93,9 @@ test('an evidenced unmatched suggestion waits for batch Apply and Undo restores 
 
 test('rejecting a no_tag suggestion prevents cached reruns and manual removals from reapplying the marker',async()=>{
   const h=fixture();await analyze(h);const suggestion=h.state.suggestions.find(value=>value.tagId===NO_TAG_ID)!;
-  await h.app.invoke('reject-suggestion',{id:suggestion.id});await analyze(h);assert.equal(h.state.suggestions.some(value=>value.tagId===NO_TAG_ID&&!value.applied),false);assert.equal(h.state.decisions[`1:POLICY1|${NO_TAG_ID}`].rejected,true);assert.equal(h.ai.calls.length,1);assert.equal(h.host.writes.length,0);
+  await h.app.invoke('reject-suggestion',{id:suggestion.id});await analyze(h);assert.equal(h.state.suggestions.some(value=>value.runId===h.state.run!.id&&value.tagId===NO_TAG_ID&&!value.applied),false);assert.equal(h.state.decisions[`1:POLICY1|${NO_TAG_ID}`].rejected,true);assert.equal(h.ai.calls.length,1);assert.equal(h.host.writes.length,0);assert.equal(h.state.suggestions.find(value=>value.id===suggestion.id)!.status,'rejected');assert.equal(suggestion.decisionOrigin,'researcher');
   const second=fixture();await analyze(second);const proposed=second.state.suggestions.find(value=>value.tagId===NO_TAG_ID)!;await second.app.invoke('apply-suggestions',{ids:[proposed.id]});second.host.native.set(1,(await second.host.readTags(1)).filter(tag=>tag.tag!=='no_tag'));await second.app.onItemChanged(1);await analyze(second);
-  assert.equal(second.state.decisions[`1:POLICY1|${NO_TAG_ID}`].rejected,true);assert.equal(second.state.suggestions.some(value=>value.tagId===NO_TAG_ID&&!value.applied),false);assert.equal((await second.host.readTags(1)).some(tag=>tag.tag==='no_tag'),false);assert.equal(second.ai.calls.length,1);
+  assert.equal(second.state.decisions[`1:POLICY1|${NO_TAG_ID}`].rejected,true);assert.equal(second.state.suggestions.some(value=>value.runId===second.state.run!.id&&value.tagId===NO_TAG_ID&&!value.applied),false);assert.equal((await second.host.readTags(1)).some(tag=>tag.tag==='no_tag'),false);assert.equal(second.ai.calls.length,1);
 });
 
 test('no_tag alone cannot satisfy the approved-vocabulary gate or the scientific pilot requirement',async()=>{

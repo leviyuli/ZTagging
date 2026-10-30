@@ -1,4 +1,18 @@
-# Upgrading to Smart Tags 0.8.1
+# Upgrading to Smart Tags 0.9.0
+
+## Version 0.9.0
+
+Install the update over the existing extension. Before writing **schema 8**, Smart Tags saves an immutable exact-byte **state.json.pre-v8.json** backup. Different existing bytes receive a numbered filename; older backups remain intact. Backup or migration-write failure stops without replacing valid data from an older `.bak`, and older applications refuse schema-8 downgrade writes.
+
+Migration preserves cached facts and their quotations, identities and provenance, completed jobs, pending proposals and faster-build recovery, saved raw replies and allowances, native snapshots, manual choices, ownership, history, settings, credentials, and spending. It performs no provider request, native change, or automatic confidence-based reclassification of old suggestions. Older suggestions remain available as earlier results. Existing extension checkpoints without an additional-tag target keep their old policy; new extensions default to **30 additional tags**, separately from the initial 60-tag preference.
+
+**Existing tags → Keep tags** is now the main cleanup view. Read the complete native inventory, check names to retain, preview removal of every other name, then Apply with undo. That includes unchecked Smart Tags assignments; saved definitions remain available. no_tag is protected, earlier locks default to Keep, and unchecking them explicitly replaces those protections. Keep itself creates no lock or permanent rejection. Cleanup does not rerun AI or reset the tag list. Optional DIY creation and equivalent-definition merging remain separate reviewed actions.
+
+New assignments keep their own paper scope, suggestions, and history. Supported high-confidence core and DIY additions start accepted but unwritten; low-confidence declines do not become permanent rejections. Review medium or uncertain matches, no_tag, and removals before **Apply accepted and finish**, or **Finish assignment** when no accepted changes remain. The final topic report appears only after finishing, and applying one review never includes another run's accepted suggestions.
+
+The report can retain topics from partly covered papers as well as papers wholly outside the saved list. Choose topic papers to extend the vocabulary; selected no_tag papers require a reviewed Include again step. Apply the additions and assign again to verify their coverage. Creating or approving a definition alone does not resolve earlier outcomes. None of these changes enables incoming-paper automation or bypasses its pilot review.
+
+The v0.8.1 faster-build recovery remains available: **Retry faster build** or **Resume** locally checks unchanged inputs before restoring a missing cached fact from the saved snapshot. Changed or unavailable required PDF evidence remains actionable instead of triggering an unreviewed replacement.
 
 ## Version 0.8.1
 
