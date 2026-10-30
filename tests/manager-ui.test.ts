@@ -452,6 +452,14 @@ test('a running legacy build offers faster preparation and prevents duplicate sw
   data.queue.canUseFasterBuild=false;data.queue.switchingToFasterBuild=false;await h.emitUpdate();assert.equal(h.button('Use faster build'),undefined);assert.equal(h.button('Switching to faster build…'),undefined);
 });
 
+test('a paused faster-build transition resumes the saved switch instead of retrying the legacy chooser',async t=>{
+  const data=snapshot();data.queue={kind:'rebuild',status:'paused',completed:744,total:744,failed:0,canUseFasterBuild:false,switchingToFasterBuild:true,selection:{failed:true,sourceCompleted:0,sourceTotal:5981,completedRequests:4,queuedRequests:0,correctionsUsed:3,correctionAllowance:3}};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Faster build paused/);assert.equal(h.button('Switching to faster build…'),undefined);assert.equal(h.button('Retry this step'),undefined);assert.equal(h.button('Retry faster build').disabled,false);
+  await h.click('Retry faster build');assert.deepEqual(h.actions,[{action:'resume',payload:undefined}]);
+  data.queue.status='running';await h.emitUpdate();assert.equal(h.button('Retry faster build'),undefined);assert.equal(h.button('Switching to faster build…').disabled,true);
+  data.queue.status='paused';await h.emitUpdate();assert.equal(h.button('Retry faster build').disabled,false);assert.equal(h.button('Switching to faster build…'),undefined);
+});
+
 test('representative preparation reports tags and examples without implying full-library verification',async t=>{
   const data=snapshot();data.queue={kind:'rebuild',status:'running',phase:'mapping',completed:744,total:744,failed:0,selection:{verificationScope:'representative',tagsPrepared:50,tagsTotal:60,examplesChecked:96,examplesTotal:120,sourceCompleted:96,sourceTotal:5981,completedRequests:8,queuedRequests:2,correctionsUsed:0,correctionAllowance:10}};
   const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Checking examples/);assert.match(h.app.textContent,/Tags prepared: 50 of 60/);assert.match(h.app.textContent,/Examples checked: 96 of 120/);assert.match(h.app.textContent,/8 requests completed · 2 requests queued/);assert.doesNotMatch(h.app.textContent,/5981|Supporting findings checked|full coverage|\bETA\b/);assert.equal(h.all().find(node=>node.className==='progress-bar')!.children[0].style.width,`${50/60*100}%`);

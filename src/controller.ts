@@ -8,7 +8,7 @@ import { buildFactExtractionPrompt, normalizeFacts, createTaxonomyProposal, vali
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
 import { equivalentTagNames, descendantIds, compileConceptFilter } from './concept-filter.ts';
 import type { ConceptFilter } from './concept-filter.ts';
-import { createEmptyEvidenceCatalog, ensureFactConceptIds, createRegistrySnapshot, validateRegistrySnapshot, validateSnapshotAgainstFacts } from './evidence.ts';
+import { createEmptyEvidenceCatalog, ensureFactConceptIds, createRegistrySnapshot, validateRegistrySnapshot, validateSnapshotAgainstFacts, recoverPaperFactsFromSnapshot } from './evidence.ts';
 import type { EvidenceCatalog, RegistrySnapshot } from './evidence.ts';
 import { upsertWarning, resolveWarnings, dismissWarnings, migrateLegacyWarnings, migrateWarningEpisodes, validWarningRecord, recordWarningNotice, updateTopicWarnings } from './warnings.ts';
 import type { WarningRecord, WarningInput } from './warnings.ts';
@@ -480,6 +480,7 @@ export class AppController implements ManagerAPI {
     if(this.worker)await this.worker;
   }
   private processingMessage(message:string):string {
+    if(message.startsWith('One paper needs its saved information checked.'))return message;
     if(message.startsWith('This build reached its request limit.'))return message;
     if(/AI could not combine|automatic tag repair|model could not finish a valid tag list|tag-building (?:part|step).*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
     if(/output.*limit|response.*limit/i.test(message))return 'The response limit is too small for this tag list. Increase it in Connect AI, then resume.';
@@ -521,10 +522,25 @@ export class AppController implements ManagerAPI {
   private async finishFasterBuild(run:Run) {
     if(!run.fasterBuild||this.state.run!==run)return;
     this.applySelectionReplies(run);
-    const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]);
+    const retained=run.selection?.snapshot??run.consolidation?.snapshot;
+    const facts:PaperFacts[]=[];
+    for(const job of run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId))){
+      let fact=this.state.facts[job.paperId];
+      if(!fact&&retained){
+        const original=this.state.papers[job.paperId],source=Object.values(retained.sources).find(source=>source.paperId===job.paperId);
+        if(original&&source){
+          const current=await this.fresh(original);
+          if(source.inputFingerprint!==source.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(current.itemID),[],18000);
+          const recovered=recoverPaperFactsFromSnapshot(retained,current);
+          if(recovered){fact=recovered;this.state.facts[job.paperId]=fact;current.summary=fact.summary;current.concepts=fact.concepts.map(concept=>concept.name);current.fingerprint=paperFingerprint(current);this.state.papers[job.paperId]=current;delete job.error;}
+        }
+      }
+      if(!fact){job.error='One paper needs its saved information checked. Open Papers that need attention, recheck its PDF or retry its analysis, then retry faster build.';throw new Error(job.error);}
+      facts.push(fact);
+    }
     if(!facts.length||facts.some(fact=>!fact))throw new Error('Some papers need their analysis refreshed. Resume paper analysis before switching this build.');
     facts.sort((a,b)=>a.paperId.localeCompare(b.paperId));
-    const catalog=copy(this.state.evidenceCatalog),retained=run.selection?.snapshot??run.consolidation?.snapshot;
+    const catalog=copy(this.state.evidenceCatalog);
     const snapshot=retained&&!validateSnapshotAgainstFacts(retained,facts).length?copy(retained):createRegistrySnapshot(facts,catalog);
     const targetCount=run.fasterBuild.targetCount,settings={...copy(this.state.settings),coreConceptLimit:targetCount},existing=this.consolidationDefinitions();
     const selection=createTagSelection(facts,existing,snapshot,{plannerVersion:4,targetCount,maxOutputTokens:settings.maxOutputTokens,baseVersion:this.state.vocabularyVersion,generationId:uid('tag-selection'),baseline:run.buildMode==='extend'?run.extensionBaseline:undefined,previousWork:run.selection,review:this.state.taxonomyProposal??undefined,excludedTagIds:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.tagId),excludedNames:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.name),priorDecisions:{...(this.state.taxonomyReview?.machineDecisions??{}),...(this.state.taxonomyProposal?.machineDecisions??{})},protectedTagIds:this.preparationOptions().protectedTagIds});
@@ -1095,6 +1111,7 @@ export class AppController implements ManagerAPI {
         }
         if(!this.state.run)throw new Error('There is no saved job to resume.');
         this.checkConnectionSettings();
+        if(this.state.run.fasterBuild){this.state.run.status='running';this.state.run.message='Retrying the switch to faster build…';await this.save();this.launch();break;}
         const connectionChanged=this.state.run.settings.provider!==this.state.settings.provider||this.state.run.settings.model!==this.state.settings.model;
         this.state.run.settings=copy(this.state.settings);
         const detail=this.state.tags.find(t=>t.id===this.state.run?.detailId);
@@ -1945,7 +1962,23 @@ export class AppController implements ManagerAPI {
     await this.save();
     if(changed&&this.state.settings.autoAssign&&this.state.pilotReviewed){this.deferredItems.add(itemID);await this.save();if(!this.worker&&this.state.run?.status!=='paused')await this.processDeferred();}
   }
-  async onAttachmentChanged(parentID:number) {const paper=await this.env.host.read(parentID);if(paper){delete this.state.analyses[paper.id];delete this.state.facts[paper.id];delete this.state.approvedTaxonomyInput;if(this.state.taxonomyProposal?.paperIds.includes(paper.id))this.state.taxonomyProposal.issues=[...new Set([...this.state.taxonomyProposal.issues,'Source PDF evidence changed. Rebuild the taxonomy proposal.'])];if(this.state.papers[paper.id])delete this.state.papers[paper.id].pdfText;await this.onItemChanged(parentID);if(this.state.settings.autoAssign){this.deferredItems.add(parentID);if(!this.worker)await this.processDeferred();}}}
+  async onAttachmentChanged(parentID:number) {
+    const paper=await this.env.host.read(parentID);if(!paper)return;
+    const cached=this.state.facts[paper.id];let unchanged=false;
+    if(cached){
+      const current=await this.fresh(this.state.papers[paper.id]??paper),metadataFingerprint=paperFingerprint(current);
+      if(cached.inputFingerprint!==cached.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(parentID),[],18000);
+      unchanged=cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===paperFingerprint(current);
+    }
+    delete this.state.analyses[paper.id];
+    if(!unchanged){
+      delete this.state.facts[paper.id];delete this.state.approvedTaxonomyInput;
+      if(this.state.taxonomyProposal?.paperIds.includes(paper.id))this.state.taxonomyProposal.issues=[...new Set([...this.state.taxonomyProposal.issues,'Source PDF evidence changed. Rebuild the taxonomy proposal.'])];
+      if(this.state.papers[paper.id])delete this.state.papers[paper.id].pdfText;
+    }
+    await this.onItemChanged(parentID);
+    if(this.state.settings.autoAssign){this.deferredItems.add(parentID);if(!this.worker)await this.processDeferred();}
+  }
   private async processDeferred() {
     if(!this.state.settings.autoAssign||!this.state.pilotReviewed||this.state.run?.status==='paused')return;
     const ids=[...this.deferredItems];this.deferredItems.clear();const papers:PaperRecord[]=[];

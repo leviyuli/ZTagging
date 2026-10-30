@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Fixed faster-build conversion stopping when an unchanged attachment notification had removed a cached factual analysis. The switch verifies current metadata and local PDF quotations, then restores compatible facts from its immutable snapshot without another extraction request.
+- Kept unchanged attachment notifications from discarding usable facts. Changed inputs or unavailable required PDF evidence still pause with an actionable paper-recovery message.
+- Added **Retry faster build** for a paused switch; Resume continues that switch instead of returning to the older chooser. State remains schema 7, with replies, counters, spending, and native data retained.
+
 ## 0.8.0
 
 - Replaced exhaustive source mapping in new builds with representative planner 4: up to three different example papers per tag, at most 64 tag–source pairs and 90 KB per request, with up to two requests in flight.

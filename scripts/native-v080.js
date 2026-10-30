@@ -47,12 +47,15 @@ export async function runNativeV080(app,check,config){
       }finally{inFlight--;}
     };
     await app.save();manager=await Zotero.SmartTags.openManager({page:'activity'});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready','Activity ready');await app.invoke('resume');
-    await until(()=>legacyMaps===2&&button(manager.document,'Use faster build')&&!button(manager.document,'Use faster build').disabled,'running older build switch');button(manager.document,'Use faster build').click();
+    await until(()=>legacyMaps===2&&button(manager.document,'Use faster build')&&!button(manager.document,'Use faster build').disabled,'running older build switch');
+    const missingId=facts[0].paperId,missingBefore=fingerprint(app.state.facts[missingId]);delete app.state.facts[missingId];
+    button(manager.document,'Use faster build').click();
     await until(()=>app.state.run.fasterBuild&&button(manager.document,'Switching to faster build…'),'pending switch');
     check('v080LiveSwitchLetsCurrentCallsFinish',legacySignals.every(signal=>!signal.aborted)&&inFlight===2&&button(manager.document,'Switching to faster build…').disabled);
     releaseLegacy();await until(()=>app.state.run.selection.policyVersion===4&&representativeMaps>=2&&app.state.run.selection.tasks.some(task=>!task.superseded&&task.pairIds?.length&&task.status==='completed'),'representative mapping persisted');
     const archived=app.state.tagSelectionHistory.find(entry=>entry.work.id===legacy.id);
     check('v080LegacyRawWorkIsRetainedDuringSwitch',!!archived&&archived.work.tasks.filter(task=>task.kind==='map'&&task.status==='completed').length===2&&archived.work.tasks.every(task=>task.attempts.every(attempt=>typeof attempt.raw==='string')));
+    check('v081MissingCacheRecoversFromUnchangedEvidence',fingerprint(app.state.facts[missingId])===missingBefore&&pdfReads===0);
     await app.invoke('pause');await app.waitForIdle();
     const completed=new Set(app.state.run.selection.tasks.filter(task=>!task.superseded&&task.pairIds?.length&&task.status==='completed').map(task=>task.id)),resumeAt=calls.length;
     check('v080RepresentativeChecksPersistBeforeRestart',completed.size>0&&(await app.snapshot()).queue.selection.verificationScope==='representative');

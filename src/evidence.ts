@@ -1,6 +1,6 @@
-import {allocateOpaqueId,fingerprint} from './core.ts';
+import {allocateOpaqueId,FACETS,fingerprint,paperFingerprint,validateEvidence} from './core.ts';
 export {allocateOpaqueId} from './core.ts';
-import type {Evidence,Facet} from './core.ts';
+import type {Evidence,Facet,PaperRecord} from './core.ts';
 import type {PaperFacts} from './taxonomy.ts';
 import {terminologyKey,NORMALIZATION_VERSION} from './naming.ts';
 import type {NormalizationVersion} from './naming.ts';
@@ -70,4 +70,16 @@ export function validateSnapshotAgainstFacts(snapshot:RegistrySnapshot,facts:rea
     if(source.paperId!==fact.paperId||source.name!==concept.name||source.facet!==concept.facet||source.summary!==fact.summary||fingerprint(source.evidence)!==fingerprint(concept.evidence)||source.metadataFingerprint!==fact.metadataFingerprint||source.inputFingerprint!==fact.inputFingerprint||source.provider!==fact.provider||source.model!==fact.model||source.extractionVersion!==fact.extractionVersion)issues.push(`Snapshot factual source ${id} differs from its immutable validated evidence.`);
   }
   return [...new Set(issues)];
+}
+
+/** Recover an evicted cache entry only after its exact current inputs and quotations match. */
+export function recoverPaperFactsFromSnapshot(snapshot:RegistrySnapshot,paper:PaperRecord):PaperFacts|null {
+  if(validateRegistrySnapshot(snapshot).length||!snapshot.paperIds.includes(paper.id))return null;
+  const sources=Object.values(snapshot.sources).filter(source=>source.paperId===paper.id);
+  if(!sources.length)return null;
+  const first=sources[0],metadataFingerprint=paperFingerprint({...paper,pdfText:undefined}),inputFingerprint=paperFingerprint(paper);
+  if(sources.some(source=>source.metadataFingerprint!==metadataFingerprint||source.inputFingerprint!==inputFingerprint||source.summary!==first.summary||source.provider!==first.provider||source.model!==first.model||source.extractionVersion!==1||typeof source.summary!=='string'||typeof source.provider!=='string'||typeof source.model!=='string'||source.facet!==undefined&&!FACETS.includes(source.facet)||fingerprint(validateEvidence(paper,source.evidence))!==fingerprint(source.evidence)))return null;
+  const fact:PaperFacts={paperId:paper.id,metadataFingerprint,inputFingerprint,provider:first.provider,model:first.model,extractionVersion:1,summary:first.summary,concepts:sources.map(source=>({factConceptId:source.factConceptId,name:source.name,...(source.facet?{facet:source.facet}:{}),evidence:clone(source.evidence)})),needsPDF:false};
+  const ids=new Set(sources.map(source=>source.factConceptId)),selected:RegistrySnapshot={...snapshot,paperIds:[paper.id],sources:Object.fromEntries(sources.map(source=>[source.factConceptId,source])),entries:Object.fromEntries(Object.values(snapshot.entries).map(entry=>({...entry,sourceIds:entry.sourceIds.filter(id=>ids.has(id))})).filter(entry=>entry.sourceIds.length).map(entry=>[entry.registryId,entry]))};
+  return validateSnapshotAgainstFacts(selected,[fact]).length?null:fact;
 }

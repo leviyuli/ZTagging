@@ -1,10 +1,16 @@
-# v0.8.0 validation
+# v0.8.1 validation
 
 Target: Zotero 10.0.6 on Windows. Installer/source hashes and machine-readable results are in [dist/validation.json](dist/validation.json).
 
+## Stuck-switch repair
+
+The reported switch stopped before dispatch because one completed paper no longer had a cached fact record. The queue hid that local failure behind a generic connection message, while the pending flag kept its button disabled. The fix verifies current metadata, selected PDF text, source fingerprints and literal quotations before reconstructing an evicted record from the immutable run snapshot. Changed or unavailable inputs remain paused and appear in paper attention; no paid request repairs the cache.
+
+A paused pending switch now shows **Faster build paused** and **Retry faster build**, routed through Resume without restarting the old chooser or resetting counters. Unchanged attachment notifications preserve factual analysis; actual input changes still invalidate it. State schema remains 7.
+
 ## Automated checks
 
-`npm run verify` passed TypeScript, all **786 tests**, and the production build.
+`npm run verify` passed TypeScript, all **794 tests**, and the production build.
 
 Module and public-controller regressions cover representative selection, dominant-field ranking, three distinct papers per tag, explicit pair judgments, supported parents, unsupported generated-tag deferral, genuine ambiguity, protected edits and DIY definitions, and unchanged reruns. Existing Co/CO, scientific notation, FC/AEMFC/PEMFC, source fingerprints, remembered decisions, rejection, manual ownership, native assignment and undo tests remain in the suite.
 
@@ -16,15 +22,15 @@ Manager tests exercise accessible controls, representative progress, verified-ex
 
 ## Isolated Zotero checks
 
-All **173 native checks passed** in a separate profile and data directory. The suite exercises **Use faster build** through the rendered manager, waits for two active legacy replies, archives old work, persists completed representative checks, resumes without repeating them, and finishes a synthetic 60-tag list. Fresh builds also use representative planner 4 by default, reuse cached facts, and preserve incoming-automation settings. Apply saves definitions only.
+All **174 native checks passed** in a separate profile and data directory. The suite exercises **Use faster build** through the rendered manager, waits for two active legacy replies, archives old work, persists completed representative checks, resumes without repeating them, and finishes a synthetic 60-tag list. Fresh builds also use representative planner 4 by default, reuse cached facts, and preserve incoming-automation settings. Apply saves definitions only.
 
 Retained checks cover navigator/Collections restoration, independent windows, title/PDF/note/annotation search, unchanged columns and right-hand panes, editor controls, independent build and assignment groups, metadata preview/apply/undo, warning actions, no_tag, and manual protections. A local PDF is extracted and indexed only in the isolated directory.
 
-The production 0.8.0 package is installed over a disabled 0.7.1 package through Zotero's AddonManager without uninstalling. Checks compare stable identity, saved state, native tags, columns, HTTPS update metadata, and installer hash. Remote Zotero update-feed discovery is not exercised before publication.
+The production 0.8.1 package was installed over a disabled 0.8.0 package through Zotero's AddonManager without uninstalling. Checks compare stable identity, saved state, native tags, columns, HTTPS update metadata, and installer hash. Remote Zotero update-feed discovery is not exercised before publication.
 
 ## Private retained-work replay
 
-A read-only copy of the actual paused build contains **744 completed paper jobs**, **752 cached factual records**, **5,981 selected sources**, and four paid chooser replies. The controller switches the saved draft locally to a soft target of 60 tags without another chooser or factual extraction. Candidate IDs, original quotations, provenance, selected snapshot, historical checkpoints, definitions, decisions, ownership, native data, and prior spending remain intact.
+A read-only copy of the current failed switch contains **744 completed paper jobs**, **751 cached factual records**, **5,981 selected sources**, and four paid chooser replies. One completed paper lost its cache entry after an attachment notification. Its immutable sources still contain the original analysis. A local read-only database copy and PDF cache confirm that its current PDF input fingerprint matches; the replay restores that one entry and preserves the other 751 facts. The controller switches the saved draft locally to a soft target of 60 tags without another chooser or factual extraction. Candidate IDs, original quotations, provenance, selected snapshot, historical checkpoints, definitions, decisions, ownership, native data, and prior spending remain intact.
 
 The fixed representative schedule contains **180 tag/source pairs in three checking requests**, with at most two requests in flight and a maximum payload of **78,839 UTF-8 bytes**. It samples 149 unique sources; the other **5,832 remain unexamined**. Completion no longer depends on classifying every finding. The exact copied input file is unchanged, and the working profile/run is neither written nor interrupted.
 

@@ -38,7 +38,7 @@ function harness(state=library(),respond?:(input:Input,signal?:AbortSignal)=>Pro
   const calls:Input[]=[];let running=0,peak=0,writes=0,extractions=0;
   const env:ControllerEnvironment={host:{async list(){return clone(Object.values(state.papers));},async read(id){return clone(Object.values(state.papers).find(paper=>paper.itemID===id)??null);},async readTags(){return [{tag:'My project',type:0}];},async pdfText(){return '';},async apply(){writes++;throw new Error('Building tags cannot write native data.');},async show(){},async saveSearch(){}},ai:{async completeJson(_system,prompt,_settings,signal){const input:Input=JSON.parse(prompt.slice(prompt.lastIndexOf('INPUT_DATA_JSON:')+'INPUT_DATA_JSON:'.length));if(!input.selectionPhase){extractions++;throw new Error('Completed facts must be reused.');}calls.push(clone(input));running++;peak=Math.max(peak,running);try{await new Promise<void>(resolve=>setImmediate(resolve));const value=respond?await respond(input,signal):response(input);return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:10,outputTokens:10},estimatedCostUSD:0.002};}finally{running--;}
   },async hasApiKey(){return true;},async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};},async testConnection(){throw new Error('No account test');},async listModels(){return [];},async setApiKey(){},async removeApiKey(){},async signIn(){throw new Error('No sign-in');},cancelSignIn(){},async signOut(){return {revoked:true};},async selectAccount(){}},persist:async()=>{}};
-  return {state,calls,controller:new AppController(state,env),peak:()=>peak,writes:()=>writes,extractions:()=>extractions};
+  return {state,calls,env,controller:new AppController(state,env),peak:()=>peak,writes:()=>writes,extractions:()=>extractions};
 }
 
 test('new builds verify examples instead of every finding and Apply saves definitions without assignment',async()=>{
@@ -68,4 +68,41 @@ test('a persisted faster-build request resumes after restart without a new globa
 
 test('budget rejection after switching retains paid work and consumes no new dispatch',async()=>{
   const state=library();seedLegacy(state);Object.assign(state.settings,{provider:'deepseek',inputPricePerMillion:1,outputPricePerMillion:1,budgetUSD:0.250001});state.run!.settings=clone(state.settings);const oldRequests=state.run!.selection!.automaticRequests,h=harness(state);await h.controller.invoke('use-faster-build',{targetCount:60});await h.controller.waitForIdle();assert.equal(state.run!.status,'paused');assert.match(state.run!.message,/budget/i);assert.equal(h.calls.length,0);assert.equal(state.run!.spentUSD,0.25);assert.equal(state.run!.selection!.automaticRequests,oldRequests);assert.equal(state.run!.selection!.policyVersion,4);assert.equal(h.writes(),0);
+});
+
+function evictedPDFFact(){
+  const state=library(),paper=Object.values(state.papers)[0],fact=state.facts[paper.id];
+  const pdf=paper.abstract;paper.abstract='';paper.pdfText=pdf;paper.fingerprint=paperFingerprint(paper);
+  fact.metadataFingerprint=paperFingerprint({...paper,pdfText:undefined});fact.inputFingerprint=paper.fingerprint;
+  for(const concept of fact.concepts)for(const evidence of concept.evidence)evidence.source='pdf';
+  seedLegacy(state);const retained=clone(fact);delete state.facts[paper.id];delete paper.pdfText;
+  state.run!.fasterBuild={targetCount:60,requestedAt:'2026-10-30T04:32:00.000Z'};
+  return {state,paper,pdf,retained};
+}
+
+test('a paused switch restores evicted PDF facts after local input verification and never retries the old chooser',async()=>{
+  const value=evictedPDFFact(),h=harness(value.state),snapshot=fingerprint(value.state.run!.selection!.snapshot);let reads=0;
+  h.env.host.pdfText=async id=>{if(id===value.paper.itemID){reads++;return value.pdf;}return '';};
+  await h.controller.initialize();await h.controller.invoke('resume');await h.controller.waitForIdle();
+  assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.state.run!.fasterBuild,undefined);assert.equal(h.state.run!.selection!.policyVersion,4);
+  assert.deepEqual(h.state.facts[value.paper.id],value.retained);assert.equal(fingerprint(h.state.run!.selection!.snapshot),snapshot);assert.ok(reads>0);
+  assert.ok(h.calls.length>0&&h.calls.every(call=>call.selectionPhase==='mapping'));assert.equal(h.extractions(),0);assert.equal(h.writes(),0);assert.equal(validState(h.state),true);
+});
+
+test('changed or unavailable PDF inputs pause a switch without restoring stale facts or making paid requests',async()=>{
+  for(const pdf of ['', 'A changed PDF contains different scientific findings.']){
+    const value=evictedPDFFact(),h=harness(value.state),selection=fingerprint(h.state.run!.selection);
+    h.env.host.pdfText=async()=>pdf;await h.controller.initialize();await h.controller.invoke('resume');await h.controller.waitForIdle();
+    assert.equal(h.state.run!.status,'paused');assert.ok(h.state.run!.fasterBuild);assert.equal(h.state.facts[value.paper.id],undefined);assert.equal(fingerprint(h.state.run!.selection),selection);
+    const view=await h.controller.snapshot();assert.match(view.queue.message,/One paper needs its saved information checked/);assert.ok(view.paperAttention!.papers.some(paper=>paper.id===value.paper.id&&paper.status==='failed'));
+    assert.equal(h.calls.length,0);assert.equal(h.state.run!.spentUSD,0.25);assert.equal(h.extractions(),0);assert.equal(h.writes(),0);
+  }
+});
+
+test('attachment notifications preserve factual analysis when its actual local inputs are unchanged',async()=>{
+  const value=evictedPDFFact(),h=harness(value.state);h.state.facts[value.paper.id]=clone(value.retained);
+  h.env.host.pdfText=async()=>value.pdf;await h.controller.onAttachmentChanged(value.paper.itemID);
+  assert.deepEqual(h.state.facts[value.paper.id],value.retained);assert.equal(h.calls.length,0);
+  h.env.host.pdfText=async()=>value.pdf+' Additional changed input.';await h.controller.onAttachmentChanged(value.paper.itemID);
+  assert.equal(h.state.facts[value.paper.id],undefined);assert.equal(h.calls.length,0);assert.equal(h.writes(),0);
 });

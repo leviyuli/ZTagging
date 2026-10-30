@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Smart Tags for Zotero",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Build a useful tag list with AI, answer scientific questions, and review paper tags before applying.",
   "author": "Smart Tags contributors",
   "applications": {

@@ -1,4 +1,12 @@
-# Upgrading to Smart Tags 0.8.0
+# Upgrading to Smart Tags 0.8.1
+
+## Version 0.8.1
+
+State remains **schema 7**. Install the update over the existing extension. If a run is stuck on **Switching to faster build…**, click **Retry faster build** or **Resume**. The pending switch continues; it does not restart the older chooser or reset saved replies, correction counters, or spending.
+
+An attachment notification could previously remove cached analysis even when the paper's metadata and PDF content were unchanged. The switch now verifies current inputs and quotations locally before restoring a missing factual record from its immutable snapshot. This recovery makes no extraction request and does not change native library data. Unchanged attachment notifications also retain usable facts.
+
+If the inputs changed or a required PDF cannot be checked locally, the run stays paused with a paper-recovery message. Open **Papers that need attention**, inspect or recheck the PDF, or explicitly retry that paper's analysis, then retry the faster build. Existing analysis for other papers remains available.
 
 ## Version 0.8.0
 

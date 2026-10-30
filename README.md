@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.8.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.8.0.xpi).
+2. Select [`smart-tags-0.8.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.8.1.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -18,6 +18,8 @@ The classifier usually proposes up to five core tags plus matching custom tags; 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+
+Version **0.8.1** fixes a build stuck on **Switching to faster build…** after an attachment notification removed cached analysis despite unchanged paper content. Update, then click **Retry faster build** or **Resume**. Smart Tags checks current metadata and local PDF evidence before restoring missing facts from the saved snapshot, without another extraction request. If inputs changed or the required PDF is unavailable, it pauses with paper-recovery actions. Saved replies, counters, and spending are retained.
 
 Version **0.8.0** chooses a compact global list, then verifies representative examples from up to three different papers per tag. It prepares the vocabulary without exhaustively classifying every saved finding. An older unfinished build offers **Use faster build**: this explicit action selects a preferred target of 60, waits for active requests to finish, and reuses completed paper analysis and compatible decisions. Previous replies and spending stay in history. Installing the update alone does not switch an existing build.
 

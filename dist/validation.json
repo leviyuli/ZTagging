@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.8.0",
-  "verifiedAt": "2026-10-30T04:29:34.209Z",
+  "version": "0.8.1",
+  "verifiedAt": "2026-10-30T04:50:09.100Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Global tag selection with representative paper checks",
+  "scope": "Recovery of a paused faster-build switch using locally verified immutable evidence",
   "schemaVersion": 7,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 786,
+    "passed": 794,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 173,
+    "passed": 174,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -398,6 +398,10 @@
         "passed": true
       },
       {
+        "name": "v081MissingCacheRecoversFromUnchangedEvidence",
+        "passed": true
+      },
+      {
         "name": "v080RepresentativeChecksPersistBeforeRestart",
         "passed": true
       },
@@ -745,12 +749,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.7.1",
-      "to": "0.8.0",
+      "from": "0.8.0",
+      "to": "0.8.1",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "daa53f12ab51ec09c31ecc7d6aacf560cea3f75e761493346632375574eb090e",
+      "packageHash": "d2bb02d00fe29f0f199ae39c2b76a8889a85f28957a273a0c16b09825aa33770",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -762,7 +766,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 124,
+      "largeRenderMS": 127,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -803,6 +807,9 @@
     "validPairsSavedBeforeRepair": true,
     "completedChecksSurviveRestart": true,
     "ordinaryResumeDoesNotResetRepairAllowances": true,
+    "missingCacheRecoveryChecksCurrentInputsAndQuotes": true,
+    "unchangedAttachmentNotificationsPreserveFacts": true,
+    "pausedSwitchRetriesWithoutLegacyChooser": true,
     "explicitFasterBuildWaitsForActiveReplies": true,
     "oldWorkAndChargesRetained": true,
     "unchangedRerunsReuseWork": true,
@@ -810,7 +817,11 @@
   },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Read-only copied retained work with simulated representative judgments",
+    "scope": "Read-only current failed-switch replay with verified local PDF input and simulated judgments",
+    "evictedFactsRecovered": 1,
+    "otherCachedFactsUnchanged": true,
+    "localPDFInputVerified": true,
+    "pausedSwitchRecovered": true,
     "selectedPapers": 744,
     "completedJobs": 744,
     "cachedFacts": 752,
@@ -826,8 +837,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1354,
-    "totalSimulationMS": 3947,
+    "timeToRepresentativeQueueMS": 1386,
+    "totalSimulationMS": 4048,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -871,14 +882,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.8.0.xpi",
-      "bytes": 519799,
-      "sha256": "daa53f12ab51ec09c31ecc7d6aacf560cea3f75e761493346632375574eb090e"
+      "file": "smart-tags-0.8.1.xpi",
+      "bytes": 522161,
+      "sha256": "d2bb02d00fe29f0f199ae39c2b76a8889a85f28957a273a0c16b09825aa33770"
     },
     "source": {
-      "file": "smart-tags-0.8.0-source.zip",
-      "bytes": 576606,
-      "sha256": "a9d55a308730e0f7b987664e0b21115bc7c8887c1d6537c49eb91ee93feb8502"
+      "file": "smart-tags-0.8.1-source.zip",
+      "bytes": 581096,
+      "sha256": "622b53797a4e2a479258886c1ac21c105441335e10061ee6475618796e03ecbc"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"
