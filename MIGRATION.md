@@ -1,5 +1,9 @@
-# Upgrading to Smart Tags 0.10.0
+# Upgrading to Smart Tags 0.10.1
 
+
+## Version 0.10.1
+
+State stays at schema 9. Install the patch over the existing extension and use **Retry this step** for a saved failed choice. The extension rechecks the saved reply before scheduling another chooser request; the paper facts, stable candidate IDs, raw replies, repair-attempt history and spending remain. Unknown optional tag relationships can be withheld without inventing aliases, subtype claims or paper support. Scientific contradictions, cycles and invalid source evidence remain blocked.
 
 ## Version 0.10.0
 

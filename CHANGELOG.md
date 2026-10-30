@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+- Fixed extension builds rejecting relationships that name an existing saved tag instead of repeating its internal ID. Unambiguous references resolve locally; unknown optional relationships are withheld without discarding valid tag definitions or inventing support.
+- Recheck saved chooser replies before sending another request. Preserve candidate identities, completed paper analyses, original replies, repair history and spending.
+- Hide undefined tag/example totals while choosing tags and keep repair counters in Details. Saved reference failures explain the tag-name problem without suggesting that the paper group or connection failed.
+
 ## 0.10.0
 
 - Added optional paper-analysis reset with paid audit preservation; a fresh build cannot reuse cleared facts or old preparation checkpoints.

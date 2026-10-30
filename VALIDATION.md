@@ -1,39 +1,33 @@
-# v0.10.0 validation
+# v0.10.1 validation
 
-Target: Zotero 10.0.6 on Windows. Installer/source hashes and aggregate results are in [dist/validation.json](dist/validation.json).
+Target: Zotero 10.0.6 on Windows. Exact installer/source hashes and aggregate checks are in [dist/validation.json](dist/validation.json).
 
-## Automated checks
+## Failure and correction
 
-`npm run verify` passed TypeScript, **896 tests**, and the production build, including **82 manager-interface tests**. Tests cross module interfaces, public controller actions, and accessible controls.
+The reported 19-paper extension had completed all extraction jobs. Tag selection rejected replies that used saved labels such as AEM/OER/PTL instead of stable IDs; omitted candidate names in optional relationships caused further failures. The repair allowance was exhausted before example checking began. This was a reference-handling defect rather than an input-size limit.
 
-TagShelves tests cover stable membership, renaming every shelf kind, shared tag identities, scientific symbols, exact native names and ambiguous aliases, generated shelves beyond 60 tags, parent context, and missing historical members. Controller tests verify independent paper/tag scopes, complete native inventory, display-only names without meanings, captured assignment IDs across rename/restart, cache separation between targets and context, and no global `no_tag` outcome from a partial shelf.
+Relationship resolution now checks explicit IDs and current keys, then unambiguous preferred names, full names, approved aliases and conservative established abbreviations. Unknown or ambiguous optional links are withheld; unresolved parent links make no subtype claim. No alias, paper support or source judgment is inferred from a repaired graph reference. Cycles, chemical contradictions and conflicting meanings remain invalid.
 
-Unified tag tests preserve Co/CO, pH/EIS, source identities and historical fingerprint policies. Generated and researcher-authored tags share matching rules and a direct-tag budget. Unchanged protected definitions do not acquire extra evidence requests or questions; fresh generated meanings still need validated supporting examples. Legacy contextual relationships retain their previous retrieval behavior.
+For a failed chooser without a frozen plan, Resume/Retry rechecks complete saved replies newest-first within that active task. A later invalid reply does not discard an earlier valid one. Raw replies, counters, candidate allocations and spending stay recorded; other snapshots and superseded tasks are not searched. Source verification still runs separately.
 
-Workflow tests cover a combined build/review page, changing the build group without discarding edits, renamed shelves, optional definition editing, and one final batch preview. Bulk acceptance is run-scoped and limited to validated substantive matches; exclusions, removals, incidental/uncertain matches, locks and remembered rejections retain explicit controls. Applying definitions does not write paper tags or enable automation.
+## Automated and native checks
 
-Reset tests cover schemas 8 and 9, immutable input, cleared reusable facts/classifications/PDF excerpts and checkpoints, retained native data/definitions/credentials/audit/spending, inactive unfinished reviews, and a fresh extraction request on the next build. A public reset during dispatched paid work waits for settlement and archives the exact reply and charge without scheduling another request.
+`npm run verify` passed TypeScript, **903 tests**, and the production build, including **83 manager-interface tests**. Five new selection regressions cover saved labels/full names/aliases, conservative acronym handling, exact identity precedence, unknown-edge quarantine, Co/CO and cycle/alias guards, and earlier-valid-reply recovery without counter reset. Controller and manager checks cover the plain failure explanation, correct Choosing phase, hidden undefined totals and repair details.
 
-Schema-9 tests cover exact-byte collision-safe backups, migration/write failures without rollback to an older valid generation, restart idempotence and downgrade refusal. Migration creates shelves and retires obsolete cleanup work without model requests or native writes. Existing provider, budget, manual-choice, interrupted-write, undo and incoming-assignment safeguards remain covered.
+All **203 isolated Zotero checks passed**. The new synthetic case retains two cached papers, eight paid chooser replies and allocated IDs; public Retry finishes with one simulated example request, no chooser/extraction/PDF request, and unchanged prior spending. Applying the recovered list changes definitions only. Native tags, baseline meanings, columns, Collections restoration and right-hand panes remain intact.
 
-## Isolated Zotero checks
+The retained native suite covers shelves, build/review, batch assignment, undo, cache reset, metadata recovery, search, windows, notifications and compatibility commands. The exact production **0.10.1** package was installed over disabled **0.10.0** through Zotero's AddonManager without uninstalling. Stable identity, state, native data, columns and package hash passed.
 
-All **196 packaged native checks passed** in a separate Zotero profile and data directory. The production suite exercises shelf rename, existing-name display, selected-shelf assignment with parent context, one batch Apply/Finish, exact undo, combined build/review, per-build shelves and explicit cache reset. Retained checks cover navigator/Collections restoration, independent windows, native quick/PDF/note/annotation search, columns/right panes, metadata recovery, notifications and legacy journals.
+## Private saved-work replays
 
-Native checks use synthetic papers and simulated replies, with no real provider request. The updater check installs the exact 0.10.0 package over disabled 0.9.0 through Zotero's AddonManager without uninstalling, and checks stable identity, state, native data, columns and package hash.
+The actual **19-paper** work was replayed only from a private local copy. Recovery selected an earlier valid saved reply, preserved all **19 cached facts**, **eight original chooser replies**, counters, evidence snapshot, existing definitions and spending, and scheduled **90 example pairs in two checking requests**. The largest ready request is **67,491 UTF-8 bytes**. One unassigned candidate is reconciled to an equivalent existing canonical identity; other allocated IDs remain stable. Local recovery makes no provider call, new extraction or native write, and does not edit the source copy or working profile.
 
-## Private replay and authorized reset
+A compatibility replay of the older **744-paper** work also passes: **180 pairs in three simulated checks**, at most two concurrent, **78,839-byte** maximum payload, and **5,832 findings left unexamined**. Cached facts, original quotations/provenance, IDs, history, raw replies and spending remain unchanged, with no repeated extraction, chooser request, live call or native write.
 
-A private read-only compatibility replay of the retained **744-paper** work preserves its cached facts, quotations, identities, completed jobs, raw paid replies, history and spending. The retained schedule uses **180 representative pairs in three simulated checking requests**, at most two concurrent, with a maximum **78,839-byte** payload. **5,832 findings remain unexamined**. It makes no new extraction or chooser request, live provider call, or native write.
+## Delivery and limits
 
-A separate migration replay preserves all **752 cached facts** and retires five stale cleanup tasks while retaining paid replies and budgets. This replay writes only private test output.
+Production JavaScript/CSS match the native-tested installer; embedded bundle sources match the delivered TypeScript. Installer and source archives exclude profiles, databases, state, credentials and private fixtures, and are scanned against private titles and item IDs. Published reports contain aggregate results only.
 
-After the user explicitly selected a full cache reset and closed Zotero, the working extension state was backed up byte-for-byte and its reusable cache was cleared: **752 paper analyses and 39 classification caches**. Its original schema 8 was retained for compatibility until updating. All **945 paper records**, **43 saved definitions**, native tags, credentials, decisions and spending/audit records were verified unchanged. No working Zotero database or attachment was edited.
+Focused deslop/codebase-design review keeps reference resolution and bounded recovery inside TagSelection and uses module interfaces, public controller actions and accessible manager controls. No new schema migration, extraction version, terminology policy, source-proof policy, provider switch or budget allowance was introduced.
 
-## Artifacts and limits
-
-Production JavaScript/CSS and embedded sources must match the native-tested package and delivered TypeScript. Installer and source archives are scanned for private titles/item IDs and exclude profiles, databases, state files, credentials and private replay fixtures. Only aggregate results are published.
-
-Focused deslop/codebase-design review keeps membership and scope selection in TagShelves, cache reset/audit handling in AnalysisReset, confidence/report decisions in AssignmentReview and selection in TagSelection; the controller handles providers, budgets, persistence and native operations.
-
-Native DOM/control checks do not replace a screenshot review. Desktop computer-use could not start in this environment. No live account authorization, provider latency or scientific recommendation quality was measured. Native in-place installation and update-manifest/hash validation are checked locally; the published feed and downloadable bytes are checked separately after release.
+The native checks use simulated responses rather than live AI. They validate execution, recovery and protection, not live-provider latency or scientific recommendation quality. No screenshot review or live account authorization was performed. The public HTTPS feed and exact downloadable bytes are checked separately after publication.

@@ -18,7 +18,7 @@ async function sha256(bytes){return [...new Uint8Array(await crypto.subtle.diges
 
 async function verifyNativePackageUpgrade(check,config){
   const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
-  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.9.0',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
+  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.10.0',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
   const oldManifest=packageManifest(oldPath),newManifest=packageManifest(newPath),oldSettings=oldManifest.applications.zotero,newSettings=newManifest.applications.zotero;
   check('v050UpdatePackagesKeepStableIdentity',oldManifest.version===oldVersion&&newManifest.version===expected&&oldSettings.id===id&&newSettings.id===id);
   check('v050UpdateURLRemainsSecureAndStable',newSettings.update_url.startsWith('https://')&&newSettings.update_url===oldSettings.update_url&&newSettings.strict_min_version==='10.0.6'&&newSettings.strict_max_version==='10.0.*');

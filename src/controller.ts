@@ -560,6 +560,7 @@ export class AppController implements ManagerAPI {
     if(this.worker)await this.worker;
   }
   private processingMessage(message:string):string {
+    if(message.startsWith('The AI reply could not link some tag names.'))return message;
     if(message.startsWith('One paper needs its saved information checked.'))return message;
     if(message.startsWith('This build reached its request limit.'))return message;
     if(/AI could not combine|automatic tag repair|model could not finish a valid tag list|tag-building (?:part|step).*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
@@ -1199,11 +1200,12 @@ export class AppController implements ManagerAPI {
     const metadataDisplay=metadata?{id:metadata.id,paperId:metadata.paperId,itemID:metadata.itemID,status:metadata.status,message:metadata.message,changes:metadata.changes,identifier:metadata.identifier?.value}:undefined;
     const attention=this.paperAttentionDisplay(),skipped=run?run.jobs.filter(job=>run.skippedIds?.includes(job.paperId)||this.excluded(job.paperId)).length:0;
     const selection=run?.selection?selectionProgress(run.selection):undefined;
-    const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(selection?(selection.phase==='choosing'?'choosing':'mapping'):this.state.tagPreparation?'checking':'choosing'):'reading';
+    const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(selection?(selection.phase==='choosing'||!run.selection?.plan?'choosing':'mapping'):this.state.tagPreparation?'checking':'choosing'):'reading';
     const phaseProgress=selection?(run?.selection?.policyVersion===4?{completed:selection.tagsPrepared??0,total:selection.tagsTotal??0,label:'Tags prepared'}:{completed:selection.sourceCompleted,total:selection.sourceTotal,label:'Supporting findings checked'}):phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
     const maintenance=(!run||run.status==='idle')?this.state.maintenanceTasks?.find(task=>task.status==='running'||task.status==='paused'):undefined;
     const queueRun=maintenance?.run??run;
-    const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):run?.message??'Ready';
+    const relationshipFailure=run?.selection?.status==='failed'&&run.selection.tasks.some(task=>!task.superseded&&task.kind==='plan'&&task.status==='failed'&&/Unknown selected relationship reference|ambiguous.*relationship/i.test(task.error??''));
+    const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):relationshipFailure?'The AI reply could not link some tag names. Your papers are saved. Use Retry this step to continue.':run?.message??'Ready';
     const queueEstimate=queueRun?this.estimateRun(queueRun):{value:0,pending:false};
     const assignmentReviews=this.assignmentDisplays();
     return {

@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.10.0",
-  "verifiedAt": "2026-10-30T09:17:53.428Z",
+  "version": "0.10.1",
+  "verifiedAt": "2026-10-30T09:46:05.389Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Renamable shelves, combined building and review, scoped assignment and optional cache reset",
+  "scope": "Saved-tag relationship resolution and bounded local chooser recovery",
   "schemaVersion": 9,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 896,
+    "passed": 903,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 196,
+    "passed": 203,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -718,6 +718,34 @@
         "passed": true
       },
       {
+        "name": "v0101IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0101SavedChooserRecoversLocallyBeforeRetry",
+        "passed": true
+      },
+      {
+        "name": "v0101ExistingLabelsAliasesAndSafeAcronymsResolve",
+        "passed": true
+      },
+      {
+        "name": "v0101UnknownOptionalContextDoesNotDeleteCandidates",
+        "passed": true
+      },
+      {
+        "name": "v0101PublicRetryFinishesWithoutChoosingOrExtraction",
+        "passed": true
+      },
+      {
+        "name": "v0101PublicRecoveryKeepsPaidRepliesFactsAndIDs",
+        "passed": true
+      },
+      {
+        "name": "v0101ApplyKeepsSavedDefinitionsAndNativeLibrary",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -802,6 +830,16 @@
         "passed": true
       }
     ],
+    "relationshipRecovery": {
+      "cachedPapers": 2,
+      "retainedPaidReplies": 8,
+      "oldSpendUSD": 1.75,
+      "syntheticMappingRequests": 1,
+      "newChooserRequests": 0,
+      "newExtractionRequests": 0,
+      "nativeTagWrites": 0,
+      "realProviderRequests": 0
+    },
     "shelvesAndReset": {
       "shelvesRenamed": true,
       "scopedAssignment": true,
@@ -856,12 +894,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.9.0",
-      "to": "0.10.0",
+      "from": "0.10.0",
+      "to": "0.10.1",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "db217065eb4829a37ec8e3bdd215de6a04f87e938e8c9243cf4a1abda04c07f4",
+      "packageHash": "dcd5f4646150c2f5d9026f41f61d1c8fad8a711970095e05a5d2bd6424f33dc7",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -873,7 +911,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 205,
+      "largeRenderMS": 208,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -925,6 +963,11 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "reviewWorkflow": {
+    "savedNameReferencesResolvedLocally": true,
+    "unknownRelationshipsDoNotInventSupport": true,
+    "earlierValidActiveReplyRecovered": true,
+    "rawRepliesAndRepairCountersPreserved": true,
+    "choosingPhaseHidesUndefinedTotals": true,
     "combinedBuildAndReview": true,
     "noMandatoryCleanup": true,
     "renamableShelves": true,
@@ -975,8 +1018,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1718,
-    "totalSimulationMS": 5086,
+    "timeToRepresentativeQueueMS": 1283,
+    "totalSimulationMS": 3590,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -991,24 +1034,21 @@
     "nativeWrites": 0,
     "liveProviderRequests": 0
   },
-  "privateCurrentStateMigration": {
-    "status": "passed",
-    "cachedPaperFacts": 752,
-    "staleCleanupTasksRetired": 5,
-    "paidRepliesAndSpendingPreserved": true,
-    "extractionEvidenceAndDecisionsUnchanged": true,
-    "providerRequests": 0,
-    "nativeWrites": 0
-  },
-  "authorizedCacheReset": {
-    "status": "applied",
-    "clearedFacts": 752,
-    "clearedAssignmentAnalyses": 39,
-    "papersPreserved": 945,
-    "definitionsPreserved": 43,
-    "nativeTagsAndCredentialsUnchanged": true,
-    "spendingAndAuditPreserved": true,
-    "exactByteBackup": true
+  "privateChooserRecovery": {
+    "papers": 19,
+    "cachedFacts": 19,
+    "priorProviderRequests": 8,
+    "rawRepliesUnchanged": true,
+    "existingIDsAndMeaningsUnchanged": true,
+    "candidateIDsPreservedOrCanonicalReused": true,
+    "canonicalExistingIdentitiesReused": 1,
+    "examples": 90,
+    "remainingRequests": 2,
+    "maxRequestBytes": 67491,
+    "newProviderCalls": 0,
+    "newExtractionCalls": 0,
+    "nativeWrites": 0,
+    "privateCopyUnchanged": true
   },
   "unchangedBehavior": {
     "factualExtractor": true,
@@ -1025,10 +1065,10 @@
   "rightItemAndInformationPaneSection": false,
   "skills": {
     "deslop": "Focused selection/controller/policy/UI review without unrelated rewrites.",
-    "codebaseDesign": "TagShelves owns membership and target selection; AnalysisReset clears reusable work while preserving audit; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
+    "codebaseDesign": "TagSelection owns conservative graph-reference lookup and bounded cached-reply recovery; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
   },
   "workingNativeLibraryModified": false,
-  "workingExtensionCacheResetAuthorized": true,
+  "workingExtensionCacheModified": false,
   "workingRunInterrupted": false,
   "liveProviderRequests": 0,
   "publicArtifactPrivateDataScan": "passed",
@@ -1040,14 +1080,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.10.0.xpi",
-      "bytes": 593629,
-      "sha256": "db217065eb4829a37ec8e3bdd215de6a04f87e938e8c9243cf4a1abda04c07f4"
+      "file": "smart-tags-0.10.1.xpi",
+      "bytes": 595895,
+      "sha256": "dcd5f4646150c2f5d9026f41f61d1c8fad8a711970095e05a5d2bd6424f33dc7"
     },
     "source": {
-      "file": "smart-tags-0.10.0-source.zip",
-      "bytes": 668754,
-      "sha256": "93e2c333072b793a8a57e0a982e6c624f5e15a9cd65a59453497e875e797e873"
+      "file": "smart-tags-0.10.1-source.zip",
+      "bytes": 677732,
+      "sha256": "a8b90762f36d5d4330c3ded4d851a479b36385eff7366a0427da5be8e780d535"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

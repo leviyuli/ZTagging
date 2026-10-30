@@ -92,7 +92,8 @@ for(const action of ['resume','retry-selection'] as const)test(`${action} locall
   let savedReply:ReturnType<typeof reply>|undefined;
   const first=harness(state,{cost:0.001,respond(input){
     assert.equal(input.selectionPhase,'choosing');const response=reply(input);savedReply=clone(response);
-    return {...response,tags:('tags' in response?response.tags:[]).map((tag,index)=>({...tag,parentKeys:index===0?['unknown-parent']:[]}))};
+    const candidates='tags' in response?response.tags:[];assert.equal(candidates.length,2);
+    return {...response,tags:candidates.map((tag,index)=>({...tag,parentKeys:[candidates[1-index].key]}))};
   }});
   await resume(first);assert.equal(state.run!.status,'paused');assert.equal(first.calls.length,4);
   const task=state.run!.selection!.tasks.find(task=>task.kind==='plan')!;

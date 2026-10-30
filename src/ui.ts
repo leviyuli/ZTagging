@@ -65,6 +65,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let routineDraft: boolean | null = null;
   let routineSettingsOpen = false;
   let dataDetailsOpen = false;
+  let queueDetailsOpen = false;
   let busy = false;
   let signingIn = false;
   let disposed = false;
@@ -482,6 +483,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queueProgress() {
     const q = currentState().queue;
     if (q.taskLabel && !q.phaseProgress) return { completed: 0, total: 0, label: '' };
+    if (q.phase === 'choosing' && !q.selection?.tagsTotal) return { completed: 0, total: 0, label: '' };
     if (q.selection?.verificationScope === 'representative') return { completed: q.selection.tagsPrepared ?? 0, total: q.selection.tagsTotal ?? 0, label: 'Tags prepared' };
     return q.selection ? { completed: q.selection.sourceCompleted, total: q.selection.sourceTotal, label: 'Supporting findings checked' } : q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
   }
@@ -498,7 +500,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queuePhaseLabel() {
     const q = currentState().queue;
     if (q.taskLabel) return q.status === 'paused' ? `${q.taskLabel} · paused` : q.taskLabel;
-    if (q.status === 'paused') return q.switchingToFasterBuild ? 'Faster build paused' : 'Analysis paused';
+    if (q.status === 'paused') return q.switchingToFasterBuild ? 'Faster build paused' : q.phase === 'choosing' ? 'Choosing tags · paused' : 'Analysis paused';
     if (q.phase === 'mapping' && q.selection?.verificationScope === 'representative') return 'Checking examples';
     const labels = { reading: 'Reading papers', organizing: 'Organizing tags', choosing: 'Choosing tags', mapping: 'Checking supporting findings', checking: 'Checking tag meanings', ready: 'Ready for review' };
     return q.phase ? labels[q.phase] : q.status === 'running' ? 'Analyzing papers' : 'Analysis complete';
@@ -1187,7 +1189,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       ? h('div', '', h('p', 'card-description', `Tag selection repairs: ${q.selection.semanticRepairsUsed ?? 0} of ${q.selection.semanticRepairAllowance} used`), h('p', 'card-description', `Source check corrections: ${q.selection.mappingCorrectionsUsed ?? 0} of ${q.selection.mappingCorrectionAllowance} used`))
       : q.selection ? h('p', 'card-description', `Additional correction requests: ${q.selection.correctionsUsed} of ${q.selection.correctionAllowance} used`) : null;
     const currentProgress = queueProgress();
-    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), !q.taskLabel ? h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`) : null), q.selection ? h('div', 'section-gap', h('p', '', `${currentProgress.label}: ${currentProgress.completed} of ${currentProgress.total}`), q.selection.verificationScope === 'representative' ? h('p', '', `Examples checked: ${q.selection.examplesChecked ?? 0} of ${q.selection.examplesTotal ?? 0}`) : null, h('p', 'card-description', `${q.selection.completedRequests} requests completed · ${q.selection.queuedRequests} requests queued`), corrections) : q.phaseProgress && q.phaseProgress.total > 0 ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
+    const requestCounts = q.selection ? [q.selection.completedRequests > 0 ? `${q.selection.completedRequests} requests completed` : '', q.selection.queuedRequests > 0 ? `${q.selection.queuedRequests} requests queued` : ''].filter(Boolean).join(' · ') : '';
+    const selectionProgress = q.selection ? h('div', 'section-gap', currentProgress.total > 0 ? h('p', '', `${currentProgress.label}: ${currentProgress.completed} of ${currentProgress.total}`) : null, q.selection.verificationScope === 'representative' && (q.selection.examplesTotal ?? 0) > 0 ? h('p', '', `Examples checked: ${q.selection.examplesChecked ?? 0} of ${q.selection.examplesTotal}`) : null, requestCounts ? h('p', 'card-description', requestCounts) : null, details('Details', queueDetailsOpen, value => { queueDetailsOpen = value; }, () => corrections!)) : null;
+    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), !q.taskLabel ? h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`) : null), selectionProgress || (q.phaseProgress && q.phaseProgress.total > 0 ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null), q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'actions', fasterBuildButton('primary'), resumeQueueButton(q.canUseFasterBuild || q.switchingToFasterBuild && q.status !== 'paused' ? '' : 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('cleanup'), 'small')));
