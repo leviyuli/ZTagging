@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.10.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.10.1.xpi).
+2. Select [`smart-tags-0.10.2.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.10.2.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -22,6 +22,8 @@ Release downloads contain the installer and TypeScript source archive. Read the 
 Version **0.10.0** combines building and reviewing a tag list. Generated and researcher-authored tags use the same library, scientific categories, matching rules, and evidence checks. Renameable shelves organize tag membership independently of scientific meaning. Existing Zotero tags stay on papers without an import or cleanup step.
 
 Version **0.10.1** fixes saved-tag relationship references during extension builds. If an earlier run paused while choosing tags, update and use **Retry this step**; ZTagging first rechecks its saved reply locally and keeps completed paper analysis and spending. Do not reset the paper cache to recover this failure.
+
+Version **0.10.2** keeps previous tag-plan caches out of new reading progress. Reading shows the current paper count; a completed plan is reused only after the new inputs match, including after pause/restart.
 
 ## Keep using and extending your tag library
 

@@ -1,5 +1,9 @@
-# Upgrading to Smart Tags 0.10.1
+# Upgrading to Smart Tags 0.10.2
 
+
+## Version 0.10.2
+
+State remains schema 9. Completed prior plans are retained as a dormant cache while new paper jobs run; current facts, scope and settings must match before reuse. Older saved runs carrying a ready plan alongside pending papers are normalized locally on reopening. This sends no provider request and changes no native data, facts, completed replies or spending. Optional paper-analysis reset clears the dormant cache too, preserving its audit record.
 
 ## Version 0.10.1
 

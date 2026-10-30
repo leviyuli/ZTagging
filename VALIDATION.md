@@ -1,33 +1,35 @@
-# v0.10.1 validation
+# v0.10.2 validation
 
-Target: Zotero 10.0.6 on Windows. Exact installer/source hashes and aggregate checks are in [dist/validation.json](dist/validation.json).
+Target: Zotero 10.0.6 on Windows. Exact installer/source hashes and aggregate results are in [dist/validation.json](dist/validation.json).
 
-## Failure and correction
+## Correction
 
-The reported 19-paper extension had completed all extraction jobs. Tag selection rejected replies that used saved labels such as AEM/OER/PTL instead of stable IDs; omitted candidate names in optional relationships caused further failures. The repair allowance was exhausted before example checking began. This was a reference-handling defect rather than an input-size limit.
+A new rebuild previously copied the last completed selector into active run.selection before reading its new paper group. The snapshot preferred selector progress, so it displayed old tags, examples and repair totals alongside current paper reading.
 
-Relationship resolution now checks explicit IDs and current keys, then unambiguous preferred names, full names, approved aliases and conservative established abbreviations. Unknown or ambiguous optional links are withheld; unresolved parent links make no subtype claim. No alias, paper support or source judgment is inferred from a repaired graph reference. Cycles, chemical contradictions and conflicting meanings remain invalid.
+Completed selector reuse now lives in a separate dormant cache. It is promoted only after current facts, scope, baseline and settings produce the expected input fingerprint. Changed inputs create fresh selection work. Pause/restart and older saved ready-selector checkpoints preserve paid work while keeping it out of active reading progress. Paper-analysis reset clears the dormant cache and retains its audit record.
 
-For a failed chooser without a frozen plan, Resume/Retry rechecks complete saved replies newest-first within that active task. A later invalid reply does not discard an earlier valid one. Raw replies, counters, candidate allocations and spending stay recorded; other snapshots and superseded tasks are not searched. Source verification still runs separately.
+The snapshot and manager both enforce phase-specific progress. Reading displays current paper counts; old tag/example/request/repair totals are hidden, including during pause or background refresh.
 
-## Automated and native checks
+## Automated checks
 
-`npm run verify` passed TypeScript, **903 tests**, and the production build, including **83 manager-interface tests**. Five new selection regressions cover saved labels/full names/aliases, conservative acronym handling, exact identity precedence, unknown-edge quarantine, Co/CO and cycle/alias guards, and earlier-valid-reply recovery without counter reset. Controller and manager checks cover the plain failure explanation, correct Choosing phase, hidden undefined totals and repair details.
+`npm run verify` passed TypeScript, **908 tests**, and the production build, including **84 manager-interface tests**.
 
-All **203 isolated Zotero checks passed**. The new synthetic case retains two cached papers, eight paid chooser replies and allocated IDs; public Retry finishes with one simulated example request, no chooser/extraction/PDF request, and unchanged prior spending. Applying the recovered list changes definitions only. Native tags, baseline meanings, columns, Collections restoration and right-hand panes remain intact.
+Four new public-controller regressions cover unchanged 19-paper reuse with zero AI calls, a new 12-paper group paused after its first extraction and resumed without repeating it, literal older checkpoints carrying completed selection with pending jobs, and dormant-cache reset/audit preservation. They verify exact cached history, current-source scope, persistence, paper progress and unchanged native data.
 
-The retained native suite covers shelves, build/review, batch assignment, undo, cache reset, metadata recovery, search, windows, notifications and compatibility commands. The exact production **0.10.1** package was installed over disabled **0.10.0** through Zotero's AddonManager without uninstalling. Stable identity, state, native data, columns and package hash passed.
+The manager regression changes an existing 32-tag/90-example display into a new reading 12-of25 phase while deliberately retaining stale fields in its test snapshot. It verifies the paper count and 48% bar and the absence of old selection metrics or requests. This defensive check complements the controller's correct display data.
 
-## Private saved-work replays
+## Isolated Zotero checks
 
-The actual **19-paper** work was replayed only from a private local copy. Recovery selected an earlier valid saved reply, preserved all **19 cached facts**, **eight original chooser replies**, counters, evidence snapshot, existing definitions and spending, and scheduled **90 example pairs in two checking requests**. The largest ready request is **67,491 UTF-8 bytes**. One unassigned candidate is reconciled to an equivalent existing canonical identity; other allocated IDs remain stable. Local recovery makes no provider call, new extraction or native write, and does not edit the source copy or working profile.
+All **208 packaged native checks passed** in a separate profile and data directory. The new native scenario seeds a completed planner, blocks reading a different synthetic group, and checks the rendered Activity page, dormant cache, pause/cancel, cached facts, columns and absence of provider/native writes. Retained native checks cover saved-reply recovery, shelves, build/review, assignment, reset, metadata, search, independent windows and undo.
 
-A compatibility replay of the older **744-paper** work also passes: **180 pairs in three simulated checks**, at most two concurrent, **78,839-byte** maximum payload, and **5,832 findings left unexamined**. Cached facts, original quotations/provenance, IDs, history, raw replies and spending remain unchanged, with no repeated extraction, chooser request, live call or native write.
+The exact 0.10.2 package was checked through Zotero's AddonManager over disabled 0.10.1 without uninstalling. The stable ID, state, native data, columns and installer hash must match.
 
-## Delivery and limits
+## Private replay and artifact checks
 
-Production JavaScript/CSS match the native-tested installer; embedded bundle sources match the delivered TypeScript. Installer and source archives exclude profiles, databases, state, credentials and private fixtures, and are scanned against private titles and item IDs. Published reports contain aggregate results only.
+A read-only private replay reproduces the reported old 32-tag/90-example state alongside 12 completed jobs in a 20-paper group. It verifies Papers read 12 of 20, hidden selection totals before and after initialization, dormant work preserved across JSON restart, unchanged facts/native data and unchanged source-copy bytes. It makes no provider or native request and does not change the working profile.
 
-Focused deslop/codebase-design review keeps reference resolution and bounded recovery inside TagSelection and uses module interfaces, public controller actions and accessible manager controls. No new schema migration, extraction version, terminology policy, source-proof policy, provider switch or budget allowance was introduced.
+The older 19-paper saved-reply and 744-paper compatibility replays remain valid. No factual extraction, terminology, source-proof, schema, provider, budget or incoming-automation policy is changed by this patch.
 
-The native checks use simulated responses rather than live AI. They validate execution, recovery and protection, not live-provider latency or scientific recommendation quality. No screenshot review or live account authorization was performed. The public HTTPS feed and exact downloadable bytes are checked separately after publication.
+Production JavaScript/CSS and embedded sources must match the native-tested installer and delivered TypeScript. Public archives exclude profiles, databases, private fixtures, state and credentials and are scanned against private item IDs and titles. Published results are aggregates only.
+
+Focused deslop/codebase-design review keeps reusable selection work separate from active execution and tests through controller/module interfaces and accessible controls. Native tests use simulated replies rather than live AI; no live-provider latency/scientific-quality claim or screenshot review is made. Public HTTPS update metadata and downloadable bytes are checked separately after publication.

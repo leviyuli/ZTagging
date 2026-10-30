@@ -17,7 +17,7 @@ type ResettableState=Omit<AppState,'schemaVersion'|'analysisResetHistory'>&{sche
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 function retireRun(run:NonNullable<AppState['run']>):NonNullable<AppState['run']>{
   const next={...run,status:'idle' as const,jobs:[],vocabCursor:0,vocabFinished:true,message:'Paper analysis reset. Start a new build to analyze papers afresh.'};
-  delete next.selection;delete next.selectionInputFingerprint;delete next.selectionReplies;delete next.consolidation;delete next.preparation;delete next.fasterBuild;delete next.preparationOnly;delete next.proposalFingerprint;delete next.extensionBaseline;delete next.skippedIds;return next;
+  delete next.selection;delete next.cachedSelection;delete next.selectionInputFingerprint;delete next.selectionReplies;delete next.consolidation;delete next.preparation;delete next.fasterBuild;delete next.preparationOnly;delete next.proposalFingerprint;delete next.extensionBaseline;delete next.skippedIds;return next;
 }
 export function resetPaperAnalysis<T extends ResettableState>(state:T,date=new Date().toISOString()):T {
   const next=copy(state),unfinished=(next.assignmentRuns??[]).filter(review=>review.status!=='finished'),discarded=next.suggestions.filter(suggestion=>!suggestion.applied);

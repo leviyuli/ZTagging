@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+- Fixed new paper-reading runs showing the previous build's completed tags, examples and repair counters. Progress now follows the active phase.
+- Keep completed tag-plan reuse dormant until the current paper facts, scope and build settings match. Preserve reuse across pause/restart and handle older saved runs without discarding paid work.
+
 ## 0.10.1
 
 - Fixed extension builds rejecting relationships that name an existing saved tag instead of repeating its internal ID. Unambiguous references resolve locally; unknown optional relationships are withheld without discarding valid tag definitions or inventing support.

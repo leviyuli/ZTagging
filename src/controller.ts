@@ -60,6 +60,7 @@ type Run = {
   skippedIds?:string[];
   preparation?:PreparationCheckpoint;
   selection?:TagSelectionWork;
+  cachedSelection?:{work:TagSelectionWork;inputFingerprint?:string};
   fasterBuild?:{targetCount:number;requestedAt:string};
   selectionInputFingerprint?:string;
   selectionReplies?:{taskId:string;raw:unknown;provider:string;model:string;error?:string;diagnosticOnly?:boolean}[];
@@ -293,6 +294,7 @@ function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9):boolean {
   if(version>=6){
     for(const run of [v.run,...(v.maintenanceTasks??[]).map(task=>task.run)]){
       if(run?.selection!==undefined&&!validTagSelectionWork(run.selection))return false;
+      if(run?.cachedSelection!==undefined&&(!storedObject(run.cachedSelection)||!validTagSelectionWork(run.cachedSelection.work)||run.cachedSelection.work.status!=='ready'||run.cachedSelection.inputFingerprint!==undefined&&typeof run.cachedSelection.inputFingerprint!=='string'))return false;
       if(version===6&&run?.selection?.policyVersion!==undefined&&run.selection.policyVersion!==3)return false;
       if(run?.selectionInputFingerprint!==undefined&&typeof run.selectionInputFingerprint!=='string')return false;
       if(run?.selectionReplies!==undefined&&(!Array.isArray(run.selectionReplies)||!run.selectionReplies.every(reply=>storedObject(reply)&&typeof reply.taskId==='string'&&Object.hasOwn(reply,'raw')&&typeof reply.provider==='string'&&typeof reply.model==='string'&&(reply.error===undefined||typeof reply.error==='string')&&(reply.diagnosticOnly===undefined||typeof reply.diagnosticOnly==='boolean'))))return false;
@@ -513,6 +515,7 @@ export class AppController implements ManagerAPI {
   }
   async initialize() {
     this.shelves();
+    if(this.state.run)this.cachePreviousSelection(this.state.run);
     if(this.state.run?.status==='running') {
       this.state.run.status='paused';this.state.run.message='Interrupted by Zotero closing. Resume when ready.';
       for(const job of this.state.run.jobs)if(job.status==='running')job.status='pending';
@@ -1199,7 +1202,7 @@ export class AppController implements ManagerAPI {
     const metadata=this.state.metadataPreview;
     const metadataDisplay=metadata?{id:metadata.id,paperId:metadata.paperId,itemID:metadata.itemID,status:metadata.status,message:metadata.message,changes:metadata.changes,identifier:metadata.identifier?.value}:undefined;
     const attention=this.paperAttentionDisplay(),skipped=run?run.jobs.filter(job=>run.skippedIds?.includes(job.paperId)||this.excluded(job.paperId)).length:0;
-    const selection=run?.selection?selectionProgress(run.selection):undefined;
+    const selection=run?.kind==='rebuild'&&!run.jobs.some(job=>job.status!=='completed')&&run.selection?selectionProgress(run.selection):undefined;
     const phase:NonNullable<ManagerSnapshot['queue']['phase']>=!run||run.status==='idle'?'ready':run.jobs.some(job=>job.status!=='completed')?'reading':run.kind==='rebuild'?(selection?(selection.phase==='choosing'||!run.selection?.plan?'choosing':'mapping'):this.state.tagPreparation?'checking':'choosing'):'reading';
     const phaseProgress=selection?(run?.selection?.policyVersion===4?{completed:selection.tagsPrepared??0,total:selection.tagsTotal??0,label:'Tags prepared'}:{completed:selection.sourceCompleted,total:selection.sourceTotal,label:'Supporting findings checked'}):phase==='reading'&&run?{completed:run.jobs.filter(job=>job.status==='completed').length-skipped,total:run.jobs.length-skipped,label:'Papers read'}:undefined;
     const maintenance=(!run||run.status==='idle')?this.state.maintenanceTasks?.find(task=>task.status==='running'||task.status==='paused'):undefined;
@@ -1806,7 +1809,8 @@ export class AppController implements ManagerAPI {
     if(shelf&&!shelf.assignableIds.length)throw new Error('This shelf has no tags with meanings yet. Add a meaning or choose another shelf.');
     const workflow=this.workflowState();
     const checkpoint=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&(this.state.run.buildMode??'replace')===buildMode?this.state.run.consolidation:undefined;
-    const cachedSelection=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&this.state.run.selection?.policyVersion===4&&(this.state.run.buildMode??'replace')===buildMode&&this.state.run.selection?.status==='ready'?{work:copy(this.state.run.selection),fingerprint:this.state.run.selectionInputFingerprint}:undefined;
+    const previous=this.state.run;
+    const cachedSelection=kind==='rebuild'&&previous?.kind==='rebuild'&&(previous.buildMode??'replace')===buildMode?(previous.selection?.policyVersion===4&&previous.selection.status==='ready'?{work:copy(previous.selection),inputFingerprint:previous.selectionInputFingerprint}:previous.cachedSelection?copy(previous.cachedSelection):undefined):undefined;
     if(kind==='rebuild'){this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;}
     if(this.state.run)this.archiveSelection(this.state.run);
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reading papers for your tag list…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
@@ -1819,7 +1823,7 @@ export class AppController implements ManagerAPI {
     }else if(!automatic&&!detailId)this.state.workflow={...workflow,assignmentScope:selectedScope??'selected',assignmentPaperIds:papers.map(paper=>paper.id),assignmentTagShelfId:tagShelfId??'all'};
     if(kind==='tag')(this.state.assignmentRuns??=[]).push({...createAssignmentRun({id:this.state.run.id,paperIds:papers.map(paper=>paper.id),vocabularyVersion:this.state.vocabularyVersion}),jobs:this.assignmentJobs(this.state.run),scope,automatic,...(shelf?{tagShelfId,tagIds:[...shelf.assignableIds]}:{})});
     if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
-    if(cachedSelection){this.state.run.selection=cachedSelection.work;this.state.run.selectionInputFingerprint=cachedSelection.fingerprint;}
+    if(cachedSelection)this.state.run.cachedSelection=cachedSelection;
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}
     if(scope==='pilot'&&kind==='tag'&&!detailId){this.state.pilotIds=[];this.state.pilotExpected=papers.filter(paper=>!this.excluded(paper.id)).length;this.state.pilotReviewed=false;}
     await this.save();this.launch();
@@ -1905,9 +1909,14 @@ export class AppController implements ManagerAPI {
     const pending=this.selectionTail.then(operation,operation);
     this.selectionTail=pending.then(()=>{},()=>{});return pending;
   }
+  private cachePreviousSelection(run:Run) {
+    if(run.kind!=='rebuild'||run.selection?.policyVersion!==4||run.selection.status!=='ready'||!run.jobs.some(job=>job.status!=='completed'))return;
+    run.cachedSelection={work:run.selection,inputFingerprint:run.selectionInputFingerprint};delete run.selection;delete run.selectionInputFingerprint;
+  }
   private archiveSelection(run:Run) {
-    if(run.selection&&!(this.state.tagSelectionHistory??[]).some(entry=>entry.work.id===run.selection!.id&&fingerprint(entry.work)===fingerprint(run.selection)))
-      (this.state.tagSelectionHistory??=[]).push({runId:run.id,work:copy(run.selection)});
+    const selection=run.selection??run.cachedSelection?.work;
+    if(selection&&!(this.state.tagSelectionHistory??[]).some(entry=>entry.work.id===selection.id&&fingerprint(entry.work)===fingerprint(selection)))
+      (this.state.tagSelectionHistory??=[]).push({runId:run.id,work:copy(selection)});
     if(run.consolidation&&!(this.state.legacyConsolidationHistory??[]).some(entry=>entry.checkpoint.generationId===run.consolidation!.generationId))
       (this.state.legacyConsolidationHistory??=[]).push({runId:run.id,checkpoint:copy(run.consolidation)});
   }
@@ -1964,10 +1973,15 @@ export class AppController implements ManagerAPI {
   private async consolidateRun(run:Run) {
     const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
     if(!facts.length||!facts.some(fact=>fact.concepts.length)){
-      if(run.selection){this.archiveSelection(run);delete run.selection;delete run.selectionReplies;delete run.selectionInputFingerprint;}
+      if(run.selection||run.cachedSelection){this.archiveSelection(run);delete run.selection;delete run.cachedSelection;delete run.selectionReplies;delete run.selectionInputFingerprint;}
       run.vocabFinished=true;run.message=facts.length?'These papers need more information before tags can be prepared. Check the paper-attention list in Activity.':'No eligible papers remain in this build. Excluded items and their existing tags are unchanged.';return;
     }
     const existing=this.consolidationDefinitions(),inputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,...(run.buildMode==='extend'?{buildMode:'extend',baselineFingerprint:run.extensionBaseline?.fingerprint}:{}),...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{})});
+    if(run.cachedSelection){
+      if(!run.selection&&run.cachedSelection.inputFingerprint===inputFingerprint){run.selection=run.cachedSelection.work;run.selectionInputFingerprint=inputFingerprint;}
+      else this.archiveSelection(run);
+      delete run.cachedSelection;
+    }
     if(this.state.approvedTaxonomyInput===inputFingerprint){run.vocabFinished=true;run.message='The unchanged papers and approved tag list were reused.';return;}
     if(run.selection&&run.selectionInputFingerprint!==inputFingerprint){this.archiveSelection(run);delete run.selection;delete run.selectionReplies;}
     if(!run.selection){

@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.10.1",
-  "verifiedAt": "2026-10-30T09:46:05.389Z",
+  "version": "0.10.2",
+  "verifiedAt": "2026-10-30T10:08:43.376Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Saved-tag relationship resolution and bounded local chooser recovery",
+  "scope": "Current-phase progress and dormant completed-selection reuse",
   "schemaVersion": 9,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 903,
+    "passed": 908,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 203,
+    "passed": 208,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -746,6 +746,26 @@
         "passed": true
       },
       {
+        "name": "v0102IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0102NewGroupHasOnlyCurrentReadingProgress",
+        "passed": true
+      },
+      {
+        "name": "v0102ActivityHidesDormantSelectionProgress",
+        "passed": true
+      },
+      {
+        "name": "v0102PauseKeepsReadingPhaseAndDormantCache",
+        "passed": true
+      },
+      {
+        "name": "v0102CancelKeepsCachedFactsNativeDataAndColumns",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -830,6 +850,13 @@
         "passed": true
       }
     ],
+    "progressIsolation": {
+      "cachedPapers": 1,
+      "currentPaperGroup": 3,
+      "providerRequests": 0,
+      "nativeTagWrites": 0,
+      "dormantSelectionHidden": true
+    },
     "relationshipRecovery": {
       "cachedPapers": 2,
       "retainedPaidReplies": 8,
@@ -894,12 +921,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.10.0",
-      "to": "0.10.1",
+      "from": "0.10.1",
+      "to": "0.10.2",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "dcd5f4646150c2f5d9026f41f61d1c8fad8a711970095e05a5d2bd6424f33dc7",
+      "packageHash": "15e438db8890c9e6e7160e96fd510a00860f51e07194e71bd372170d1ec2799f",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -911,7 +938,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 208,
+      "largeRenderMS": 201,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -963,6 +990,10 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "reviewWorkflow": {
+    "readingHidesPriorSelectionMetrics": true,
+    "completedCachePromotedOnlyAfterInputValidation": true,
+    "dormantCacheSurvivesPauseAndRestart": true,
+    "legacyReadingCheckpointNormalized": true,
     "savedNameReferencesResolvedLocally": true,
     "unknownRelationshipsDoNotInventSupport": true,
     "earlierValidActiveReplyRecovered": true,
@@ -1018,8 +1049,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1283,
-    "totalSimulationMS": 3590,
+    "timeToRepresentativeQueueMS": 1338,
+    "totalSimulationMS": 3745,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -1047,6 +1078,22 @@
     "maxRequestBytes": 67491,
     "newProviderCalls": 0,
     "newExtractionCalls": 0,
+    "nativeWrites": 0,
+    "privateCopyUnchanged": true
+  },
+  "privateReadingReplay": {
+    "status": "passed",
+    "currentPaperCount": 20,
+    "papersRead": 12,
+    "oldCachePapers": 19,
+    "oldCacheTags": 32,
+    "oldCacheExamples": 90,
+    "currentPhase": "reading",
+    "oldSelectionHidden": true,
+    "dormantCachePreservedAcrossRestart": true,
+    "cachedFactsUnchanged": true,
+    "nativeDataUnchanged": true,
+    "providerCalls": 0,
     "nativeWrites": 0,
     "privateCopyUnchanged": true
   },
@@ -1080,14 +1127,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.10.1.xpi",
-      "bytes": 595895,
-      "sha256": "dcd5f4646150c2f5d9026f41f61d1c8fad8a711970095e05a5d2bd6424f33dc7"
+      "file": "smart-tags-0.10.2.xpi",
+      "bytes": 596717,
+      "sha256": "15e438db8890c9e6e7160e96fd510a00860f51e07194e71bd372170d1ec2799f"
     },
     "source": {
-      "file": "smart-tags-0.10.1-source.zip",
-      "bytes": 677732,
-      "sha256": "a8b90762f36d5d4330c3ded4d851a479b36385eff7366a0427da5be8e780d535"
+      "file": "smart-tags-0.10.2-source.zip",
+      "bytes": 684918,
+      "sha256": "c4f5eb10f4fabf2d3a90f3a6603f36b125b2add5ef644c8c91c91e353ae5d185"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"
