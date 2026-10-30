@@ -104,6 +104,25 @@ function selectCore(work:TagSelectionWork,tags:TagDefinition[],items:Map<string,
   work.deferred=[...(work.deferred??[]),...tags.filter(tag=>!chosen.has(tag.id)).map(tag=>({tag:clone(tag),reason:'Deferred from the automatic core selection; original facts and candidate identity are retained.'}))];
   const selected=tags.filter(tag=>chosen.has(tag.id)).map(tag=>({...tag,relatedIds:(tag.relatedIds??[]).filter(id=>chosen.has(id))}));work.diagnostics.push(`Selected ${selected.filter(tag=>!tag.custom).length} core concepts and deferred ${work.deferred.length} candidates using dominant-paper/facet coverage; no evidence or scientific meanings were merged.`);return selected;
 }
+function stripConflictingGeneratedAliases(work:TagSelectionWork,tags:TagDefinition[],saved:TagDefinition[]) {
+  const claims=new Map<string,Set<string>>();for(const tag of [...saved,...tags])for(const label of labels(tag)){const key=protectedLabelKey(label),ids=claims.get(key)??new Set<string>();ids.add(tag.id);claims.set(key,ids);}
+  for(const tag of tags){const conflict=(alias:string)=>[...(claims.get(protectedLabelKey(alias))??[])].some(id=>id!==tag.id),withheld=tag.aliases.filter(conflict);tag.aliases=tag.aliases.filter(alias=>!conflict(alias));if(withheld.length)work.diagnostics.push(`Withheld generated aliases of ${tag.name} reserved by saved or distinct proposed definitions: ${withheld.join(', ')}. No meanings or assignments were merged.`);}
+}
+function repairGeneratedLabels(work:TagSelectionWork,byKey:Map<string,TagDefinition>,redirected:Map<string,string>,existingById:Map<string,TagDefinition>) {
+  const saved=new Map([...existingById].filter(([id,tag])=>work.protectedTagIds.includes(id)||tag.status==='approved'||tag.custom)),immutable=new Set([...work.protectedTagIds,...(work.baseline?.definitions.map(tag=>tag.id)??[])]),newTags=[...byKey.values()].filter(tag=>!immutable.has(redirected.get(tag.id)??tag.id)),deferred=new Set<string>();
+  const owners=(tags:TagDefinition[],getLabels:(tag:TagDefinition)=>string[])=>{const result=new Map<string,Set<string>>();for(const tag of tags)for(const label of getLabels(tag)){if(!label)continue;const key=protectedLabelKey(label),ids=result.get(key)??new Set<string>();ids.add(tag.id);result.set(key,ids);}return result;};
+  const fixed=owners([...saved.values()],labels),primary=owners(newTags,tag=>[tag.name,tag.fullName??'']),full=owners(newTags,tag=>[tag.fullName??tag.name]);
+  const conflict=(map:Map<string,Set<string>>,label:string,id:string)=>[...(map.get(protectedLabelKey(label))??[])].some(owner=>owner!==id);
+  const defer=(tag:TagDefinition)=>{if(deferred.has(tag.id))return;deferred.add(tag.id);work.deferred!.push({tag:clone(tag),reason:'Deferred a generated label that conflicts with a saved or distinct proposed meaning; the researcher definition, original candidate identity and evidence are retained.'});work.diagnostics.push(`Deferred ${tag.name} because its name or full name could not be made unambiguous without inventing a new meaning.`);};
+  for(const tag of newTags){const expanded=tag.fullName??tag.name;if(conflict(fixed,expanded,tag.id)||conflict(full,expanded,tag.id)){defer(tag);continue;}
+    if(!conflict(fixed,tag.name,tag.id)&&!conflict(primary,tag.name,tag.id))continue;
+    if(expanded.length<=80&&!conflict(fixed,expanded,tag.id)&&!conflict(primary,expanded,tag.id)){const previous=tag.name;tag.name=expanded;work.diagnostics.push(`Used the supplied full name ${expanded} instead of the colliding generated label ${previous}; its scientific scope and candidate ID are unchanged.`);}else defer(tag);
+  }
+  const remaining=newTags.filter(tag=>!deferred.has(tag.id)),remainingPrimary=owners(remaining,tag=>[tag.name,tag.fullName??'']);
+  for(const tag of remaining)if([tag.name,tag.fullName??''].some(label=>conflict(fixed,label,tag.id)||conflict(remainingPrimary,label,tag.id)))defer(tag);
+  stripConflictingGeneratedAliases(work,newTags.filter(tag=>!deferred.has(tag.id)),[...saved.values()]);
+  for(const [key,tag] of byKey)if(deferred.has(tag.id))byKey.delete(key);
+}
 function resolvePlan(work:TagSelectionWork,raw:unknown):TagDefinition[] {
   const data=record(typeof raw==='string'?parseModelJSON(raw):raw);if(!data||!Array.isArray(data.tags)||!data.tags.length||data.tags.length>1000)throw new Error('The global choice must return a nonempty bounded tags array.');
   work.deferred=[];const byKey=new Map<string,TagDefinition>(),rawItems=new Map<string,Record<string,unknown>>(),old=work.existing.filter(tag=>(work.tagPolicyVersion===2||!tag.custom)&&tag.status==='approved'),custom=work.existing.filter(tag=>tag.custom),reservedLabels=new Set(custom.flatMap(tag=>labels(tag).map(protectedLabelKey)));
@@ -115,9 +134,13 @@ function resolvePlan(work:TagSelectionWork,raw:unknown):TagDefinition[] {
     if(!work.baseline){const matches=old.filter(tag=>{const a=semanticIdentity(tag),b=terminologyFor(naming.name)?.name??terminologyFor(naming.fullName)?.name;return a&&b?a===b:tag.facet===facet&&canonicalTagKey(tag.fullName??tag.name)===canonicalTagKey(naming.fullName);});if(matches.length===1)id=matches[0].id;work.candidateIds[key]=id;}
     const tag:TagDefinition={id,...naming,description,facet,broaderIds:[],relatedIds:[],inclusions:strings(item.inclusions),exclusions:strings(item.exclusions),examples:strings(item.examples),custom:false,status:'draft',matchingMode:'auto'};byKey.set(key,tag);rawItems.set(key,item);Object.defineProperty(work.candidateKeys,id,{value:key,writable:true,enumerable:true,configurable:true});
   }
-  const existingById=new Map([...work.existing,...(work.baseline?.definitions??[])].map(tag=>[tag.id,tag])),targets=[...byKey.values(),...existingById.values()],targetById=new Map(targets.map(tag=>[tag.id,tag]));
+  for(const tag of byKey.values()){const identity=semanticIdentity(tag);for(const alias of tag.aliases){const other=terminologyFor(alias)?.name;if(identity&&other&&identity!==other)throw new Error('A selected alias merges scientifically distinct established concepts.');}}
+  const existingById=new Map([...work.existing,...(work.baseline?.definitions??[])].map(tag=>[tag.id,tag]));
+  stripConflictingGeneratedAliases(work,[...byKey.values()],[...existingById.values()].filter(tag=>tag.status==='approved'||tag.custom||work.protectedTagIds.includes(tag.id)));
   const reconciled=work.baseline?reconcileExtensionProposal(emptyProposal(work,[...byKey.values(),...custom.filter(saved=>![...byKey.values()].some(tag=>tag.id===saved.id))]),work.baseline):undefined;
   const redirected=new Map([...byKey].map(([key,tag])=>[tag.id,reconciled?.candidateIds?.[key]??tag.id]));
+  repairGeneratedLabels(work,byKey,redirected,existingById);
+  const targets=[...byKey.values(),...existingById.values()],targetById=new Map(targets.map(tag=>[tag.id,tag]));
   const unique=(matches:TagDefinition[])=>[...new Set(matches.map(tag=>redirected.get(tag.id)??tag.id))];
   const resolve=(reference:string):{id?:string;ambiguous?:boolean}=>{
     if(targetById.has(reference))return {id:reference};
@@ -133,10 +156,9 @@ function resolvePlan(work:TagSelectionWork,raw:unknown):TagDefinition[] {
     }));
     return abbreviations.length===1?{id:abbreviations[0]}:abbreviations.length?{ambiguous:true}:{};
   };
-  for(const value of data.tags){const item=record(value)!,tag=byKey.get(text(item.key,160))!;for(const [field,rawField] of [['broaderIds','parentKeys'],['relatedIds','relatedKeys']] as const){tag[field]=strings(item[rawField]).flatMap(reference=>{const resolved=resolve(reference);if(resolved.id)return [resolved.id];work.diagnostics.push(`${field==='broaderIds'?'Quarantined':'Withheld'} an ${resolved.ambiguous?'ambiguous':'unresolved'} ${field==='broaderIds'?'subtype':'contextual'} reference from ${tag.name} to ${reference}; no relationship or evidence was inferred.`);return [];});}
+  for(const value of data.tags){const item=record(value)!,tag=byKey.get(text(item.key,160));if(!tag)continue;for(const [field,rawField] of [['broaderIds','parentKeys'],['relatedIds','relatedKeys']] as const){tag[field]=strings(item[rawField]).flatMap(reference=>{const resolved=resolve(reference);if(resolved.id)return [resolved.id];work.diagnostics.push(`${field==='broaderIds'?'Quarantined':'Withheld'} an ${resolved.ambiguous?'ambiguous':'unresolved'} ${field==='broaderIds'?'subtype':'contextual'} reference from ${tag.name} to ${reference}; no relationship or evidence was inferred.`);return [];});}
     const withheld=tag.aliases.filter(alias=>reservedLabels.has(protectedLabelKey(alias)));tag.aliases=tag.aliases.filter(alias=>!reservedLabels.has(protectedLabelKey(alias)));if(withheld.length)work.diagnostics.push(`Withheld generated aliases of ${tag.name} reserved by saved definitions: ${withheld.join(', ')}. The definitions remain separate.`);
     for(const parentId of [...tag.broaderIds]){const parent=[...byKey.values()].find(parent=>parent.id===parentId)??existingById.get(parentId),childMeaning=semanticIdentity(tag),parentMeaning=parent&&semanticIdentity(parent),components=['CL','GDL','PTL','MEA'];if(parent&&(parent.custom||parent.facet!==tag.facet||tag.facet==='component'&&parent.facet==='component'&&components.includes(childMeaning??'')&&components.includes(parentMeaning??''))&&parent.id!==tag.id){tag.broaderIds=tag.broaderIds.filter(id=>id!==parentId);tag.relatedIds=[...new Set([...(tag.relatedIds??[]),parentId])];work.diagnostics.push(`Kept ${tag.name} and ${parent.name} distinct and retained their relationship as contextual rather than an unestablished subtype.`);}}
-    const identity=semanticIdentity(tag);for(const alias of tag.aliases){const other=terminologyFor(alias)?.name;if(identity&&other&&identity!==other)throw new Error('A selected alias merges scientifically distinct established concepts.');}
   }
   if(work.tagPolicyVersion===2)for(const tag of byKey.values()){const saved=work.existing.find(value=>value.id===tag.id&&work.protectedTagIds.includes(value.id));if(saved){const related=tag.relatedIds;Object.assign(tag,clone(saved));tag.relatedIds=[...new Set([...(saved.relatedIds??[]),...(related??[])])];}}
   const shadowed=new Set([...byKey.values()].filter(tag=>!custom.some(saved=>work.tagPolicyVersion===2&&saved.id===tag.id)&&[tag.name,tag.fullName??''].some(label=>reservedLabels.has(protectedLabelKey(label)))).map(tag=>tag.id));

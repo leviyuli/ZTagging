@@ -564,6 +564,7 @@ export class AppController implements ManagerAPI {
   }
   private processingMessage(message:string):string {
     if(message.startsWith('The AI reply could not link some tag names.'))return message;
+    if(message.startsWith('Some suggested tags share a name or abbreviation.'))return message;
     if(message.startsWith('One paper needs its saved information checked.'))return message;
     if(message.startsWith('This build reached its request limit.'))return message;
     if(/AI could not combine|automatic tag repair|model could not finish a valid tag list|tag-building (?:part|step).*(?:could not|needs repair)|selected papers.*changed|work was paused/i.test(message))return message;
@@ -1208,7 +1209,8 @@ export class AppController implements ManagerAPI {
     const maintenance=(!run||run.status==='idle')?this.state.maintenanceTasks?.find(task=>task.status==='running'||task.status==='paused'):undefined;
     const queueRun=maintenance?.run??run;
     const relationshipFailure=run?.selection?.status==='failed'&&run.selection.tasks.some(task=>!task.superseded&&task.kind==='plan'&&task.status==='failed'&&/Unknown selected relationship reference|ambiguous.*relationship/i.test(task.error??''));
-    const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):relationshipFailure?'The AI reply could not link some tag names. Your papers are saved. Use Retry this step to continue.':run?.message??'Ready';
+    const namingFailure=run?.selection?.status==='failed'&&run.selection.tasks.some(task=>!task.superseded&&task.kind==='plan'&&task.status==='failed'&&/Ambiguous name or alias/i.test(task.error??''));
+    const queueMessage=maintenance?(maintenance.error??(maintenance.kind==='retry'?'Rechecking the selected papers…':maintenance.kind==='diy'?'Preparing your DIY tags…':'Comparing existing tags…')):namingFailure?'Some suggested tags share a name or abbreviation. Your papers are saved. Use Retry this step to continue.':relationshipFailure?'The AI reply could not link some tag names. Your papers are saved. Use Retry this step to continue.':run?.message??'Ready';
     const queueEstimate=queueRun?this.estimateRun(queueRun):{value:0,pending:false};
     const assignmentReviews=this.assignmentDisplays();
     return {

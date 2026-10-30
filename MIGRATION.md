@@ -1,4 +1,10 @@
-# Upgrading to Smart Tags 0.10.2
+# Upgrading to Smart Tags 0.10.3
+
+## Version 0.10.3
+
+State remains schema 9. This patch makes no migration-time provider request or native-library change. Saved tag definitions, original paper findings, historical proof fingerprints, replies, repair counters and spending are retained.
+
+For a build paused while choosing tags, update and use **Retry this step**. ZTagging first reparses the current generation's saved complete replies. It removes conflicting generated aliases and uses a candidate's own unambiguous full name where possible; candidates that still conflict are left out rather than changing a saved meaning. New tags continue through source checking. Do not reset the paper cache or start a new build to recover this failure.
 
 
 ## Version 0.10.2

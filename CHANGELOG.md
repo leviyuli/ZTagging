@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3
+
+- Fixed extension builds repeatedly rejecting the whole generated list when aliases overlap saved tags or other candidates. Saved names, meanings, aliases and IDs remain authoritative; conflicting generated aliases are removed without inferring equivalence.
+- Use an unambiguous supplied full name for a conflicting generated label where possible; otherwise leave that candidate out while retaining its factual sources, allocated ID and original reply. Scientific contradictions remain blocked, and every new tag still needs checked supporting examples.
+- Recover usable saved chooser replies locally before requesting another response. Preserve completed paper analysis, previous requests, repair counters and spending; remaining name conflicts have a plain paused-state explanation.
+
 ## 0.10.2
 
 - Fixed new paper-reading runs showing the previous build's completed tags, examples and repair counters. Progress now follows the active phase.

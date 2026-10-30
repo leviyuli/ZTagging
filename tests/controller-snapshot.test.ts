@@ -25,12 +25,16 @@ function expected(state: AppState, native: Record<string, NativeTag[]>, id: stri
   return Object.entries(native).filter(([, names]) => matchCompiledConceptFilter(names.map(value => value.tag), compiled)).map(([paperId]) => paperId);
 }
 
-test('a saved tag-name reference failure explains the choosing stage without blaming paper count or the connection',async()=>{
+for(const {label,error,meaning} of [
+  {label:'a saved tag-name reference failure',error:'Unknown selected relationship reference: AEM.',meaning:/could not link some tag names/},
+  {label:'a suggested name colliding with a saved abbreviation',error:'Ambiguous name or alias "AEM" belongs to both saved-candidate-123 and generated-candidate-456.',meaning:/Some suggested tags share a name or abbreviation/},
+  {label:'two suggested names colliding with each other',error:'Ambiguous name or alias "AEM" belongs to both generated-candidate-123 and generated-candidate-456.',meaning:/Some suggested tags share a name or abbreviation/},
+])test(`${label} explains the choosing stage without exposing diagnostics or blaming the connection`,async()=>{
   const state=initialState(),p=paper('1:SYNTHETIC');p.abstract='An anion exchange membrane conducts ions.';p.fingerprint=paperFingerprint(p);state.papers[p.id]=p;
   const fact=normalizeFacts({summary:'A membrane is studied.',concepts:[{name:'AEM',facet:'component',evidence:[{source:'abstract',text:p.abstract}]}],needsPDF:false},p,'synthetic','synthetic');
-  const work=createTagSelection([fact],[],createRegistrySnapshot([fact],createEmptyEvidenceCatalog()),{targetCount:60,maxOutputTokens:2048});work.status='failed';work.tasks[0].status='failed';work.tasks[0].error='Unknown selected relationship reference: AEM.';
+  const work=createTagSelection([fact],[],createRegistrySnapshot([fact],createEmptyEvidenceCatalog()),{targetCount:60,maxOutputTokens:2048});work.status='failed';work.tasks[0].status='failed';work.tasks[0].error=error;
   state.run={id:'saved-run',kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:[{id:'job',paperId:p.id,status:'completed'}],vocabCursor:0,vocabFinished:false,message:'This tag-building step could not finish.',spentUSD:0.03,settings:{...state.settings},vocabularyVersion:state.vocabularyVersion,selection:work};
-  const snapshot=await harness(state).snapshot();assert.match(snapshot.queue.message,/could not link some tag names.*papers are saved.*Retry this step/);assert.doesNotMatch(snapshot.queue.message,/AEM|connection|too many/i);assert.equal(snapshot.queue.phase,'choosing');assert.equal(snapshot.queue.completed,1);assert.equal(snapshot.queue.failed,0);
+  const snapshot=await harness(state).snapshot();assert.match(snapshot.queue.message,meaning);assert.match(snapshot.queue.message,/papers are saved.*Retry this step/);assert.doesNotMatch(snapshot.queue.message,/AEM|candidate-|Ambiguous name or alias|connection|too many/i);assert.equal(snapshot.queue.phase,'choosing');assert.equal(snapshot.queue.completed,1);assert.equal(snapshot.queue.failed,0);assert.equal(snapshot.queue.selection!.failed,true);assert.equal(work.tasks[0].error,error);
 });
 
 test('snapshot indexed counts exactly retain approved descendant, legacy alias, shared-detail, and chemical-symbol filter meanings', async () => {

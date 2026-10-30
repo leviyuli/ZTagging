@@ -45,14 +45,14 @@ test('resolved cycles and scientifically incompatible aliases still reject the c
   const aliases=reply(fixture(),{tags:[{...candidate('cobalt','Co','component','cobalt'),aliases:['CO']}]});assert.equal(aliases.status,'choosing');assert.match(aliases.tasks[0].error!,/scientifically distinct/);assert.equal(aliases.plan,undefined);
 });
 
-test('Resume and Retry recover the newest valid saved reply when a later complete reply has a real alias conflict',()=>{
+test('Resume and Retry recover the newest valid saved reply when a later complete reply has scientifically contradictory aliases',()=>{
   const saved=definition('saved-aem','AEM','anion exchange membrane');let work=fixture([saved]);
   for(let index=0;index<4;index++)work=reply(work,{tags:[{...candidate('membrane','membrane texture'),parentKeys:['membrane']}]});
   assert.equal(work.status,'failed');
   work.tasks[0].attempts[2].raw={tags:[{...candidate('membrane','membrane texture'),parentKeys:['aem'],relatedKeys:['omitted-context']}]};
   work.tasks[0].attempts[2].error='Historical parser rejected a lowercase reference to a saved label.';
-  work.tasks[0].attempts[3].raw={tags:[candidate('membrane','membrane texture'),{...candidate('other','different membrane structure'),aliases:['membrane texture']}]};
-  work.tasks[0].attempts[3].error='An ambiguous alias conflicts with another proposed meaning.';
+  work.tasks[0].attempts[3].raw={tags:[candidate('membrane','membrane texture'),{...candidate('other','Co','component','cobalt'),aliases:['CO']}]};
+  work.tasks[0].attempts[3].error='A chemical alias conflicts with the proposed scientific meaning.';
   const before=fingerprint(work),attempts=structuredClone(work.tasks[0].attempts),ids=structuredClone(work.candidateIds);
   for(const recovered of [resumeTagSelection(JSON.parse(JSON.stringify(work))),retryTagSelection(JSON.parse(JSON.stringify(work)))]){
     assert.equal(recovered.status,'mapping');assert.deepEqual(recovered.tasks[0].attempts,attempts);assert.deepEqual(recovered.candidateIds,ids);assert.equal(recovered.automaticRequests,4);assert.equal(recovered.tasks[0].dispatches,4);assert.equal(recovered.tasks[0].invalidResponses,4);assert.deepEqual(recovered.plan!.find(tag=>tag.name==='membrane texture')!.broaderIds,[saved.id]);assert.ok(recovered.diagnostics.some(message=>message.includes('reply 3 of 4')));assert.equal(nextSelectionRequests(recovered)[0].kind,'map');assert.equal(validTagSelectionWork(recovered),true);

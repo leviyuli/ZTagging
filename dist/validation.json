@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.10.2",
-  "verifiedAt": "2026-10-30T10:08:43.376Z",
+  "version": "0.10.3",
+  "verifiedAt": "2026-10-30T10:28:03.815Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Current-phase progress and dormant completed-selection reuse",
+  "scope": "Conservative generated-name conflict repair and cached-reply recovery",
   "schemaVersion": 9,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 908,
+    "passed": 917,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 208,
+    "passed": 215,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -766,6 +766,34 @@
         "passed": true
       },
       {
+        "name": "v0103IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0103SavedAliasCollisionsRecoverBeforePaidRetry",
+        "passed": true
+      },
+      {
+        "name": "v0103AliasesCannotStealSavedOrGeneratedMeanings",
+        "passed": true
+      },
+      {
+        "name": "v0103ChemicalContradictionsStayBlocked",
+        "passed": true
+      },
+      {
+        "name": "v0103PublicRetryKeepsRawFactsIDsAndSpending",
+        "passed": true
+      },
+      {
+        "name": "v0103RecoveryUsesOnlyExactCurrentSnapshotSources",
+        "passed": true
+      },
+      {
+        "name": "v0103ApplyKeepsProtectedDefinitionsAndNativeLibrary",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -850,6 +878,16 @@
         "passed": true
       }
     ],
+    "generatedNameRecovery": {
+      "cachedPapers": 2,
+      "retainedPaidReplies": 12,
+      "oldSpendUSD": 3.25,
+      "syntheticMappingRequests": 1,
+      "newChooserRequests": 0,
+      "newExtractionRequests": 0,
+      "nativeTagWrites": 0,
+      "realProviderRequests": 0
+    },
     "progressIsolation": {
       "cachedPapers": 1,
       "currentPaperGroup": 3,
@@ -921,12 +959,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.10.1",
-      "to": "0.10.2",
+      "from": "0.10.2",
+      "to": "0.10.3",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "15e438db8890c9e6e7160e96fd510a00860f51e07194e71bd372170d1ec2799f",
+      "packageHash": "f03e645232c0faecc02fe8f64782a21e4f0c4cda8c403e0830c5d3cad0308d9a",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -938,7 +976,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 201,
+      "largeRenderMS": 122,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -990,6 +1028,10 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "reviewWorkflow": {
+    "savedLabelsAndMeaningsImmutable": true,
+    "unapprovedAliasOverlapCannotMergeDefinitions": true,
+    "conflictingGeneratedLabelsDeferred": true,
+    "knownScientificContradictionsRemainBlocked": true,
     "readingHidesPriorSelectionMetrics": true,
     "completedCachePromotedOnlyAfterInputValidation": true,
     "dormantCacheSurvivesPauseAndRestart": true,
@@ -1049,8 +1091,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1338,
-    "totalSimulationMS": 3745,
+    "timeToRepresentativeQueueMS": 1629,
+    "totalSimulationMS": 4085,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -1072,10 +1114,10 @@
     "rawRepliesUnchanged": true,
     "existingIDsAndMeaningsUnchanged": true,
     "candidateIDsPreservedOrCanonicalReused": true,
-    "canonicalExistingIdentitiesReused": 1,
+    "canonicalExistingIdentitiesReused": 8,
     "examples": 90,
     "remainingRequests": 2,
-    "maxRequestBytes": 67491,
+    "maxRequestBytes": 70116,
     "newProviderCalls": 0,
     "newExtractionCalls": 0,
     "nativeWrites": 0,
@@ -1096,6 +1138,49 @@
     "providerCalls": 0,
     "nativeWrites": 0,
     "privateCopyUnchanged": true
+  },
+  "privateGeneratedNameRecovery": {
+    "status": "recovered",
+    "papers": 20,
+    "cachedFacts": 50,
+    "completedJobs": 20,
+    "priorProviderRequests": 12,
+    "rawRepliesUnchanged": true,
+    "existingIDsAndMeaningsUnchanged": true,
+    "candidateIDsPreservedOrCanonicalReused": true,
+    "spentUSD": 0.044637257999999985,
+    "selectedTags": 131,
+    "deferredCandidates": 34,
+    "totalCheckRequests": 2,
+    "maxRequestBytes": 73713,
+    "progress": {
+      "phase": "mapping",
+      "verificationScope": "representative",
+      "sourceCompleted": 0,
+      "sourceTotal": 167,
+      "completedRequests": 1,
+      "queuedRequests": 2,
+      "correctionsUsed": 3,
+      "correctionAllowance": 3,
+      "semanticRepairsUsed": 3,
+      "semanticRepairAllowance": 3,
+      "mappingCorrectionsUsed": 0,
+      "mappingCorrectionAllowance": 2,
+      "selectedConcepts": 131,
+      "deferredConcepts": 34,
+      "tagsPrepared": 1,
+      "tagsTotal": 131,
+      "examplesChecked": 2,
+      "examplesTotal": 96
+    },
+    "newChooserRequests": 0,
+    "newExtractionCalls": 0,
+    "nativeWrites": 0,
+    "liveProviderRequests": 0,
+    "simulatedMappingRequests": 2,
+    "privateCopyExactBytesUnchanged": true,
+    "allFactsQuotesIDsAndProvenanceUnchanged": true,
+    "unsampledSourcesRemainUnexamined": true
   },
   "unchangedBehavior": {
     "factualExtractor": true,
@@ -1127,14 +1212,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.10.2.xpi",
-      "bytes": 596717,
-      "sha256": "15e438db8890c9e6e7160e96fd510a00860f51e07194e71bd372170d1ec2799f"
+      "file": "smart-tags-0.10.3.xpi",
+      "bytes": 599055,
+      "sha256": "f03e645232c0faecc02fe8f64782a21e4f0c4cda8c403e0830c5d3cad0308d9a"
     },
     "source": {
-      "file": "smart-tags-0.10.2-source.zip",
-      "bytes": 684918,
-      "sha256": "c4f5eb10f4fabf2d3a90f3a6603f36b125b2add5ef644c8c91c91e353ae5d185"
+      "file": "smart-tags-0.10.3-source.zip",
+      "bytes": 694063,
+      "sha256": "3024488d36a176bcbf297a6cf2d7732a00943abed82e51ba4a630d4568107a33"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"
