@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- Fixed tag selection stopping when a generated alias conflicts with a protected DIY topic. Existing user names, meanings, IDs, matching settings, and native assignments remain unchanged.
+- Resume and Retry this step first recheck a saved complete reply locally. A reply made usable by the fix continues into source checking without another tag-selection request; previous replies, spending, and repair counts are retained.
+- Resolved harmless case differences in method references and kept unestablished component relationships as contextual links. Distinct meanings and original paper evidence remain unchanged.
+- Reduced repeated mapping payloads to tag meanings, applicable matching guidance, and subtype context. Full saved definitions and source quotations remain intact; the retained large-build schedule falls from 215 to 101 source-checking requests.
+
 ## 0.7.0
 
 - Replaced recursive batch merging with a local topic census, bounded global shortlist, compact vocabulary choice, and one finite source-mapping pass. Ranking favors unique-paper coverage in the largest research area, with diminishing returns for repeated paper/category coverage.

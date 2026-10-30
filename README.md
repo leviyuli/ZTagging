@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.7.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.7.0.xpi).
+2. Select [`smart-tags-0.7.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.7.1.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -18,6 +18,8 @@ The classifier usually proposes up to five core tags plus matching custom tags; 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
 Release downloads contain the installer and TypeScript source archive. Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+
+Version **0.7.1** fixes selection pauses caused by generated aliases colliding with DIY names. After updating, **Resume** or **Retry this step** rechecks the saved complete reply locally before requesting another one. Prior replies, repair counters, spending, and completed paper analysis stay intact. Source-checking requests now send the frozen tag meanings without repeatedly sending search aliases or administrative fields; the full definitions and original paper evidence remain stored unchanged.
 
 Version **0.7.0** chooses a compact global tag list, then checks the saved findings against it. It replaces repeated batch merging with a finite queue and favors topics useful across the largest body of papers in your chosen group. The workflow remains **Connect AI → Build tags → Review & clean up → Assign & automate**, with independent build and assignment groups. Preparing or applying the tag list creates no native paper-tag changes; those wait for your reviewed batch Apply.
 

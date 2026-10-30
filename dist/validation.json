@@ -1,20 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.7.0",
-  "verifiedAt": "2026-10-29T12:34:43.585Z",
+  "version": "0.7.1",
+  "verifiedAt": "2026-10-30T03:33:35.543Z",
   "target": "Zotero 10.0.6 on Windows",
   "scope": "Finite global tag selection and source-specific evidence mapping",
   "schemaVersion": 6,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
+  "localSavedReplyRecovery": true,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 750,
+    "passed": 757,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 160,
+    "passed": 161,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -361,6 +362,10 @@
         "passed": true
       },
       {
+        "name": "v071GeneratedRCLAliasIsWithheldWithoutChangingDIY",
+        "passed": true
+      },
+      {
         "name": "v070SerializedResumeDoesNotRepeatCompletedRequests",
         "passed": true
       },
@@ -680,12 +685,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.6.0",
-      "to": "0.7.0",
+      "from": "0.7.0",
+      "to": "0.7.1",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "b36e3a31443778a8696323fe20cb1f9b0f9ad57359ce956a6155d8b4c5d69b2f",
+      "packageHash": "c46d2d639e845267e0a68cf16535fedacb759e4b187d03fbf57764bd6295512f",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -697,7 +702,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 125,
+      "largeRenderMS": 200,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -750,15 +755,18 @@
     "registryEntries": 5174,
     "factualSources": 5981,
     "shortlisted": 480,
-    "selectedCore": 60,
-    "globalPlanningRequests": 1,
-    "mappingRequests": 93,
-    "initialMappingTasks": 93,
-    "syntheticRequests": 94,
+    "selectedCore": 71,
+    "globalPlanningRequests": 0,
+    "savedChooserReplyRecovered": true,
+    "chooserHistoryUnchanged": true,
+    "chooserDispatches": 4,
+    "mappingRequests": 101,
+    "initialMappingTasks": 101,
+    "syntheticRequests": 101,
     "maxConcurrent": 2,
-    "maxPromptUTF8Bytes": 89816,
-    "timeToMappingMS": 4194,
-    "totalSimulationMS": 38858,
+    "maxPromptUTF8Bytes": 89754,
+    "timeToMappingMS": 4945,
+    "totalSimulationMS": 55402,
     "legacyCheckpointImmutable": true,
     "sourceWordingIDsAndProvenanceUnchanged": true,
     "settingsDecisionsAndNativeStateUnchanged": true,
@@ -800,14 +808,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.7.0.xpi",
-      "bytes": 491302,
-      "sha256": "b36e3a31443778a8696323fe20cb1f9b0f9ad57359ce956a6155d8b4c5d69b2f"
+      "file": "smart-tags-0.7.1.xpi",
+      "bytes": 493986,
+      "sha256": "c46d2d639e845267e0a68cf16535fedacb759e4b187d03fbf57764bd6295512f"
     },
     "source": {
-      "file": "smart-tags-0.7.0-source.zip",
-      "bytes": 538014,
-      "sha256": "bd010f8f6fd073832d4d7a07482caf2769dcfa17b6a47313b18faa1b2e4000f7"
+      "file": "smart-tags-0.7.1-source.zip",
+      "bytes": 542448,
+      "sha256": "aa2db2552225afe1e4391cdf9e3225eebc6d3d17f9c4c44b471c8300bd60e65b"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

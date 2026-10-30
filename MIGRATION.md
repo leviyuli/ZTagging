@@ -1,4 +1,12 @@
-# Upgrading to Smart Tags 0.7.0
+# Upgrading to Smart Tags 0.7.1
+
+## Version 0.7.1
+
+State remains schema 6. Install the update without uninstalling, then click **Resume** or **Retry this step** on a paused tag-selection run. Before requesting another reply, Smart Tags rechecks the last complete saved reply locally. Successful local recovery retains the previous raw replies, repair counters, spending, selected source snapshot, and completed paper analysis. Loading the extension does not make a provider request or write native library data.
+
+Existing DIY definitions stay unchanged. Generated aliases that claim an existing DIY name are withheld; this does not merge a broad generated topic into the narrower DIY topic. A failed local recheck does not reset automatic allowances or consume a paid request.
+
+Source checks use a smaller transport view of each frozen definition: identity, name, full meaning, category, nonempty matching guidance, and subtype context. Search aliases and administrative settings stay local. The original definitions, meaning fingerprints, source IDs, and full validated source text remain unchanged. Completed batches retain their identities; the update does not restart them merely to repack requests.
 
 ## Version 0.7.0
 

@@ -77,6 +77,41 @@ test('exhausted mapping correction pauses clearly and ordinary Resume cannot res
   invalid=false;await h.controller.invoke('retry-selection');await h.controller.waitForIdle();assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.ok(h.state.run!.selection!.automaticRequests>requests);assert.equal(h.writes(),0);
 });
 
+for(const action of ['resume','retry-selection'] as const)test(`${action} locally recovers a saved chooser reply whose generated RCL alias conflicted with DIY`,async()=>{
+  const state=library(2,1),paper=state.papers['1:P0'],fact=state.facts[paper.id];
+  fact.concepts[0].name='ohmic resistance';fact.concepts[0].evidence[0].text='Ohmic resistance is established by the measurements in this experiment.';
+  paper.abstract=fact.concepts[0].evidence[0].text;paper.fingerprint=paperFingerprint(paper);fact.metadataFingerprint=paper.fingerprint;fact.inputFingerprint=paper.fingerprint;
+  state.settings.coreConceptLimit=2;state.run!.settings=clone(state.settings);state.tags[0].status='approved';
+  state.decisions[`${paper.id}|custom-rcl`]={locked:true};state.decisions['1:P1|custom-rcl']={rejected:true};
+  let savedReply:ReturnType<typeof reply>|undefined;
+  const first=harness(state,{cost:0.001,respond(input){
+    assert.equal(input.selectionPhase,'choosing');const response=reply(input);savedReply=clone(response);
+    return {...response,tags:('tags' in response?response.tags:[]).map((tag,index)=>({...tag,parentKeys:index===0?['unknown-parent']:[]}))};
+  }});
+  await resume(first);assert.equal(state.run!.status,'paused');assert.equal(first.calls.length,4);
+  const task=state.run!.selection!.tasks.find(task=>task.kind==='plan')!;
+  assert.equal(task.dispatches,4);assert.equal(task.invalidResponses,4);assert.equal(task.status,'failed');
+  assert.ok(savedReply&&'tags' in savedReply);
+  const retainedReply={...savedReply,tags:savedReply.tags.map(tag=>({...tag,aliases:tag.name==='ohmic resistance'?['RCL']:tag.aliases}))};
+  // This complete reply represents a cached failure produced before conflicting DIY aliases were withheld locally.
+  task.attempts.at(-1)!.raw=JSON.stringify(retainedReply);task.attempts.at(-1)!.error='Alias RCL is ambiguous between ohmic resistance and the saved DIY topic.';
+  task.error=task.attempts.at(-1)!.error;
+  const attempts=clone(task.attempts),diagnostics=clone(state.run!.selection!.diagnostics),candidateIds=clone(state.run!.selection!.candidateIds),spent=state.run!.spentUSD,requests=state.run!.selection!.automaticRequests;
+  const facts=fingerprint(state.facts),definitions=fingerprint(state.tags),decisions=fingerprint(state.decisions),native=fingerprint(state.nativeTags);
+  const restored=harness(JSON.parse(JSON.stringify(state)),{cost:0.001});await restored.controller.initialize();assert.equal(restored.calls.length,0);
+  await restored.controller.invoke(action);await restored.controller.waitForIdle();
+  const work=restored.state.run!.selection!,recovered=work.tasks.find(value=>value.id===task.id)!;
+  assert.equal(restored.state.run!.status,'idle',restored.state.run!.message);assert.equal(work.status,'ready');assert.equal(restored.state.tagPreparation!.status,'ready');
+  assert.ok(restored.calls.length>0);assert.ok(restored.calls.every(call=>call.phase==='mapping'),'The saved chooser reply must not cause a fifth paid chooser request');
+  assert.equal(recovered.status,'completed');assert.equal(recovered.dispatches,4);assert.equal(recovered.invalidResponses,4);assert.deepEqual(recovered.attempts,attempts);assert.deepEqual(work.candidateIds,candidateIds);
+  assert.equal(work.tasks.filter(task=>task.kind==='plan').length,1);assert.equal(work.automaticRequests,requests+restored.calls.length);
+  assert.ok(diagnostics.every(message=>work.diagnostics.includes(message)));assert.ok(restored.state.run!.spentUSD>=spent);assert.ok(Math.abs(restored.state.run!.spentUSD-spent-restored.calls.length*0.001)<1e-10);
+  const core=restored.state.taxonomyProposal!.tags.find(tag=>!tag.custom&&tag.name==='ohmic resistance')!;
+  assert.ok(core);assert.ok(!core.aliases.includes('RCL'));assert.deepEqual(restored.state.taxonomyProposal!.tags.find(tag=>tag.id==='custom-rcl'),state.tags[0]);
+  assert.equal(fingerprint(restored.state.facts),facts);assert.equal(fingerprint(restored.state.tags),definitions);assert.equal(fingerprint(restored.state.decisions),decisions);assert.equal(fingerprint(restored.state.nativeTags),native);
+  assert.equal(restored.pdf(),0);assert.equal(restored.writes(),0);assert.equal(validState(restored.state),true);
+});
+
 for(const category of ['authentication','quota','permission','network','configuration'] as const)test(`${category} failures pause without provider fallback or format-correction consumption`,async()=>{
   const state=library(),before=fingerprint(state.facts),h=harness(state,{respond(){throw new ProviderError('Synthetic provider failure',category);}});await resume(h);assert.equal(state.run!.status,'paused');assert.equal(h.calls.length,1);assert.equal(state.run!.selection!.automaticRequests,1);assert.equal(state.run!.selection!.tasks[0].invalidResponses,0);assert.equal(state.run!.settings.provider,'chatgpt');assert.equal(fingerprint(state.facts),before);assert.equal(h.writes(),0);
 });
