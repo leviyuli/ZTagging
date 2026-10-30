@@ -1,4 +1,17 @@
-# Upgrading to Smart Tags 0.9.0
+# Upgrading to Smart Tags 0.10.0
+
+
+## Version 0.10.0
+
+Install the update over the existing extension. Before writing **schema 9**, Smart Tags saves an immutable exact-byte **state.json.pre-v9.json** backup. Occupied filenames with different bytes receive numbered suffixes. Backup or migration-write failure stops without substituting an older valid `.bak`; older applications refuse downgrade writes.
+
+Building and reviewing a tag list now share one page. Existing native Zotero tags are left unchanged: no definition import, name comparison, or cleanup is required. Earlier cleanup replies, snapshots, spending, and journals remain available as history; obsolete non-retry cleanup tasks are retired without provider requests or native writes. Paper-analysis retry tasks retain their recovery behavior.
+
+The tag library treats generated and researcher-authored definitions alike. Renameable shelves group tag membership without changing scientific meanings or subtype relationships. Existing internal provenance flags remain intact for IDs, protected edits, default matching modes, and historical compatibility; they are not separate user-facing tag classes. Existing contextual relationships keep their prior retrieval behavior.
+
+Facts, source quotations and provenance, completed jobs, paid replies, exact-source decisions, pending reviews, manual choices, settings, credentials, budgets, and undo history are preserved. Older planner checkpoints retain their saved tag policy and request history; only a new preparation opts into unified tag handling. Matching modes remain explicit, and upgrading does not enable automation or satisfy the pilot gate.
+
+**Reset paper analysis…** is a separate, optional Settings action. It clears reusable facts, classification caches, derived PDF excerpts and pending results. Original paid replies and spending remain in an inactive audit record; approved evidence and native Zotero data stay intact. The next build performs fresh extraction. Resetting also clears the pilot review gate and does not enable incoming assignment.
 
 ## Version 0.9.0
 

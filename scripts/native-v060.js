@@ -61,7 +61,7 @@ export async function runNativeV060(app,check,config){
       throw new Error('Unexpected synthetic workflow request: '+prompt.slice(0,90));
     };
     await app.save();const doc=await open('overview');
-    const stepNames=['Connect AI','Build tags','Review & clean up','Assign & automate'],stepPositions=stepNames.map(label=>[...doc.querySelectorAll('.sidebar button')].findIndex(control=>control.textContent.includes(label)));
+    const stepNames=['Connect AI','Build tags','Assign & automate'],stepPositions=stepNames.map(label=>[...doc.querySelectorAll('.sidebar button')].findIndex(control=>control.textContent.includes(label)));
     check('v060SidebarFollowsWorkflow',stepPositions.every((position,index)=>position>=0&&(index===0||position>stepPositions[index-1]))&&!!doc.getElementById('nav-vocabulary'));
     await open('build');await choose(doc,'build-scope',1);await completeRun(doc,'Prepare tags');
     check('v060BuildGroupIsIndependent',app.state.run?.scope==='selected'&&app.state.run.jobs.length===1&&app.state.run.jobs[0].paperId===papers[0].id&&app.state.tagPreparation?.status==='ready',{scope:app.state.run?.scope,status:app.state.run?.status,message:app.state.run?.message,preparation:app.state.tagPreparation?.status,requests:requests.length});
@@ -81,7 +81,7 @@ export async function runNativeV060(app,check,config){
     await until(()=>button(doc,'Apply tag list')&&!button(doc,'Apply tag list').disabled,'extension ready');await click(doc,'Apply tag list');await until(()=>!app.state.tagPreparation&&app.state.tags.some(tag=>tag.name==='EIS'),'extended list applied');
     check('v060ExtensionRetainsOldIdentityWithoutDuplicates',JSON.stringify(app.state.tags.find(tag=>tag.id===fuelCell.id))===JSON.stringify(fuelCell)&&app.state.tags.filter(tag=>tag.name==='FC').length===1&&app.state.tags.some(tag=>tag.name==='EIS'));
     await open('vocabulary');check('v060TagLibraryRetainsDIYEditor',!!button(doc,'Add tag')&&!!button(doc,'Edit tag FC')&&doc.body.textContent.includes('0 papers tagged'));
-    await open('assignment');check('v060AssignmentRetainsIndependentScopeAndPilotGate',doc.getElementById('assignment-scope').textContent.includes('Whole personal library')&&!!button(doc,'Run assignment pilot')&&!app.state.settings.autoAssign);
+    await open('assignment');const routineSummary=[...doc.querySelectorAll('summary')].find(control=>control.textContent==='Routine assignment settings');if(!routineSummary)throw new Error('Missing routine assignment settings section');if(!routineSummary.parentElement.open)routineSummary.click();await until(()=>button(doc,'Run assignment pilot'),'expanded assignment pilot');check('v060AssignmentRetainsIndependentScopeAndPilotGate',doc.getElementById('assignment-scope').textContent.includes('Whole personal library')&&!!button(doc,'Run assignment pilot')&&!app.state.settings.autoAssign);
     check('v060PreviewPreservesNativeDataAndColumns',nativeWrites===0&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&columns()===beforeColumns&&scopes.includes('selected')&&scopes.includes('collections')&&scopes.includes('library'));
     return {syntheticProviderRequests:requests.length,realAIRequests:0,nativeTagWrites:nativeWrites,separateGroups:true,applySavesOnly:true,extensionPreservesOldIdentity:true};
   }finally{

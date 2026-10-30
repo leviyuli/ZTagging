@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.9.0",
-  "verifiedAt": "2026-10-30T07:39:02.471Z",
+  "version": "0.10.0",
+  "verifiedAt": "2026-10-30T09:17:53.428Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Exact Keep cleanup, reviewed DIY merges, assignment triage and cumulative extension",
-  "schemaVersion": 8,
+  "scope": "Renamable shelves, combined building and review, scoped assignment and optional cache reset",
+  "schemaVersion": 9,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 851,
+    "passed": 896,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 185,
+    "passed": 196,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -674,6 +674,50 @@
         "passed": true
       },
       {
+        "name": "v0100IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0100CombinedNavigationHasNoCleanupStep",
+        "passed": true
+      },
+      {
+        "name": "v0100ShelfRenameLeavesTagDefinitionsAndNativeDataAlone",
+        "passed": true
+      },
+      {
+        "name": "v0100ExistingNamesVisibleWithoutDefinitionsOrCleanup",
+        "passed": true
+      },
+      {
+        "name": "v0100AssignmentUsesShelfOnlyWithParentContext",
+        "passed": true
+      },
+      {
+        "name": "v0100OneBatchFinishPreservesExistingTagsAndOtherPapers",
+        "passed": true
+      },
+      {
+        "name": "v0100ShelfAssignmentUndoRestoresExactNativeTags",
+        "passed": true
+      },
+      {
+        "name": "v0100BuildAndReviewShareOnePage",
+        "passed": true
+      },
+      {
+        "name": "v0100ApplyingBuildCreatesShelfWithoutNativeWrites",
+        "passed": true
+      },
+      {
+        "name": "v0100ResetWaitsForExplicitConfirmation",
+        "passed": true
+      },
+      {
+        "name": "v0100ResetKeepsDefinitionsNativeTagsAndPaidHistory",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -694,7 +738,7 @@
         "passed": true
       },
       {
-        "name": "v050ExistingNamesStartUnselected",
+        "name": "v050CompatibilityInventoryRecognizesAliasWithoutSelection",
         "passed": true
       },
       {
@@ -702,7 +746,7 @@
         "passed": true
       },
       {
-        "name": "v050DIYShowsConsentBeforeAI",
+        "name": "v050CompatibilityPreviewPreservesOtherManualNativeTags",
         "passed": true
       },
       {
@@ -758,7 +802,17 @@
         "passed": true
       }
     ],
-    "cleanupAndAssignment": {
+    "shelvesAndReset": {
+      "shelvesRenamed": true,
+      "scopedAssignment": true,
+      "combinedBuildReview": true,
+      "nativeNamesPreserved": true,
+      "analysisReset": true,
+      "syntheticRequests": 3,
+      "realAIRequests": 0,
+      "nativeWriteBatches": 2
+    },
+    "legacyCleanupAndAssignment": {
       "papers": 3,
       "syntheticProviderRequests": 2,
       "realAIRequests": 0,
@@ -802,12 +856,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.8.1",
-      "to": "0.9.0",
+      "from": "0.9.0",
+      "to": "0.10.0",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "60dfc51872b368ba59ca8bb7744dbb4d6efeb2a52e4ee1dab36be7cf92451837",
+      "packageHash": "db217065eb4829a37ec8e3bdd215de6a04f87e938e8c9243cf4a1abda04c07f4",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -819,7 +873,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 122,
+      "largeRenderMS": 205,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -832,7 +886,7 @@
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "bundledSourceFilesMatch": 24,
+  "bundledSourceFilesMatch": 26,
   "selection": {
     "sparseTFIDFComparisonLimitPerTopic": 32,
     "defaultSoftTarget": 60,
@@ -871,7 +925,16 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "reviewWorkflow": {
-    "keepUsesCompleteExactInventory": true,
+    "combinedBuildAndReview": true,
+    "noMandatoryCleanup": true,
+    "renamableShelves": true,
+    "nativeNamesDisplayWithoutInferredDefinitions": true,
+    "assignmentScopeFrozen": true,
+    "contextParentsNotAssignmentTargets": true,
+    "partialShelfCannotGloballyExclude": true,
+    "oneBatchRoutineReview": true,
+    "optionalAnalysisResetPreservesAudit": true,
+    "legacyKeepUsesCompleteExactInventory": true,
     "noTagProtected": true,
     "uncheckedSmartTagsAssignmentsMayBeRemoved": true,
     "cleanupDoesNotRejectConcepts": true,
@@ -891,8 +954,8 @@
   },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Schema-eight compatibility replay of retained work with locally verified PDF and simulated judgments",
-    "schemaVersion": 8,
+    "scope": "Schema-nine compatibility replay of retained work with locally verified PDF and simulated judgments",
+    "schemaVersion": 9,
     "evictedFactsRecovered": 1,
     "otherCachedFactsUnchanged": true,
     "localPDFInputVerified": true,
@@ -912,8 +975,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1349,
-    "totalSimulationMS": 3705,
+    "timeToRepresentativeQueueMS": 1718,
+    "totalSimulationMS": 5086,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -927,6 +990,25 @@
     "extractionRequests": 0,
     "nativeWrites": 0,
     "liveProviderRequests": 0
+  },
+  "privateCurrentStateMigration": {
+    "status": "passed",
+    "cachedPaperFacts": 752,
+    "staleCleanupTasksRetired": 5,
+    "paidRepliesAndSpendingPreserved": true,
+    "extractionEvidenceAndDecisionsUnchanged": true,
+    "providerRequests": 0,
+    "nativeWrites": 0
+  },
+  "authorizedCacheReset": {
+    "status": "applied",
+    "clearedFacts": 752,
+    "clearedAssignmentAnalyses": 39,
+    "papersPreserved": 945,
+    "definitionsPreserved": 43,
+    "nativeTagsAndCredentialsUnchanged": true,
+    "spendingAndAuditPreserved": true,
+    "exactByteBackup": true
   },
   "unchangedBehavior": {
     "factualExtractor": true,
@@ -943,9 +1025,10 @@
   "rightItemAndInformationPaneSection": false,
   "skills": {
     "deslop": "Focused selection/controller/policy/UI review without unrelated rewrites.",
-    "codebaseDesign": "TagReconciliation owns exact removal and reviewed merge compilation; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
+    "codebaseDesign": "TagShelves owns membership and target selection; AnalysisReset clears reusable work while preserving audit; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
   },
-  "workingLibraryModified": false,
+  "workingNativeLibraryModified": false,
+  "workingExtensionCacheResetAuthorized": true,
   "workingRunInterrupted": false,
   "liveProviderRequests": 0,
   "publicArtifactPrivateDataScan": "passed",
@@ -957,14 +1040,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.9.0.xpi",
-      "bytes": 573893,
-      "sha256": "60dfc51872b368ba59ca8bb7744dbb4d6efeb2a52e4ee1dab36be7cf92451837"
+      "file": "smart-tags-0.10.0.xpi",
+      "bytes": 593629,
+      "sha256": "db217065eb4829a37ec8e3bdd215de6a04f87e938e8c9243cf4a1abda04c07f4"
     },
     "source": {
-      "file": "smart-tags-0.9.0-source.zip",
-      "bytes": 635811,
-      "sha256": "182fd877b1f3659697513ad2cb219cd7598aa3c44007ef8a820c658d4a7c58d0"
+      "file": "smart-tags-0.10.0-source.zip",
+      "bytes": 668754,
+      "sha256": "93e2c333072b793a8a57e0a982e6c624f5e15a9cd65a59453497e875e797e873"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

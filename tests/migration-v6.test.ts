@@ -1,3 +1,4 @@
+import {migrateTagShelves} from '../src/tag-shelves.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState, migrateState, validLegacyState, validState } from '../src/controller.ts';
@@ -12,7 +13,7 @@ import { upsertWarning } from '../src/warnings.ts';
 
 const copy = <T>(value:T):T => structuredClone(value);
 function schemaFive() {
-  const state = {...initialState(),schemaVersion:5};
+  const state = {...initialState(),schemaVersion:5};delete state.tagShelves;
   const eis:TagDefinition = {id:'saved-eis',name:'EIS',fullName:'electrochemical impedance spectroscopy',description:'Impedance spectroscopy of electrochemical systems.',facet:'method',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto'};
   state.tags.push(eis);state.taxonomyReady=true;
   for(let index=0;index<51;index++){
@@ -42,29 +43,29 @@ function sourceBytes(value:unknown) {const body=new TextEncoder().encode(JSON.st
 
 test('current-schema migration preserves all completed evidence and old consolidation audit without starting selection',()=>{
   const old=schemaFive(),before=JSON.stringify(old),next=migrateState(old);
-  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,8);assert.deepEqual(next,{...copy(old),schemaVersion:8});assert.equal(JSON.stringify(old),before);
+  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,9);assert.deepEqual(next,{...copy(old),schemaVersion:9,tagShelves:migrateTagShelves(old.tags,old.tagShelves)});assert.equal(JSON.stringify(old),before);
   assert.equal(next.run!.jobs.filter(job=>job.status==='completed').length,51);assert.deepEqual(next.facts,old.facts);assert.deepEqual(next.run!.consolidation,old.run!.consolidation);assert.equal(next.run!.selection,undefined);assert.deepEqual(next.cleanup,old.cleanup);assert.equal(migrateState(next),next);
 });
 
-test('schema-five state receives an immutable exact-byte pre-v8 backup before its only changed field is written',async()=>{
+test('schema-five state receives an immutable exact-byte pre-v9 backup before the schema and shelf metadata are written',async()=>{
   const old=schemaFive(),bytes=sourceBytes(old),memory=byteStore(bytes),store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  const next=await store.load();assert.equal(next.schemaVersion,8);assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json.pre-v8.json'),bytes);assert.deepEqual(memory.copies,['state.json.pre-v8.json']);assert.deepEqual(memory.writes,['state.json']);assert.deepEqual(next.facts,old.facts);
+  const next=await store.load();assert.equal(next.schemaVersion,9);assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json.pre-v9.json'),bytes);assert.deepEqual(memory.copies,['state.json.pre-v9.json']);assert.deepEqual(memory.writes,['state.json']);assert.deepEqual(next.facts,old.facts);
   const reopened=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);assert.deepEqual(await reopened.load(),next);assert.equal(reopened.migrated,false);assert.equal(memory.copies.length,1);
 });
 
 test('a current-schema backup failure never substitutes an older valid bak or changes retained data',async()=>{
-  const bytes=sourceBytes(schemaFive()),memory=byteStore(bytes),bak=sourceBytes(initialState());memory.files.set('state.json.bak',bak);memory.files.set('state.json.pre-v8.json',new TextEncoder().encode('earlier distinct source'));memory.files.set('state.json.pre-v5.json',new TextEncoder().encode('historical schema-five backup'));memory.failCopy(true);
+  const bytes=sourceBytes(schemaFive()),memory=byteStore(bytes),bak=sourceBytes(initialState());memory.files.set('state.json.bak',bak);memory.files.set('state.json.pre-v9.json',new TextEncoder().encode('earlier distinct source'));memory.files.set('state.json.pre-v5.json',new TextEncoder().encode('historical schema-five backup'));memory.failCopy(true);
   const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/Exact backup failed/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),bytes);assert.deepEqual(memory.files.get('state.json.bak'),bak);assert.equal(memory.writes.length,0);
-  memory.failCopy(false);const next=await store.load();assert.equal(next.schemaVersion,8);assert.deepEqual(memory.files.get('state.json.pre-v8.1.json'),bytes);assert.equal(new TextDecoder().decode(memory.files.get('state.json.pre-v5.json')),'historical schema-five backup');assert.equal(new TextDecoder().decode(memory.files.get('state.json.pre-v8.json')),'earlier distinct source');
+  memory.failCopy(false);const next=await store.load();assert.equal(next.schemaVersion,9);assert.deepEqual(memory.files.get('state.json.pre-v9.1.json'),bytes);assert.equal(new TextDecoder().decode(memory.files.get('state.json.pre-v5.json')),'historical schema-five backup');assert.equal(new TextDecoder().decode(memory.files.get('state.json.pre-v9.json')),'earlier distinct source');
 });
 
 test('migration write failure retains the same exact backup on restart and never resets completed work from bak',async()=>{
   const old=schemaFive(),bytes=sourceBytes(old),memory=byteStore(bytes),bak=sourceBytes(initialState());memory.files.set('state.json.bak',bak);memory.failWrite(true);
-  const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),bytes);assert.deepEqual(memory.files.get('state.json.bak'),bak);assert.deepEqual(memory.files.get('state.json.pre-v8.json'),bytes);
-  memory.failWrite(false);const restarted=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await restarted.load();assert.equal(next.run!.jobs.length,51);assert.deepEqual(next.facts,old.facts);assert.deepEqual(memory.copies,['state.json.pre-v8.json']);assert.equal(memory.files.has('state.json.pre-v8.1.json'),false);
+  const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),bytes);assert.deepEqual(memory.files.get('state.json.bak'),bak);assert.deepEqual(memory.files.get('state.json.pre-v9.json'),bytes);
+  memory.failWrite(false);const restarted=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await restarted.load();assert.equal(next.run!.jobs.length,51);assert.deepEqual(next.facts,old.facts);assert.deepEqual(memory.copies,['state.json.pre-v9.json']);assert.equal(memory.files.has('state.json.pre-v9.1.json'),false);
 });
 
 test('newer state refuses downgrade even when a valid schema-five backup is available',async()=>{
-  const bytes=sourceBytes({...initialState(),schemaVersion:9}),memory=byteStore(bytes);memory.files.set('state.json.bak',sourceBytes(schemaFive()));const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  await assert.rejects(store.load(),/newer schema 9/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),bytes);assert.equal(memory.copies.length,0);assert.equal(memory.writes.length,0);
+  const bytes=sourceBytes({...initialState(),schemaVersion:10}),memory=byteStore(bytes);memory.files.set('state.json.bak',sourceBytes(schemaFive()));const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);
+  await assert.rejects(store.load(),/newer schema 10/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),bytes);assert.equal(memory.copies.length,0);assert.equal(memory.writes.length,0);
 });

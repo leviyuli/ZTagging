@@ -110,7 +110,7 @@ test('a staged proposal cannot publish after source metadata changes',async()=>{
 
 test('a soft concept target preserves supported distinctions and leaves native data untouched until apply',async()=>{
   const h=harness();h.state.settings.coreConceptLimit=2;const before=copy(h.state.tags);await run(h);
-  assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(h.state.tagPreparation!.status,'ready');assert.ok(h.state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length>2);
+  assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(h.state.tagPreparation!.status,'ready');assert.ok(h.state.taxonomyProposal!.tags.length>2);
   assert.deepEqual(h.state.tags,before);assert.equal(h.host.writes.length,0);
 });
 
@@ -360,7 +360,7 @@ test('schema3 migration resumes 51 completed selected jobs without extracting an
     legacy.papers[source.id]=copy(source);const facts=normalizeFacts(factsResponse({paper:source}),source,'chatgpt','test-model');for(const concept of facts.concepts)delete concept.factConceptId;legacy.facts[source.id]=facts;
   }
   const selected=[...h.host.papers.values()].slice(0,51);legacy.run={id:'legacy-selected-51',kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:selected.map((paper,i)=>({id:`legacy-job-${i}`,paperId:paper.id,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Unknown supporting registry concept: Anion exchange membrane water electrolyzers (AEMWEs).',spentUSD:1.75,settings:copy(legacy.settings),vocabularyVersion:0,consolidation:{inputFingerprint:'old-name-protocol',value:{tags:[]},failed:true}};
-  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,8);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
+  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,9);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
   assert.equal(Object.keys(migrated.facts).length,97);assert.equal(migrated.run!.spentUSD,1.75);assert.deepEqual(migrated.settings,legacy.settings);assert.equal(migrateState(migrated),migrated);
   const ai=new AI();ai.handler=call=>{if(call.kind==='facts')throw new Error('Migration Resume must reuse the completed factual extraction');return taxonomyResponse(call.data);};
   const controller=new AppController(migrated,{host:h.host,ai,persist:async()=>{}});await controller.invoke('resume');await controller.waitForIdle();

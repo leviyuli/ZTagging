@@ -98,7 +98,7 @@ test('the core target never truncates or blocks supported distinct concepts',()=
 
 test('AI cannot bypass the core cap by creating a custom tag and DIY merge attempts stay quarantined',()=>{
   const facts=[fact()],diy=definition('diy','Detail',{custom:true});
-  assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X',{custom:true})]},facts,[]),/cannot create DIY/);
+  assert.throws(()=>createTaxonomyProposal({tags:[rawTag('x','X','X',{custom:true})]},facts,[]),/protected provenance/);
   const proposal=createTaxonomyProposal({tags:[rawTag('x','X','X')],merges:[{fromId:'diy',toKey:'x'}]},facts,[diy]);
   assert.ok(proposal.unresolvedMerges?.[0].reason.includes('cannot be merged'));
   assert.deepEqual(proposal.merges,[]);assert.equal(proposal.tags.find(tag=>tag.id==='diy')!.custom,true);assert.equal(diy.name,'Detail');

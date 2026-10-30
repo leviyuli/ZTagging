@@ -5,12 +5,13 @@ import {paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import {createRegistrySnapshot} from '../src/evidence.ts';
 import {createTaxonomyProposal,normalizeFacts,confirmProposalMapping} from '../src/taxonomy.ts';
+import {migrateTagShelves} from '../src/tag-shelves.ts';
 import {AtomicStore} from '../src/store.ts';
 import {upsertWarning} from '../src/warnings.ts';
 const copy=<T>(value:T):T=>structuredClone(value);
 function tag(index:number):TagDefinition{return {id:`tag-${index}`,name:`old topic ${index}`,fullName:`old topic ${index}`,description:`Scientific scope of old topic ${index}.`,facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'draft',broaderIds:[],relatedIds:[],matchingMode:'auto'};}
 function legacy(){
-  const state=initialState() as unknown as ReturnType<typeof initialState>&{schemaVersion:number};(state as any).schemaVersion=3;
+  const state=initialState() as unknown as ReturnType<typeof initialState>&{schemaVersion:number};(state as any).schemaVersion=3;delete state.tagShelves;
   const diy=state.tags[0];state.tags=[...Array.from({length:106},(_,index)=>tag(index)),diy];
   for(let index=0;index<97;index++){
     const name=`old topic ${index%28}`,paper:PaperRecord={id:`paper-${index}`,itemID:index+1,libraryID:1,key:`KEY${index}`,title:`Synthetic paper ${index}`,abstract:`This experiment studies ${name}.`,keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);state.papers[paper.id]=paper;
@@ -26,7 +27,7 @@ function legacy(){
 test('schema-four migration preserves 51 completed jobs, 97 exact facts, pending review proofs and the historical correction audit',()=>{
   const old=legacy(),before=JSON.stringify(old),proposal=copy(old.taxonomyProposal!),expectedSupport=copy(proposal.support);delete expectedSupport.orphan;
   const next=migrateState(old,{legacyBaseline:copy(old.tags)});
-  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,8);assert.equal(JSON.stringify(old),before);
+  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,9);assert.equal(JSON.stringify(old),before);
   assert.deepEqual(next.facts,old.facts);assert.equal(Object.keys(next.facts).length,97);assert.deepEqual(next.papers,old.papers);assert.deepEqual(next.nativeTags,old.nativeTags);
   assert.deepEqual(next.run,old.run);assert.equal(next.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(next.run!.spentUSD,1.75);assert.equal(next.run!.preparation,undefined);assert.equal(next.tagPreparation,undefined);
   assert.deepEqual(next.taxonomyProposal,{...proposal,support:expectedSupport});assert.equal(next.tags.length,29);assert.equal(next.taxonomyArchives.length,0);
@@ -57,6 +58,6 @@ test('migration writes an exact current-version backup and never falls back to a
   const old=legacy(),bytes=JSON.stringify(old,null,3)+'\r\n',files=new Map([['state.json',bytes],['state.json.bak',JSON.stringify(initialState())]]);let fail=true;
   const io={exists:async(path:string)=>files.has(path),read:async(path:string)=>files.get(path)!,writeAtomic:async(path:string,data:string)=>{if(path==='state.json'&&fail)throw new Error('Disk write failed');files.set(path,data);}};
   const store=new AtomicStore(io,'state.json',initialState,validState,value=>migrateState(value,{legacyBaseline:old.tags}),validLegacyState);
-  await assert.rejects(store.load(),/Disk write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v8.json'),bytes);assert.equal(store.recovered,false);
-  fail=false;const next=await store.load();assert.equal(next.schemaVersion,8);assert.equal(next.tags.length,29);assert.equal(files.has('state.json.pre-v8.1.json'),false);
+  await assert.rejects(store.load(),/Disk write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v9.json'),bytes);assert.equal(store.recovered,false);
+  fail=false;const next=await store.load();assert.equal(next.schemaVersion,9);assert.equal(next.tags.length,29);assert.equal(files.has('state.json.pre-v9.1.json'),false);
 });

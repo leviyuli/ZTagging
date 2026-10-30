@@ -6,13 +6,14 @@ import type {PaperRecord} from '../src/core.ts';
 import {createRegistrySnapshot} from '../src/evidence.ts';
 import {normalizeFacts} from '../src/taxonomy.ts';
 import {createTagSelection,nextSelectionRequests,noteSelectionDispatch,acceptSelectionResult} from '../src/tag-selection.ts';
+import {migrateTagShelves} from '../src/tag-shelves.ts';
 import {AtomicStore} from '../src/store.ts';
 import type {StateIO} from '../src/store.ts';
 import {upsertWarning} from '../src/warnings.ts';
 
 const copy=<T>(value:T):T=>structuredClone(value);
 function schemaSix(){
-  const old={...initialState(),schemaVersion:6};old.tags[0].status='approved';old.settings={...old.settings,provider:'deepseek',model:'retained-model',budgetUSD:5,inputPricePerMillion:1,outputPricePerMillion:2};
+  const old={...initialState(),schemaVersion:6};delete old.tagShelves;old.tags[0].status='approved';old.settings={...old.settings,provider:'deepseek',model:'retained-model',budgetUSD:5,inputPricePerMillion:1,outputPricePerMillion:2};
   for(let index=0;index<752;index++){
     const paper:PaperRecord={id:`1:SYNTHETIC${index}`,itemID:index+1,libraryID:1,key:`SYNTHETIC${index}`,title:`Synthetic retained experiment ${index}`,abstract:`Electrochemical impedance spectroscopy measures sample ${index}.`,keywords:['EIS'],fingerprint:''};paper.fingerprint=paperFingerprint(paper);old.papers[paper.id]=paper;old.nativeTags[paper.id]=[{tag:'Manual project',type:0}];old.facts[paper.id]=normalizeFacts({summary:`Retained scientific synopsis ${index}.`,needsPDF:false,concepts:[{name:'EIS',facet:'method',evidence:[{source:'abstract',text:paper.abstract}]}]},paper,'retained-provider','retained-extractor');
   }
@@ -32,17 +33,17 @@ function memoryStore(original:Uint8Array){
 function bytes(value:unknown){return new Uint8Array([0xef,0xbb,0xbf,...new TextEncoder().encode(JSON.stringify(value,null,1)+'\r\n')]);}
 
 test('migration from schema six to the current schema preserves a selected 744-job, 752-fact selector-three generation without upgrading its planner',()=>{
-  const old=schemaSix(),original=copy(old),next=migrateState(old);assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,8);assert.deepEqual(next,{...original,schemaVersion:8});assert.deepEqual(old,original);assert.equal(Object.keys(next.facts).length,752);assert.equal(next.run!.jobs.filter(job=>job.status==='completed').length,744);assert.equal(next.run!.selection!.policyVersion,3);assert.deepEqual(next.run!.selection,original.run!.selection);assert.deepEqual(next.run!.selectionReplies,original.run!.selectionReplies);assert.equal(next.run!.spentUSD,1.75);assert.equal(migrateState(next),next);
+  const old=schemaSix(),original=copy(old),next=migrateState(old);assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,9);assert.deepEqual(next,{...original,schemaVersion:9,tagShelves:migrateTagShelves(original.tags,original.tagShelves)});assert.deepEqual(old,original);assert.equal(Object.keys(next.facts).length,752);assert.equal(next.run!.jobs.filter(job=>job.status==='completed').length,744);assert.equal(next.run!.selection!.policyVersion,3);assert.deepEqual(next.run!.selection,original.run!.selection);assert.deepEqual(next.run!.selectionReplies,original.run!.selectionReplies);assert.equal(next.run!.spentUSD,1.75);assert.equal(migrateState(next),next);
 });
 
-test('loading schema six creates an immutable exact-byte pre-v8 backup before a schema-only write',async()=>{
-  const old=schemaSix(),original=bytes(old),memory=memoryStore(original),store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await store.load();assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(next,{...old,schemaVersion:8});assert.deepEqual(memory.files.get('state.json.pre-v8.json'),original);assert.deepEqual(memory.copies,['state.json.pre-v8.json']);assert.deepEqual(memory.writes,['state.json']);
+test('loading schema six creates an immutable exact-byte pre-v9 backup before the schema and shelf metadata are written',async()=>{
+  const old=schemaSix(),original=bytes(old),memory=memoryStore(original),store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await store.load();assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(next,{...old,schemaVersion:9,tagShelves:migrateTagShelves(old.tags,old.tagShelves)});assert.deepEqual(memory.files.get('state.json.pre-v9.json'),original);assert.deepEqual(memory.copies,['state.json.pre-v9.json']);assert.deepEqual(memory.writes,['state.json']);
   const reopened=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);assert.deepEqual(await reopened.load(),next);assert.equal(reopened.migrated,false);assert.equal(memory.copies.length,1);
 });
 
 test('a failed current-schema write preserves current work and older backups, and reuses its exact migration backup on retry',async()=>{
-  const old=schemaSix(),original=bytes(old),memory=memoryStore(original),bak=bytes({...initialState(),vocabularyVersion:99}),occupied=new TextEncoder().encode('An earlier distinct migration generation');memory.files.set('state.json.bak',bak);memory.files.set('state.json.pre-v8.json',occupied);memory.fail(true);const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/Synthetic atomic migration failure/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),original);assert.deepEqual(memory.files.get('state.json.bak'),bak);assert.deepEqual(memory.files.get('state.json.pre-v8.json'),occupied);assert.deepEqual(memory.files.get('state.json.pre-v8.1.json'),original);
-  memory.fail(false);const restarted=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await restarted.load();assert.deepEqual(next,{...old,schemaVersion:8});assert.deepEqual(memory.copies,['state.json.pre-v8.1.json']);assert.equal(memory.files.has('state.json.pre-v8.2.json'),false);
+  const old=schemaSix(),original=bytes(old),memory=memoryStore(original),bak=bytes({...initialState(),vocabularyVersion:99}),occupied=new TextEncoder().encode('An earlier distinct migration generation');memory.files.set('state.json.bak',bak);memory.files.set('state.json.pre-v9.json',occupied);memory.fail(true);const store=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/Synthetic atomic migration failure/);assert.equal(store.recovered,false);assert.deepEqual(memory.files.get('state.json'),original);assert.deepEqual(memory.files.get('state.json.bak'),bak);assert.deepEqual(memory.files.get('state.json.pre-v9.json'),occupied);assert.deepEqual(memory.files.get('state.json.pre-v9.1.json'),original);
+  memory.fail(false);const restarted=new AtomicStore(memory.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await restarted.load();assert.deepEqual(next,{...old,schemaVersion:9,tagShelves:migrateTagShelves(old.tags,old.tagShelves)});assert.deepEqual(memory.copies,['state.json.pre-v9.1.json']);assert.equal(memory.files.has('state.json.pre-v9.2.json'),false);
 });
 
 test('a schema-six application refuses schema-seven state and cannot overwrite it using an older backup',async()=>{

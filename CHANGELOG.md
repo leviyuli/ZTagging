@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0
+
+- Added optional paper-analysis reset with paid audit preservation; a fresh build cannot reuse cleared facts or old preparation checkpoints.
+- Added one batch action for validated routine suggestions, while exclusions, removals, uncertain meanings, and protected choices remain explicit.
+
+- Combined tag building and proposal review on one page. Existing native Zotero tags remain untouched and do not need an import or cleanup workflow. Earlier cleanup records stay in history; obsolete cleanup tasks do not resume.
+- Unified generated and researcher-authored definitions in one tag library and scientific-category navigator. All assignment targets share the same direct-tag budget and evidence checks; per-tag matching modes, protected names, manual choices, and legacy contextual relationships remain intact.
+- Added renamable shelves for organizing tag membership and choosing assignment targets. Context-only ancestor definitions do not become extra assignment targets.
+- Preserved old IDs, meanings, cached facts, paid replies and historical planner behavior. Fresh tag preparation records the unified tag policy without rewriting old provenance flags or scientific proof fingerprints.
+- Upgraded state to schema 9 with an immutable exact-byte pre-v9 backup. Migration performs no provider request or native-library change.
+
 ## 0.9.0
 
 - Added a full-library Keep list for exact native names. Every unchecked name, including Smart Tags assignments, is removed only through preview and Apply with undo. no_tag stays protected; earlier locks default to Keep and require explicit unchecking to override. Keep adds no new locks or permanent rejection.

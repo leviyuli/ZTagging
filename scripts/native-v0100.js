@@ -1,0 +1,58 @@
+/** TEST ONLY. Shelf selection and the combined workflow in the isolated Zotero profile. */
+import {initialState} from '../src/controller.ts';
+import {migrateTagShelves,createTagShelf} from '../src/tag-shelves.ts';
+import {normalizeFacts} from '../src/taxonomy.ts';
+
+const clone=value=>JSON.parse(JSON.stringify(value));
+const normalized=value=>String(value).replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+const button=(doc,label)=>[...doc.querySelectorAll('button')].find(control=>control.textContent===label||control.getAttribute('aria-label')===label);
+async function until(predicate,label){const start=Date.now();while(Date.now()-start<25_000){const value=predicate();if(value)return value;await new Promise(resolve=>setTimeout(resolve,25));}throw new Error('Native v0.10.0 timeout: '+label);}
+const definition=(id,name,description,facet,broaderIds=[])=>({id,name,fullName:description,description,facet,broaderIds,relatedIds:[],aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',matchingMode:'auto'});
+
+export async function runNativeV0100(app,check,config){
+  check('v0100IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile)&&normalized(Zotero.DataDirectory.dir)===normalized(config.data));
+  const before=clone(app.state),host=app.env.host,ai=app.env.ai,old={list:host.list,apply:host.apply,complete:ai.completeJson,session:ai.getSession,library:app.env.librarySnapshot};
+  const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),mode=navigator?.mode,columns=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal])),columnsBefore=columns();
+  const items=[],requests=[];let manager,writes=0;
+  const open=async page=>{if(manager&&!manager.closed)await until(()=>!manager.document.querySelector('.busy-indicator'),'previous action finished');manager=await Zotero.SmartTags.openManager({page});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready'&&!manager.document.querySelector('.busy-indicator'),'manager '+page);return manager.document;};
+  const click=async(doc,label)=>{const control=button(doc,label);if(!control||control.disabled)throw new Error('Missing v0100 control: '+label);control.click();await new Promise(resolve=>setTimeout(resolve,0));};
+  const choose=async(doc,id,label)=>{const control=await until(()=>{const control=doc.getElementById(id);return control&&!control.disabled&&!doc.querySelector('.busy-indicator')?control:false;},'ready selector '+id);control.click();const option=await until(()=>[...doc.querySelectorAll('[role="option"]')].find(control=>control.textContent.includes(label)),'shelf '+label);option.click();await new Promise(resolve=>setTimeout(resolve,0));};
+  try{
+    await navigator?.setMode('collections');app.state=initialState();Object.assign(app.state.settings,{provider:'chatgpt',model:'native-v0100-synthetic',autoAssign:false});
+    app.state.tags=[definition('v0100-fc','FC','fuel cell','system'),definition('v0100-aemfc','AEMFC','anion exchange membrane fuel cell','system',['v0100-fc']),definition('v0100-eis','EIS','electrochemical impedance spectroscopy','method')];app.state.taxonomyReady=true;app.state.vocabularyVersion=1;
+    app.state.tagShelves=createTagShelf(migrateTagShelves(app.state.tags),'Membrane cells','generated',['v0100-aemfc']);
+    for(let index=0;index<2;index++){const item=new Zotero.Item('journalArticle');item.libraryID=Zotero.Libraries.userLibraryID;item.setField('title',`V0100QA experiment ${index}`);item.setField('abstractNote','An anion exchange membrane fuel cell uses a gas diffusion layer and electrochemical impedance spectroscopy.');item.setTags([{tag:'V0100 legacy project',type:0},{tag:index?'V0100 miscellaneous':'mass transfer',type:0}]);await item.saveTx();items.push(item);}
+    const papers=await Promise.all(items.map(item=>host.read(item.id))),nativeBefore=JSON.stringify(items.map(item=>item.getTags()));
+    host.list=async scope=>clone(scope==='selected'?[papers[0]]:papers);host.apply=async function(patches,label){writes++;return old.apply.call(this,patches,label);};app.env.librarySnapshot=async()=>({papers:clone(papers),nativeTags:Object.fromEntries(items.map((item,index)=>[papers[index].id,item.getTags()]))});
+    ai.getSession=async()=>({connected:true,sharing:true,email:null,accountId:'native-synthetic',accounts:[]});
+    ai.completeJson=async(_system,prompt)=>{const data=JSON.parse(prompt.slice(prompt.lastIndexOf('INPUT_DATA_JSON:')+'INPUT_DATA_JSON:'.length));requests.push(data);let value;
+      if(data.approvedVocabulary)value={summary:'A membrane fuel cell experiment.',concepts:['AEMFC'],needsPDF:false,newTagCandidates:[],suggestions:[{tagId:'v0100-aemfc',confidence:'medium',match:'substantive',reason:'The abstract explicitly establishes this technology.',evidence:[{source:'abstract',text:papers[0].abstract}]}]};
+      else if(data.selectionPhase==='choosing'){const entry=data.conceptRegistry.find(entry=>entry.sources.some(source=>source.label==='GDL'));value={tags:[{key:'gdl',name:'GDL',fullName:'gas diffusion layer',description:'A porous component that supplies gas to an electrode.',facet:'component',aliases:[],parentKeys:[],relatedKeys:[],routingRefs:[entry.ref]}]};}
+      else if(data.requestedPairs)value={judgements:data.requestedPairs.map(pair=>({pairRef:pair.pairRef,relation:'equivalent',reason:'The supplied source explicitly establishes the component.'}))};
+      else throw new Error('Unexpected native v0100 provider request; repeated extraction is prohibited.');
+      return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:20,outputTokens:20},estimatedCostUSD:0};};
+    await app.save();let doc=await open('vocabulary');
+    const nav=doc.querySelector('.sidebar')??doc.querySelector('nav');check('v0100CombinedNavigationHasNoCleanupStep',!nav?.textContent.includes('Existing tags')&&!nav?.textContent.includes('Review & clean')&&!!button(doc,'Build tags'));
+    await choose(doc,'tag-library-shelf','Generated tags 1');await click(doc,'Rename shelf…');const name=doc.getElementById('tag-shelf-name');name.value='Electrochemistry';name.dispatchEvent(new manager.Event('input',{bubbles:true}));await click(doc,'Save shelf name');await until(()=>app.state.tagShelves.some(shelf=>shelf.name==='Electrochemistry'),'renamed shelf');
+    check('v0100ShelfRenameLeavesTagDefinitionsAndNativeDataAlone',app.state.tags.every(tag=>['FC','AEMFC','EIS'].includes(tag.name))&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&requests.length===0);
+    await choose(doc,'tag-library-shelf','Existing tags');check('v0100ExistingNamesVisibleWithoutDefinitionsOrCleanup',doc.body.textContent.includes('V0100 legacy project')&&doc.body.textContent.includes('mass transfer')&&!!button(doc,'Add meaning for mass transfer')&&requests.length===0&&!app.state.tags.some(tag=>tag.name==='mass transfer'));
+    doc=await open('assignment');if(button(doc,'Assignment setup'))await click(doc,'Assignment setup');await choose(doc,'assignment-tag-shelf','Membrane cells');await choose(doc,'assignment-scope','Selected papers');await click(doc,'Suggest paper tags');await until(()=>app.state.run?.kind==='tag'&&app.state.run.status==='idle','scoped assignment');await app.waitForIdle();
+    check('v0100AssignmentUsesShelfOnlyWithParentContext',requests.length===1&&requests[0].approvedVocabulary.length===1&&requests[0].approvedVocabulary[0].id==='v0100-aemfc'&&requests[0].contextVocabulary.some(tag=>tag.id==='v0100-fc')&&requests[0].noMatchPolicy.enabled===false&&writes===0);
+    const review=(await app.snapshot()).assignmentReview;await click(doc,'Accept remaining and finish');await until(()=>button(doc,'Apply and finish'),'single batch confirmation');await click(doc,'Apply and finish');await until(()=>app.state.assignmentRuns.find(run=>run.id===review.id)?.status==='finished','assignment finish');await app.waitForIdle();
+    check('v0100OneBatchFinishPreservesExistingTagsAndOtherPapers',items[0].getTags().some(tag=>tag.tag==='AEMFC')&&items[0].getTags().some(tag=>tag.tag==='mass transfer')&&!items[0].getTags().some(tag=>tag.tag==='FC')&&JSON.stringify(items[1].getTags())===JSON.parse(nativeBefore).map(tags=>JSON.stringify(tags))[1]&&writes===1);
+    await app.invoke('undo',{id:app.state.history[0].id});check('v0100ShelfAssignmentUndoRestoresExactNativeTags',JSON.stringify(items.map(item=>item.getTags()))===nativeBefore);
+    for(const paper of papers)app.state.facts[paper.id]=normalizeFacts({summary:'A gas diffusion layer is used.',concepts:[{name:'GDL',facet:'component',evidence:[{source:'abstract',text:paper.abstract}]}],needsPDF:false},paper,'retained-synthetic','retained-model');
+    await app.invoke('prepare-tags',{scope:'selected',mode:'extend'});await app.waitForIdle();doc=await open('cleanup');await until(()=>button(doc,'Apply tag list')&&!button(doc,'Apply tag list').disabled,'combined build ready');
+    check('v0100BuildAndReviewShareOnePage',app.state.tagPreparation?.status==='ready'&&doc.body.textContent.includes('GDL')&&!!button(doc,'Apply tag list')&&!doc.body.textContent.includes('DIY')&&writes===2);
+    await click(doc,'Apply tag list');await until(()=>!app.state.taxonomyProposal&&app.state.tagShelves.some(shelf=>shelf.tagIds.some(id=>app.state.tags.find(tag=>tag.id===id)?.name==='GDL')),'new generation shelf');await app.waitForIdle();
+    check('v0100ApplyingBuildCreatesShelfWithoutNativeWrites',app.state.tagShelves.filter(shelf=>shelf.kind==='generated').length===3&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&writes===2&&!app.state.settings.autoAssign&&columns()===columnsBefore);
+    const definitionsBeforeReset=JSON.stringify(app.state.tags),requestCount=requests.length;doc=await open('settings');const dataSection=await until(()=>[...doc.querySelectorAll('summary')].find(summary=>summary.textContent==='Data'),'settings data section');dataSection.click();await until(()=>button(doc,'Reset paper analysis…'),'reset control');await click(doc,'Reset paper analysis…');await until(()=>button(doc,'Reset paper analysis'),'reset confirmation');
+    check('v0100ResetWaitsForExplicitConfirmation',Object.keys(app.state.facts).length>0&&JSON.stringify(app.state.tags)===definitionsBeforeReset&&requests.length===requestCount);
+    await click(doc,'Reset paper analysis');await until(()=>Object.keys(app.state.facts).length===0&&!doc.querySelector('[role="dialog"]'),'cache reset');await app.waitForIdle();
+    check('v0100ResetKeepsDefinitionsNativeTagsAndPaidHistory',Object.keys(app.state.analyses).length===0&&JSON.stringify(app.state.tags)===definitionsBeforeReset&&JSON.stringify(items.map(item=>item.getTags()))===nativeBefore&&requests.length===requestCount&&writes===2&&app.state.analysisResetHistory.length===1&&columns()===columnsBefore);
+    return {shelvesRenamed:true,scopedAssignment:true,combinedBuildReview:true,nativeNamesPreserved:true,analysisReset:true,syntheticRequests:requests.length,realAIRequests:0,nativeWriteBatches:writes};
+  }finally{
+    if(app.state.run?.status==='running'){app.state.run.status='paused';app.abort?.abort();}await app.waitForIdle();if(manager&&!manager.closed)manager.close();host.list=old.list;host.apply=old.apply;ai.completeJson=old.complete;ai.getSession=old.session;app.env.librarySnapshot=old.library;
+    for(const item of items){host.mutating?.add(item.id);try{await item.eraseTx();}finally{host.mutating?.delete(item.id);}}app.state=before;await app.save();await navigator?.refresh();if(mode)await navigator?.setMode(mode);
+  }
+}

@@ -99,7 +99,7 @@ test('rejecting a no_tag suggestion prevents cached reruns and manual removals f
 });
 
 test('no_tag alone cannot satisfy the approved-vocabulary gate or the scientific pilot requirement',async()=>{
-  const empty=fixture();empty.state.tags=[getNoTagDefinition()];await assert.rejects(empty.app.invoke('tag',{scope:'library'}),/Approve a vocabulary|custom tag/i);assert.equal(empty.ai.calls.length,0);
+  const empty=fixture();empty.state.tags=[getNoTagDefinition()];await assert.rejects(empty.app.invoke('tag',{scope:'library'}),/Save a tag list|add a tag/i);assert.equal(empty.ai.calls.length,0);
   const h=fixture();await analyze(h,'pilot');const suggestion=h.state.suggestions.find(value=>value.tagId===NO_TAG_ID)!;await h.app.invoke('accept-suggestion',{id:suggestion.id});
   await assert.rejects(h.app.invoke('mark-pilot-reviewed'),/scientific tag suggestion/i);assert.equal(h.state.pilotReviewed,false);
   await assert.rejects(h.app.invoke('save-settings',{settings:{...h.state.settings,autoAssign:true}}),/pilot/i);assert.equal(h.state.settings.autoAssign,false);assert.equal(h.host.writes.length,0);

@@ -1,3 +1,4 @@
+import {migrateTagShelves} from '../src/tag-shelves.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState, migrateState, validLegacyState, validState } from '../src/controller.ts';
@@ -12,7 +13,7 @@ import { createConsolidationWork } from '../src/library-consolidation.ts';
 
 const copy = <T>(value:T):T => structuredClone(value);
 function schemaFour(total=97,selected=51) {
-  const old={...initialState(),schemaVersion:4};
+  const old={...initialState(),schemaVersion:4};delete old.tagShelves;
   for(let index=0;index<total;index++){
     const paper:PaperRecord={id:`1:SYNTH${index}`,itemID:index+1,libraryID:1,key:`SYNTH${index}`,title:`Synthetic measurement ${index}`,abstract:'Electrochemical impedance spectroscopy measures the electrode response.',keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);
     old.papers[paper.id]=paper;old.nativeTags[paper.id]=[{tag:'Manual project',type:0}];
@@ -31,8 +32,8 @@ function schemaFour(total=97,selected=51) {
 
 test('schema-five migration preserves the completed 51-paper rebuild, source identities, review proofs, budgets and native state',()=>{
   const old=schemaFour(),bytes=JSON.stringify(old),next=migrateState(old);
-  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,8);assert.equal(JSON.stringify(old),bytes);
-  const expected={...copy(old),schemaVersion:8,cleanup:[]};assert.deepEqual(next,expected);
+  assert.equal(validLegacyState(old),true);assert.equal(validState(next),true);assert.equal(next.schemaVersion,9);assert.equal(JSON.stringify(old),bytes);
+  const expected={...copy(old),schemaVersion:9,cleanup:[],tagShelves:migrateTagShelves(old.tags,old.tagShelves)};assert.deepEqual(next,expected);
   assert.equal(Object.keys(next.facts).length,97);assert.equal(next.run!.jobs.filter(job=>job.status==='completed').length,51);
   assert.equal(next.run!.preparation!.attempts,3);assert.equal(next.run!.spentUSD,1.75);assert.equal(next.settings.autoAssign,true);assert.equal(next.pilotReviewed,true);
   assert.equal(migrateState(next),next);assert.equal(next.paperInputs,undefined);assert.equal(next.maintenanceTasks,undefined);
@@ -72,10 +73,10 @@ test('migration retains a 744-paper consolidation checkpoint and uninterpreted p
   const badBudget=copy(next);badBudget.maintenanceTasks![0].run.settings.maxOutputTokens=NaN;assert.equal(validState(badBudget),false);
 });
 
-test('migration creates an exact version-eight backup and never replaces a valid generation with its older bak on write failure',async()=>{
+test('migration creates an exact version-nine backup and never replaces a valid generation with its older bak on write failure',async()=>{
   const old=schemaFour(),bytes=JSON.stringify(old,null,2)+'\r\n',files=new Map([['state.json',bytes],['state.json.bak',JSON.stringify(initialState())]]);let rejectWrite=true;
   const io={exists:async(path:string)=>files.has(path),read:async(path:string)=>files.get(path)!,writeAtomic:async(path:string,value:string)=>{if(path==='state.json'&&rejectWrite)throw new Error('Atomic migration write failed');files.set(path,value);}};
   const store=new AtomicStore(io,'state.json',initialState,validState,migrateState,validLegacyState);
-  await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v8.json'),bytes);assert.equal(store.recovered,false);
-  rejectWrite=false;const next=await store.load();assert.equal(next.schemaVersion,8);assert.deepEqual(next.facts,old.facts);assert.equal(files.has('state.json.pre-v8.1.json'),false);
+  await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v9.json'),bytes);assert.equal(store.recovered,false);
+  rejectWrite=false;const next=await store.load();assert.equal(next.schemaVersion,9);assert.deepEqual(next.facts,old.facts);assert.equal(files.has('state.json.pre-v9.1.json'),false);
 });

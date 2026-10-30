@@ -2,7 +2,7 @@ import type { Evidence, TagDefinition } from './core.ts';
 
 export const NO_TAG_ID = 'smart-tags:no-tag';
 export const NO_TAG_NAME = 'no_tag';
-export const NO_TAG_ANALYSIS_INSTRUCTIONS = 'Additional response fields are {"noMatch":false,"noMatchReason":"explanation when outside the current vocabulary","noMatchEvidence":[{"source":"title|abstract|pdf","text":"exact supporting quote"}]}. Set noMatch=true only when noMatchPolicy.enabled is true, adequate paper evidence establishes the topic, and none of the supplied core or DIY definitions is supported. This is an outside-vocabulary suggestion for researcher review, not a missing-evidence or processing-failure fallback. When context is missing, uncertain, unreadable, or still needs PDF evidence, keep noMatch=false and request that evidence. Do not put no_tag into suggestions or newTagCandidates. For a supported noMatch outcome return empty suggestions; separately retain meaningful uncovered topics and their supporting quotations for later review. Never infer noMatch from an empty response or the absence of metadata.';
+export const NO_TAG_ANALYSIS_INSTRUCTIONS = 'Additional response fields are {"noMatch":false,"noMatchReason":"explanation when outside the current vocabulary","noMatchEvidence":[{"source":"title|abstract|pdf","text":"exact supporting quote"}]}. Set noMatch=true only when noMatchPolicy.enabled is true, adequate paper evidence establishes the topic, and none of the supplied approved definitions is supported. This is an outside-vocabulary suggestion for researcher review, not a missing-evidence or processing-failure fallback. When context is missing, uncertain, unreadable, or still needs PDF evidence, keep noMatch=false and request that evidence. Do not put no_tag into suggestions or newTagCandidates. For a supported noMatch outcome return empty suggestions; separately retain meaningful uncovered topics and their supporting quotations for later review. Never infer noMatch from an empty response or the absence of metadata.';
 
 export function getNoTagDefinition(): TagDefinition {
   return {
@@ -10,7 +10,7 @@ export function getNoTagDefinition(): TagDefinition {
     description: 'Outside the current tag list, or deliberately excluded by the researcher.',
     facet: 'phenomenon', custom: true, status: 'approved', matchingMode: 'manual',
     aliases: [], inclusions: ['An explicit reviewed outside-vocabulary decision or researcher opt-out.'],
-    exclusions: ['Missing or unreadable evidence.', 'Failed or unfinished analysis.', 'A paper with a supported scientific core or DIY match.'],
+    exclusions: ['Missing or unreadable evidence.', 'Failed or unfinished analysis.', 'A paper with a supported scientific match.'],
     examples: [], broaderIds: [], relatedIds: [],
   };
 }

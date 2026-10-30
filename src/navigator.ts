@@ -66,7 +66,7 @@ export function conceptLocations(tag: DisplayTag, definitions: DisplayTag[]): st
     const parents = current.custom ? detailContextIds(current, [...byID.values()]) : current.broaderIds;
     const prefixes = parents.flatMap(parent => paths(parent, seen));
     return prefixes.length ? prefixes.map(prefix => `${prefix} › ${current.name}`)
-      : [`${current.custom ? 'Details' : CATEGORY_LABELS[current.facet]} › ${current.name}`];
+      : [`${CATEGORY_LABELS[current.facet]} › ${current.name}`];
   };
   return [...new Set(paths(tag.id))];
 }
@@ -102,7 +102,6 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   let error = '';
   const expanded = new Set<string>();
   const counts = new Map<string, number>();
-  let detailExpanded = false;
   let observerID: any;
   let unsubscribe = () => {};
   const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -273,16 +272,10 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     } else {
       for (const facet of Object.keys(CATEGORY_LABELS) as (keyof typeof CATEGORY_LABELS)[]) {
         const all = definitions();
-        const roots = all.filter(tag => !tag.custom && !tag.builtin && tag.facet === facet && !tag.broaderIds.some(id => all.some(value => value.id === id && !value.custom && !value.builtin))).sort((a, b) => a.name.localeCompare(b.name));
+        const roots = all.filter(tag => !tag.builtin && tag.facet === facet && (tag.custom || !tag.broaderIds.some(id => all.some(value => value.id === id && !value.custom && !value.builtin)))).sort((a, b) => a.name.localeCompare(b.name));
         if (!roots.length) continue;
         tree.append(el('h3', 'smart-tags-category', CATEGORY_LABELS[facet]));
         for (const tag of roots) renderConcept(tag, tree);
-      }
-      const details = definitions().filter(tag => tag.custom && !tag.builtin).sort((a, b) => a.name.localeCompare(b.name));
-      if (details.length) {
-        const heading = button(`${detailExpanded ? '⌄' : '›'} Shared details`, () => { detailExpanded = !detailExpanded; render(); }, 'smart-tags-category smart-tags-detail-heading');
-        heading.setAttribute('aria-expanded', String(detailExpanded)); tree.append(heading);
-        if (detailExpanded) for (const tag of details) renderConcept(tag, tree);
       }
       if (!definitions().some(tag => !tag.builtin)) tree.append(el('p', 'smart-tags-empty', 'Prepare and apply a tag list in Smart Tags to browse your papers here.'));
       const noTag = definitions().find(tag => tag.builtin === 'no_tag');
@@ -294,10 +287,10 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     content.append(tree);
     const actions = el('div', 'smart-tags-actions');
     const context = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.custom && !tag.builtin)).find(Boolean);
-    actions.append(button('＋ Create detail', () => {
+    actions.append(button('＋ Create tag', () => {
       if (options.onCreateDetail) options.onCreateDetail(context?.id); else options.openManager?.();
     }));
-    const selectedDetail = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && tag.custom && !tag.builtin)).find(Boolean);
+    const selectedDetail = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.builtin)).find(Boolean);
     if (selectedDetail) {
       actions.append(el('div', 'smart-tags-detail-title', selectedDetail.name));
       actions.append(button('Assign to selected papers', async () => {

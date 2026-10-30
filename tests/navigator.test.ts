@@ -126,7 +126,7 @@ test('selection expands independently, contextual details stay compound, and cle
   assert.ok(h.label('AEMFC'));
   h.label('FC')!.fire('click'); await h.flush();
   assert.deepEqual(navigator.filter, { mode: 'all', selections: [{ conceptId: 'fc' }] });
-  h.text('＋ Create detail')!.fire('click'); await h.flush(); assert.deepEqual(created, ['fc']);
+  h.text('＋ Create tag')!.fire('click'); await h.flush(); assert.deepEqual(created, ['fc']);
   h.label('RCL within FC')!.fire('click'); await h.flush();
   h.text('Any')!.fire('click'); await h.flush();
   assert.equal(navigator.filter.mode, 'any');
@@ -254,4 +254,8 @@ test('shared-detail locations include outgoing, incoming and legacy contexts wit
   assert.equal(h.nodes().filter(node => node.className === 'smart-tags-search-result').length, 1);
   assert.ok(h.nodes().some(node => node.className === 'smart-tags-location' && node.textContent === 'Systems › FC › Reverse detail'));
   await navigator.destroy();
+});
+
+test('all saved definitions appear directly under scientific categories and offer the same actions',async()=>{
+ const h=harness(),navigator=mountNavigator(h.win,h.api,{onEditTag(){}});await navigator.refresh();assert.ok(h.label('RCL'),'A researcher-authored definition is visible without opening a separate class.');assert.doesNotMatch(h.sidebar.textContent,/Shared details|Your topics|User details/);assert.ok(h.text('＋ Create tag'));h.label('FC')!.fire('click');await h.flush();assert.ok(h.text('Assign to selected papers'));assert.ok(h.text('Preview matches'));assert.ok(h.text('Edit definition'));h.text('Assign to selected papers')!.fire('click');await h.flush();assert.deepEqual(h.invocations[0],['assign-detail',{tagId:'fc',scope:'selected',itemIDs:[2]}]);await navigator.destroy();
 });

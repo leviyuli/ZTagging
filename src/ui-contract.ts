@@ -116,6 +116,9 @@ export interface DisplayAssignmentReview {
   needsReview: number;
   lowRejected: number;
   acceptedIds: string[];
+  bulkAcceptCount?: number;
+  bulkAcceptIds?: string[];
+  needsChoiceCount?: number;
   report?: { topics: { id: string; name: string; paperIds: string[]; reason?: string; resolved?: boolean }[]; paperIds: string[] };
 }
 export interface ManagerSnapshot {
@@ -128,10 +131,12 @@ export interface ManagerSnapshot {
     assignmentPaperCount: number;
     assignedPaperCount: number;
     assignmentPilotReady?: boolean;
+    assignmentTagShelfId?: string;
   };
   navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
   assignmentReview?: DisplayAssignmentReview;
   assignmentReviews?: DisplayAssignmentReview[];
+  tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean }[] }[];
   diyComparison?: {
     id: string;
     status: 'ready' | 'queued' | 'running' | 'paused';
@@ -165,6 +170,7 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    taskLabel?: string;
     canUseFasterBuild?: boolean;
     switchingToFasterBuild?: boolean;
     kind?: 'rebuild' | 'tag';

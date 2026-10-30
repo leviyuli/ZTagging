@@ -196,13 +196,13 @@ test("bibliography-only PDF hits do not support a tag", () => {
   assert.equal(validateEvidence(valid, [{ source: "pdf", text: "We measure catalyst layer resistance in a fuel cell." }]).length, 1);
 });
 
-test("core suggestions have a maximum of five, custom tags are additional, and no quota is padded", () => {
+test("researcher and generated tags share one five-tag suggestion budget without padding weak evidence", () => {
   const p = paper();
-  const defs = Array.from({ length: 9 }, (_, n) => definition({ id: `tag-${n}`, name: `Topic ${n}`, custom: n >= 6 }));
+  const defs = Array.from({ length: 9 }, (_, n) => definition({ id: `tag-${n}`, name: `Topic ${n}`, custom: n % 2 === 0 }));
   const raw = { ...analysis(), suggestions: defs.map(tag => analysis(tag.id).suggestions[0]) };
   const result = validateSuggestions(p, defs, raw, { vocabularyVersion: 1 });
-  assert.equal(result.suggestions.length, 8);
-  assert.equal(result.suggestions.filter(s => !defs.find(t => t.id === s.tagId)!.custom).length, 5);
+  assert.equal(result.suggestions.length, 5);
+  assert.deepEqual(result.suggestions.map(s=>s.tagId),defs.slice(0,5).map(tag=>tag.id));
   const sparse = validateSuggestions(p, defs, { ...analysis(), suggestions: [raw.suggestions[0]] }, { vocabularyVersion: 1 });
   assert.equal(sparse.suggestions.length, 1);
 });
@@ -369,5 +369,17 @@ test('new DIY definitions default to suggestion matching while legacy optional m
 test('assignment prompts include the full canonical meaning and typed hierarchy metadata',()=>{
   const p=paper(),tag=definition({fullName:'Catalyst-layer resistance',broaderIds:['transport'],relatedIds:['cl'],matchingMode:'suggest'});
   const prompt=buildAnalysisPrompt(p,[tag]);
-  assert.ok(prompt.includes('"fullName":"Catalyst-layer resistance"'));assert.ok(prompt.includes('"broaderIds":["transport"]'));assert.ok(prompt.includes('"relatedIds":["cl"]'));assert.ok(prompt.includes('most specific supported core'));
+  assert.ok(prompt.includes('"fullName":"Catalyst-layer resistance"'));assert.ok(prompt.includes('"broaderIds":["transport"]'));assert.ok(prompt.includes('"relatedIds":["cl"]'));assert.ok(prompt.includes('most specific supported'));
+});
+
+test('a researcher-authored subtype suppresses its generated parent under the same direct-assignment rules',()=>{
+ const p=paper(),defs=[definition({id:'parent',name:'transport response',custom:false}),definition({id:'child',name:'proton transport',custom:false,broaderIds:['parent'],matchingMode:'auto'})],raw={...analysis(),suggestions:defs.map(tag=>analysis(tag.id).suggestions[0])},result=validateSuggestions(p,defs,raw,{vocabularyVersion:1});assert.deepEqual(result.suggestions.map(suggestion=>suggestion.tagId),['child']);assert.equal(result.suggestions[0].autoEligible,true);const prompt=buildAnalysisPrompt(p,defs),data=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);assert.ok(data.approvedVocabulary.every((tag:Record<string,unknown>)=>!Object.hasOwn(tag,'custom')));assert.ok(!/\bDIY\b|custom tags|core tags/.test(prompt));
+});
+
+test('legacy contextual researcher links do not suppress a separately supported parent assignment',()=>{
+ const p=paper(),defs=[definition({id:'parent',name:'transport response',custom:false}),definition({id:'context-detail',name:'proton transport',custom:true,broaderIds:['parent'],matchingMode:'suggest'})],result=validateSuggestions(p,defs,{...analysis(),suggestions:defs.map(tag=>analysis(tag.id).suggestions[0])},{vocabularyVersion:1});assert.deepEqual(new Set(result.suggestions.map(suggestion=>suggestion.tagId)),new Set(['parent','context-detail']));
+});
+
+test('selected tag prompts include context-only ancestors without making their IDs assignable',()=>{
+ const p=paper(),selected=definition({id:'child',name:'proton transport',custom:true,broaderIds:['parent']}),parent=definition({id:'parent',name:'transport response',custom:false}),prompt=buildAnalysisPrompt(p,[selected],{contextDefinitions:[parent,selected]}),data=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);assert.deepEqual(data.approvedVocabulary.map((tag:{id:string})=>tag.id),['child']);assert.deepEqual(data.contextVocabulary.map((tag:{id:string})=>tag.id),['parent']);assert.match(prompt,/NOT approved assignment targets/);assert.equal(JSON.parse(buildAnalysisPrompt(p,[selected]).split('INPUT_DATA_JSON:\n')[1]).contextVocabulary,undefined);assert.equal(validateSuggestions(p,[selected],{...analysis(),suggestions:[analysis('parent').suggestions[0]]},{vocabularyVersion:1}).suggestions.length,0);
 });

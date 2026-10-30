@@ -18,7 +18,7 @@ async function sha256(bytes){return [...new Uint8Array(await crypto.subtle.diges
 
 async function verifyNativePackageUpgrade(check,config){
   const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
-  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.8.1',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
+  const id='smart-tags@zotero-local.org',expected=Zotero.SmartTags.version,oldVersion='0.9.0',oldPath=PathUtils.join(config.root,'dist',`smart-tags-${oldVersion}.xpi`),newPath=PathUtils.join(config.root,'dist',`smart-tags-${expected}.xpi`);
   const oldManifest=packageManifest(oldPath),newManifest=packageManifest(newPath),oldSettings=oldManifest.applications.zotero,newSettings=newManifest.applications.zotero;
   check('v050UpdatePackagesKeepStableIdentity',oldManifest.version===oldVersion&&newManifest.version===expected&&oldSettings.id===id&&newSettings.id===id);
   check('v050UpdateURLRemainsSecureAndStable',newSettings.update_url.startsWith('https://')&&newSettings.update_url===oldSettings.update_url&&newSettings.strict_min_version==='10.0.6'&&newSettings.strict_max_version==='10.0.*');
@@ -63,12 +63,12 @@ async function verifyNativePackageUpgrade(check,config){
 export async function runNativeV050(app,check,config){
   check('v050IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v050IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
-  check('v050StateSchema',app.state.schemaVersion===8);
+  check('v050StateSchema',app.state.schemaVersion === 9);
   const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldComplete=ai.completeJson,oldLookup=host.lookupMetadata;
   const main=Zotero.getMainWindow(),oldMode=Zotero.SmartTags.getNavigator(main)?.mode;
   const columnState=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal]));
   const columns=columnState();let item,manager,requests=0,metadataLookups=0,result;
-  const open=async page=>{manager=await Zotero.SmartTags.openManager({page});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready','manager ready');return manager.document;};
+  const open=async page=>{if(manager&&!manager.closed)await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready'&&!manager.document.querySelector('.busy-indicator'),'previous manager action finished');manager=await Zotero.SmartTags.openManager({page});await until(()=>manager.document.getElementById('app')?.getAttribute('data-smart-tags-state')==='ready'&&!manager.document.querySelector('.busy-indicator'),'manager ready');return manager.document;};
   const click=async(doc,label)=>{const control=button(doc,label);if(!control||control.disabled)throw new Error('Native v0.5.0 missing enabled control: '+label);control.click();await new Promise(resolve=>setTimeout(resolve,0));await until(()=>!button(doc,label)?.disabled,'action '+label);};
   try{
     const recoveredAbstract='This fuel cell study measures membrane resistance.';
@@ -84,21 +84,14 @@ export async function runNativeV050(app,check,config){
     await until(()=>Zotero.SmartTags.getNavigator(main)?.mode==='tags'&&main.document.getElementById('smart-tags-navigator')!==oldNavigatorRoot&&main.document.querySelectorAll('#smart-tags-navigator').length===1,'restored Smart Tags navigation');
     check('v050NativeNavigationRestoresOnce',main.document.getElementById('smart-tags-navigator').textContent.includes('Smart Tags')&&columnState()===columns);
 
-    await app.invoke('refresh-existing-tags',{});await open('existing-tags');
-    await click(doc,'Compare names');
-    await until(()=>doc.querySelector('.existing-tag-row'),'existing tag rows');
-    const search=doc.getElementById('existing-tag-search');search.value='V050 obsolete FC';search.dispatchEvent(new manager.Event('input',{bubbles:true}));
+    await app.invoke('refresh-existing-tags',{});
     const display=await app.snapshot(),shownGroup=display.existingTags?.rows.find(row=>row.name==='V050 obsolete FC');
     if(!shownGroup)throw new Error('Native v0.5.0 existing tag scan omitted its synthetic name.');
-    const checkbox=doc.getElementById('existing-'+shownGroup.id);
-    check('v050ExistingNamesStartUnselected',checkbox&&!checkbox.checked&&button(doc,'Review paper changes').disabled);
-    checkbox.click();await until(()=>!button(doc,'Review paper changes').disabled,'matched name selected');
-    const nativeTags=JSON.stringify(item.getTags());await click(doc,'Review paper changes');
-    await until(()=>button(doc,'Apply reviewed tag changes'),'reviewed native changes');
-    check('v050ExistingNativePreviewIsReadOnly',JSON.stringify(item.getTags())===nativeTags&&doc.body.textContent.includes('Before:')&&doc.body.textContent.includes('After:')&&doc.body.textContent.includes('V050 research topic'));
-    await click(doc,'Create DIY tags…');
-    check('v050DIYShowsConsentBeforeAI',doc.body.textContent.includes('uses your ChatGPT allowance or API budget')&&!!button(doc,'Analyze and create DIY tags')&&requests===0);
-    await click(doc,'Cancel');
+    check('v050CompatibilityInventoryRecognizesAliasWithoutSelection',shownGroup.status==='match'&&shownGroup.targetNames.includes('FC')&&!display.existingTags.preview&&requests===0);
+    const nativeTags=JSON.stringify(item.getTags());await app.invoke('preview-existing-tag-changes',{selections:[{groupId:shownGroup.id,action:'replace',targetId:'v050-fc'}]});
+    const preview=(await app.snapshot()).existingTags?.preview,change=preview?.changes.find(change=>change.paperId===paper.id);
+    check('v050ExistingNativePreviewIsReadOnly',!!preview&&!!change&&change.before.includes('V050 obsolete FC')&&change.after.includes('FC')&&JSON.stringify(item.getTags())===nativeTags&&requests===0);
+    check('v050CompatibilityPreviewPreservesOtherManualNativeTags',change.after.includes('V050 research topic')&&!change.after.includes('V050 obsolete FC')&&JSON.stringify(item.getTags())===nativeTags);
 
     await app.invoke('recheck-paper-inputs',{id:paper.id});await open('activity');
     await until(()=>doc.querySelector('.paper-attention-row'),'paper attention');
