@@ -83,6 +83,7 @@ export interface DisplayTagQuestion {
 /** Human decisions and prepared tags; source identities stay in the preparation module. */
 export interface DisplayTagPreparation {
   id: string;
+  verificationScope?: 'representative' | 'exhaustive';
   status: 'checking' | 'questions' | 'ready' | 'failed';
   tags: DisplayTag[];
   questions: DisplayTagQuestion[];
@@ -138,11 +139,18 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    canUseFasterBuild?: boolean;
+    switchingToFasterBuild?: boolean;
     kind?: 'rebuild' | 'tag';
     phase?: 'reading' | 'organizing' | 'choosing' | 'mapping' | 'checking' | 'ready';
     phaseProgress?: { completed: number; total: number; label: string };
     selection?: {
       failed?: boolean;
+      verificationScope?: 'representative' | 'exhaustive';
+      tagsPrepared?: number;
+      tagsTotal?: number;
+      examplesChecked?: number;
+      examplesTotal?: number;
       sourceCompleted: number;
       sourceTotal: number;
       completedRequests: number;

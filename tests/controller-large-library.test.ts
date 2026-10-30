@@ -9,11 +9,11 @@ import type {PaperFacts} from '../src/taxonomy.ts';
 import type {CompletionResult,ProviderSettings} from '../src/providers.ts';
 import {ProviderError} from '../src/providers.ts';
 import {createConsolidationWork,nextConsolidationRequest,acceptConsolidationResult} from '../src/library-consolidation.ts';
-import {nextSelectionRequests,resumeTagSelection,SELECTION_MAX_REQUESTS} from '../src/tag-selection.ts';
+import {createTagSelection,nextSelectionRequests,resumeTagSelection,SELECTION_MAX_REQUESTS} from '../src/tag-selection.ts';
 
 const clone=<T>(value:T):T=>structuredClone(value);
 interface Source {sourceId:string;registryId:string;name:string}
-interface Input {requestId:string;selectionPhase:'choosing'|'mapping';conceptRegistry?:{registryId:string;sources:{label:string;facet:string}[]}[];tags?:TagDefinition[];sources?:Source[]}
+interface Input {requestId:string;selectionPhase:'choosing'|'mapping';conceptRegistry?:{registryId:string;sources:{label:string;facet:string}[]}[];tags?:TagDefinition[];sources?:Source[];requestedPairs?:{tagId:string;sourceId:string;registryId:string}[]}
 function library(total=64,concepts=4):AppState {
   const state=initialState();state.settings.model='synthetic-model';
   for(let index=0;index<total;index++){
@@ -25,12 +25,18 @@ function library(total=64,concepts=4):AppState {
 }
 function reply(data:Input){
   if(data.selectionPhase==='choosing')return {tags:data.conceptRegistry!.slice(0,2).map((entry,index)=>({key:`chosen-${index}`,name:entry.sources[0].label,fullName:entry.sources[0].label,description:`Scientific scope of ${entry.sources[0].label}.`,facet:entry.sources[0].facet,aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[entry.registryId]})),merges:[],excluded:[]};
+  if(data.requestedPairs)return {judgements:data.requestedPairs.map(pair=>({tagId:pair.tagId,registryId:pair.registryId,sourceIds:[pair.sourceId],relation:data.tags!.find(tag=>tag.id===pair.tagId)!.name===data.sources!.find(source=>source.sourceId===pair.sourceId)!.name?'equivalent':'unrelated',reason:'This exact requested pair is checked against its full factual quotation.'}))};
   const judgements:{tagId:string;registryId:string;sourceIds:string[];relation:string;reason:string}[]=[],outside:{sourceIds:string[];disposition:string;reason:string}[]=[];
   for(const source of data.sources!){const tag=data.tags!.find(tag=>tag.name===source.name);if(tag)judgements.push({tagId:tag.id,registryId:source.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The original quotation directly establishes this selected phenomenon.'});else outside.push({sourceIds:[source.sourceId],disposition:'outside-core',reason:'This retained detail is outside the compact chosen core.'});}
   return {judgements,outside};
 }
 interface Options {respond?:(input:Input,number:number,signal?:AbortSignal)=>unknown|Promise<unknown>;save?:(state:AppState)=>void|Promise<void>;cost?:number}
 function harness(state=library(),options:Options={}){
+  if(state.run&&!state.run.selection){
+    const facts=Object.values(state.facts).sort((a,b)=>a.paperId.localeCompare(b.paperId)),existing=state.tags.filter(tag=>tag.custom||tag.status==='approved'),snapshot=state.run.consolidation?.snapshot??createRegistrySnapshot(facts,state.evidenceCatalog);
+    state.run.selection=createTagSelection(facts,existing,snapshot,{plannerVersion:3,targetCount:state.run.settings.coreConceptLimit??60,maxOutputTokens:state.run.settings.maxOutputTokens,baseVersion:state.vocabularyVersion});
+    state.run.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:state.run.settings.coreConceptLimit??60,baseVersion:state.vocabularyVersion});
+  }
   const calls:{id:string;phase:string;bytes:number}[]=[],saved:AppState[]=[];let running=0,peak=0,writes=0,pdf=0;
   const ai:ControllerEnvironment['ai']={async completeJson(_system:string,prompt:string,_settings:ProviderSettings,signal?:AbortSignal):Promise<CompletionResult>{
     const input:Input=JSON.parse(prompt.slice(prompt.lastIndexOf('INPUT_DATA_JSON:')+'INPUT_DATA_JSON:'.length));assert.ok(input.selectionPhase,'Cached paper facts must not trigger extraction');const bytes=new TextEncoder().encode(prompt).length;assert.ok(bytes<=90_000);calls.push({id:input.requestId,phase:input.selectionPhase,bytes});running++;peak=Math.max(peak,running);
@@ -45,7 +51,7 @@ function legacyCheckpoint(state:AppState){
   state.run!.consolidation={protocolVersion:2,generationId:'legacy-generation',inputFingerprint:'legacy-input',snapshot,candidateIds:{},correctionAttempts:0,phase:'generating',work};
 }
 
-test('cached large-library work becomes one global choice and a finite mapping pass with at most two requests',async()=>{
+test('a retained planner3 build keeps its exhaustive mapping contract with at most two requests',async()=>{
   const h=harness(),facts=fingerprint(h.state.facts),tags=fingerprint(h.state.tags),native=fingerprint(h.state.nativeTags);await resume(h);
   assert.equal(h.state.run!.status,'idle',h.state.run!.message);assert.equal(h.state.run!.selection!.status,'ready');assert.equal(h.calls.filter(call=>call.phase==='choosing').length,1);assert.ok(h.calls.filter(call=>call.phase==='mapping').length>1);assert.equal(h.peak(),2);assert.equal(h.state.tagPreparation!.status,'ready');assert.equal(Object.keys(h.state.run!.selection!.sourceLedger).length,256);assert.ok(Object.values(h.state.run!.selection!.sourceLedger).every(value=>value.status!=='pending'));assert.equal(h.state.taxonomyProposal!.tags.filter(tag=>!tag.custom).length,2);assert.equal(fingerprint(h.state.facts),facts);assert.equal(fingerprint(h.state.tags),tags);assert.equal(fingerprint(h.state.nativeTags),native);assert.equal(h.writes(),0);assert.equal(h.pdf(),0);assert.equal(validState(h.state),true);
   const display=await h.controller.snapshot();assert.equal(display.queue.selection!.sourceTotal,256);assert.equal(display.queue.selection!.sourceCompleted,256);assert.ok(h.state.run!.selection!.tasks.every(task=>task.attempts.every(attempt=>typeof attempt.raw==='string')),'Original provider reply text is retained for replay');

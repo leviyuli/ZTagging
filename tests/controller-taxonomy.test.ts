@@ -39,6 +39,11 @@ function taxonomyResponse(data:any){
 }
 function assignmentResponse(data:any){return {summary:'Classification of supported systems and methods.',concepts:[],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.filter((t:any)=>t.name==='FC'||t.facet!=='system'||data.paper.abstract.toLowerCase().includes(t.fullName.toLowerCase())).map((t:any)=>({tagId:t.id,reason:'The source directly supports this scientific concept.',confidence:'high',match:'substantive',evidence:[{source:'abstract',text:data.paper.abstract}]}))};}
 function mappingResponse(data:any){
+  if(data.requestedPairs)return {judgements:data.requestedPairs.map((pair:any)=>{
+    const source=data.sources.find((value:any)=>value.sourceId===pair.sourceId),tag=data.tags.find((value:any)=>value.id===pair.tagId);assert.ok(source);assert.ok(tag);
+    const exact=[tag.name,tag.fullName].filter(Boolean).some((label:string)=>canonicalTagKey(label)===canonicalTagKey(source.name)),subtype=[PEM,AEM].includes(source.name)&&tag.name==='FC',relation=exact?'equivalent':subtype?'subtype':'unrelated';
+    return {tagId:pair.tagId,registryId:pair.registryId,sourceIds:[pair.sourceId],relation,reason:relation==='unrelated'?'This exact source establishes a different scientific concept.':'The exact quotation establishes this meaning or its explicit technology subtype.'};
+  })};
   const judgements:any[]=[],outside:any[]=[];
   for(const source of data.sources){const entry=data.permittedRegistry.find((value:any)=>value.sourceIds.includes(source.sourceId)),matches=data.tags.filter((tag:any)=>[tag.name,tag.fullName].filter(Boolean).some((name:string)=>canonicalTagKey(name)===canonicalTagKey(source.name)));if(matches.length===1)judgements.push({tagId:matches[0].id,registryId:entry.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The actual source quotation establishes this precise scientific meaning.'});else outside.push({sourceIds:[source.sourceId],disposition:'outside-core',reason:'The supplied source does not establish one of the chosen core topics.'});}
   return {judgements,outside};
@@ -72,7 +77,8 @@ test('50-paper rebuild stages one supported global taxonomy without changing 107
   assert.deepEqual(h.state.tags,before);assert.equal(h.state.taxonomyProposal!.tags.filter(t=>!t.custom).length,4);
   assert.deepEqual(h.state.taxonomyProposal!.issues,[]);assert.equal(h.state.taxonomyProposal!.paperIds.length,50);
   assert.equal(h.ai.calls.filter(c=>c.kind==='facts').length,50);assert.equal(h.ai.calls.filter(c=>c.kind==='taxonomy').length,1);
-  const fc=h.state.taxonomyProposal!.tags.find(t=>t.name==='FC')!;assert.equal(h.state.taxonomyProposal!.support[fc.id].paperIds.length,50);
+  const proposal=h.state.taxonomyProposal!,fc=proposal.tags.find(t=>t.name==='FC')!,checked=proposal.support[fc.id].paperIds;
+  assert.equal(proposal.verificationScope,'representative');assert.ok(checked.length>0&&checked.length<50,'FC coverage must describe checked examples rather than every paper in the build');assert.ok(checked.every(id=>proposal.paperIds.includes(id)));
   assert.equal(h.host.writes.length,0);assert.deepEqual(await h.host.readTags(1),[{tag:'Manual project',type:0}]);
 });
 
@@ -354,7 +360,7 @@ test('schema3 migration resumes 51 completed selected jobs without extracting an
     legacy.papers[source.id]=copy(source);const facts=normalizeFacts(factsResponse({paper:source}),source,'chatgpt','test-model');for(const concept of facts.concepts)delete concept.factConceptId;legacy.facts[source.id]=facts;
   }
   const selected=[...h.host.papers.values()].slice(0,51);legacy.run={id:'legacy-selected-51',kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:selected.map((paper,i)=>({id:`legacy-job-${i}`,paperId:paper.id,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Unknown supporting registry concept: Anion exchange membrane water electrolyzers (AEMWEs).',spentUSD:1.75,settings:copy(legacy.settings),vocabularyVersion:0,consolidation:{inputFingerprint:'old-name-protocol',value:{tags:[]},failed:true}};
-  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,6);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
+  const originalFacts=copy(legacy.facts),migrated=migrateState(legacy);assert.equal(validState(migrated),true);assert.equal(migrated.schemaVersion,7);assert.equal(migrated.run!.jobs.filter(job=>job.status==='completed').length,51);assert.equal(migrated.run!.consolidation,undefined);
   assert.equal(Object.keys(migrated.facts).length,97);assert.equal(migrated.run!.spentUSD,1.75);assert.deepEqual(migrated.settings,legacy.settings);assert.equal(migrateState(migrated),migrated);
   const ai=new AI();ai.handler=call=>{if(call.kind==='facts')throw new Error('Migration Resume must reuse the completed factual extraction');return taxonomyResponse(call.data);};
   const controller=new AppController(migrated,{host:h.host,ai,persist:async()=>{}});await controller.invoke('resume');await controller.waitForIdle();

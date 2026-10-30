@@ -92,6 +92,7 @@ function recoverInvalidMerges(proposal:TaxonomyProposal,state:TagPreparationStat
   const snapshot=proposal.evidenceSnapshot!,facts=options.facts.filter(fact=>snapshot.paperIds.includes(fact.paperId));if(facts.length!==snapshot.paperIds.length)return proposal;
   const keys=proposal.candidateKeys??{},raw={tags:proposal.tags.filter(tag=>!tag.custom).map(tag=>({...tag,key:keys[tag.id]??tag.id,parentKeys:tag.broaderIds.map(id=>keys[id]??id),relatedKeys:(tag.relatedIds??[]).map(id=>keys[id]??id),supportRegistryIds:proposal.support[tag.id]?.registryIds??[]})),merges:proposal.merges.map(value=>({fromId:value.fromId,toKey:keys[value.toId]??value.toId})),excluded:proposal.excluded};
   const next=createTaxonomyProposal(raw,facts,options.existingDefinitions,{snapshot,candidateIds:clone(proposal.candidateIds??{}),generationId:proposal.id,baseVersion:proposal.baseVersion,createdAt:proposal.createdAt,limit:proposal.coreLimit});
+  if(proposal.verificationScope)next.verificationScope=proposal.verificationScope;
   if(proposal.extension)next.extension=clone(proposal.extension);
   const byKey=new Map(Object.entries(next.candidateKeys??{}).map(([id,key])=>[key,id])),redirect=(id:string)=>byKey.get(keys[id])??id;
   if(proposal.retainedDefinitionIds)next.retainedDefinitionIds=proposal.retainedDefinitionIds.map(redirect);
@@ -225,9 +226,10 @@ export function applyRepair(raw:unknown,current:PreparationResult,options:Prepar
   if(!proposal.tags.some(tag=>!tag.custom)&&Array.isArray(data.tags)&&data.tags.length){
     const snapshot=proposal.evidenceSnapshot!,facts=(options.facts??[]).filter(fact=>snapshot.paperIds.includes(fact.paperId));
     if(facts.length!==snapshot.paperIds.length){state.diagnostics.push('Full candidate recovery requires the retained selected paper facts.');return prepare(proposal,state,options);}
-    const exclusions=proposal.excluded,extension=proposal.extension,mappingPolicyVersion=proposal.mappingPolicyVersion,mappedSourceIds=clone(proposal.mappedSourceIds??{}),inheritanceReviewSourceIds=proposal.inheritanceReviewSourceIds?clone(proposal.inheritanceReviewSourceIds):undefined,retainedDefinitionIds=proposal.retainedDefinitionIds?[...proposal.retainedDefinitionIds]:undefined;
+    const exclusions=proposal.excluded,extension=proposal.extension,mappingPolicyVersion=proposal.mappingPolicyVersion,mappedSourceIds=clone(proposal.mappedSourceIds??{}),inheritanceReviewSourceIds=proposal.inheritanceReviewSourceIds?clone(proposal.inheritanceReviewSourceIds):undefined,retainedDefinitionIds=proposal.retainedDefinitionIds?[...proposal.retainedDefinitionIds]:undefined,verificationScope=proposal.verificationScope;
     proposal=createTaxonomyProposal(data,facts,options.existingDefinitions??current.proposal.tags.filter(tag=>tag.custom),{snapshot,candidateIds:proposal.candidateIds??{},generationId:proposal.id,baseVersion:proposal.baseVersion,limit:proposal.coreLimit,createdAt:proposal.createdAt});
     if(extension)proposal.extension=clone(extension);
+    if(verificationScope)proposal.verificationScope=verificationScope;
     if(retainedDefinitionIds)proposal.retainedDefinitionIds=retainedDefinitionIds;
     if(mappingPolicyVersion===3){proposal.mappingPolicyVersion=3;proposal.mappedSourceIds=mappedSourceIds;if(inheritanceReviewSourceIds)proposal.inheritanceReviewSourceIds=inheritanceReviewSourceIds;}
     proposal.excluded=[...new Map([...exclusions,...proposal.excluded].map(value=>[fingerprint(value),value])).values()];respectResearcherExclusions(proposal,state);

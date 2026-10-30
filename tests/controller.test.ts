@@ -54,7 +54,7 @@ class MemoryHost implements LibraryHost {
   async saveSearch(name:string,tags:string[]) {this.searches.push({name,tags:clone(tags)});}
 }
 
-type AIInput={protocolVersion?:number;selectionPhase?:'choosing'|'mapping';paperCount?:number;census?:{paperCount:number};conceptRegistry?:{registryId:string;sources:{label:string;paperId:string}[]}[];permittedRegistry?:{registryId:string;sourceIds:string[]}[];tags?:{id:string;name:string}[];sources?:{sourceId:string;name:string}[];approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
+type AIInput={protocolVersion?:number;selectionPhase?:'choosing'|'mapping';paperCount?:number;census?:{paperCount:number};conceptRegistry?:{registryId:string;sources:{label:string;paperId:string}[]}[];permittedRegistry?:{registryId:string;sourceIds:string[]}[];requestedPairs?:{id:string;tagId:string;sourceId:string;registryId:string;pairRef:string}[];tags?:{id:string;name:string}[];sources?:{sourceId:string;name:string}[];approvedVocabulary?:{id:string;name:string}[];paper?:{title:string;abstract:string;keywords:string[];pdf?:string};papers?:unknown[];facts?:{paperId:string;concepts:{name:string}[]}[]};
 type AICall={input:AIInput;settings:ProviderSettings;prompt:string};
 type AIHandler=(call:AICall,index:number)=>unknown|Promise<unknown>;
 
@@ -68,6 +68,10 @@ function normalAnalysis(call:AICall) {
 function normalFacts(call:AICall) {const p=call.input.paper!;return {summary:'Water electrolysis is studied.',concepts:[{name:'Water electrolysis',facet:'system',evidence:[{source:p.abstract?'abstract':p.pdf?'pdf':'title',text:p.abstract||p.pdf||p.title}]}],needsPDF:false};}
 function normalTaxonomy(call:AICall) {return {tags:[{key:'water',name:'Water electrolysis',fullName:'Water electrolysis',description:'Electrochemical splitting of water to produce hydrogen.',facet:'system',aliases:['water splitting'],inclusions:[],exclusions:[],examples:[],parentKeys:[],relatedKeys:[],...(call.input.protocolVersion===2?{supportRegistryIds:(call.input.conceptRegistry??[]).filter(entry=>entry.sources.some(source=>source.label==='Water electrolysis')).map(entry=>entry.registryId)}:{support:(call.input.facts??[]).map(f=>({paperId:f.paperId,conceptNames:['Water electrolysis']}))})}],merges:[],excluded:[]};}
 function normalMapping(call:AICall) {
+  if(call.input.requestedPairs)return {judgements:call.input.requestedPairs.map(pair=>{
+    const source=call.input.sources!.find(value=>value.sourceId===pair.sourceId),tag=call.input.tags!.find(value=>value.id===pair.tagId);assert.ok(source);assert.ok(tag);const matches=tag.name==='WE'&&source.name==='Water electrolysis';
+    return {tagId:pair.tagId,registryId:pair.registryId,sourceIds:[pair.sourceId],relation:matches?'equivalent':'unrelated',reason:matches?'The quotation explicitly studies water electrolysis.':'This particular source does not establish the requested scientific meaning.'};
+  })};
   const chosen=call.input.tags!.find(tag=>tag.name==='WE')!;
   return {judgements:call.input.sources!.map(source=>({tagId:chosen.id,registryId:call.input.permittedRegistry!.find(entry=>entry.sourceIds.includes(source.sourceId))!.registryId,sourceIds:[source.sourceId],relation:'equivalent',reason:'The complete source quotation explicitly studies water electrolysis.'})),outside:[]};
 }

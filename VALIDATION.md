@@ -1,33 +1,37 @@
-# v0.7.1 validation
+# v0.8.0 validation
 
 Target: Zotero 10.0.6 on Windows. Installer/source hashes and machine-readable results are in [dist/validation.json](dist/validation.json).
 
 ## Automated checks
 
-`npm run verify` passed TypeScript, all **757 tests**, and the production build. The 22 TagSelection tests and 19 large-library controller tests cover the v0.7 finite schedule, source-specific validation, DIY protection, bounded repairs, pause/restart, and the new saved-reply recovery paths.
+`npm run verify` passed TypeScript, all **786 tests**, and the production build.
 
-New regressions verify that a broad generated tag cannot claim a protected DIY name as an alias, generated copies of DIY names stay deferred without merging meanings, method-reference case repair preserves Co/CO, and unestablished component subtype edges remain contextual. Resume and Retry recheck only complete saved replies locally; incomplete diagnostics remain ineligible. Recovery retains the original four chooser attempts, raw replies and errors, allocated IDs, repair counters, and spending. A failed local recheck changes no counters or state and does not send a request.
+Module and public-controller regressions cover representative selection, dominant-field ranking, three distinct papers per tag, explicit pair judgments, supported parents, unsupported generated-tag deferral, genuine ambiguity, protected edits and DIY definitions, and unchanged reruns. Existing Co/CO, scientific notation, FC/AEMFC/PEMFC, source fingerprints, remembered decisions, rejection, manual ownership, native assignment and undo tests remain in the suite.
 
-The smaller mapping transport contains full meanings and applicable matching guidance, while retaining original definitions and meaning fingerprints locally. Paper quotations and source identities are not shortened. Existing evidence, legacy fingerprints, manual choices, metadata, assignment/undo, navigator/search, and automation-gate tests remain in the full suite. A focused codebase-design/deslop review keeps preparation inside TagSelection's existing interface.
+Representative checks require each requested tag/source pair to receive its own judgment. Valid sibling judgments survive malformed rows, the correction round requests only unresolved pairs, and explicit technical Retry retains completed checks and paid history. Compatible positive and negative pair decisions are reusable; a historical source-wide outside-core result cannot reject a newly selected tag. Unsampled findings stay unexamined.
+
+Controller tests cover paused and active older builds, waiting for active replies without aborting them, durable switch requests across restart, budget rejection before dispatch, preserving raw replies and charges, and Apply saving definitions without starting paper assignment. Schema-7 migration tests use synthetic 744-job/752-fact state and cover exact-byte backups, collisions, failure recovery, idempotence, and refusing schema downgrade. Migration makes no model or native-library requests.
+
+Manager tests exercise accessible controls, representative progress, verified-example labels, background edit preservation, independent scrolling, fixed Save/Cancel controls, notification dismissal, and the separate assignment workflow. A focused deslop/codebase-design review keeps scheduling and judgments inside the existing TagSelection interface, with controller persistence and provider operations outside it.
 
 ## Isolated Zotero checks
 
-All **161 native checks passed** in a separate profile and data directory. The new synthetic case supplies a generated ohmic-resistance tag falsely claiming RCL as an alias, then confirms that the alias is withheld and the existing DIY definition remains byte-equivalent. The finite-mapping scenario still verifies two concurrent requests, serialized-state Resume, fixed unique-source totals, and completed-batch reuse.
+All **173 native checks passed** in a separate profile and data directory. The suite exercises **Use faster build** through the rendered manager, waits for two active legacy replies, archives old work, persists completed representative checks, resumes without repeating them, and finishes a synthetic 60-tag list. Fresh builds also use representative planner 4 by default, reuse cached facts, and preserve incoming-automation settings. Apply saves definitions only.
 
-The retained suite checks navigator/Collections restoration, independent windows, title/PDF/note/annotation search, unchanged columns and right-hand panes, editor controls, independent build and assignment groups, metadata preview/apply/undo, warning actions, no_tag, and manual protections. An actual local PDF is extracted and indexed only in the isolated directory.
+Retained checks cover navigator/Collections restoration, independent windows, title/PDF/note/annotation search, unchanged columns and right-hand panes, editor controls, independent build and assignment groups, metadata preview/apply/undo, warning actions, no_tag, and manual protections. A local PDF is extracted and indexed only in the isolated directory.
 
-The final 0.7.1 installer was installed over a disabled 0.7.0 package through Zotero's AddonManager without uninstalling. Stable identity, saved state, library tags, columns, HTTPS manifest metadata, and installer hash passed. Remote Zotero update-feed discovery was not exercised before publication.
+The production 0.8.0 package is installed over a disabled 0.7.1 package through Zotero's AddonManager without uninstalling. Checks compare stable identity, saved state, native tags, columns, HTTPS update metadata, and installer hash. Remote Zotero update-feed discovery is not exercised before publication.
 
-## Private saved-reply recovery
+## Private retained-work replay
 
-A private read-only copy of the actual paused run contains 744 completed jobs, 752 cached factual records, 5,981 selected sources, and four completed but rejected chooser replies. The unedited saved reply recovers locally in the updated module, preserving its raw bytes, errors, dispatches, and counters. It creates a fixed 101-request mapping queue without another chooser request or factual extraction.
+A read-only copy of the actual paused build contains **744 completed paper jobs**, **752 cached factual records**, **5,981 selected sources**, and four paid chooser replies. The controller switches the saved draft locally to a soft target of 60 tags without another chooser or factual extraction. Candidate IDs, original quotations, provenance, selected snapshot, historical checkpoints, definitions, decisions, ownership, native data, and prior spending remain intact.
 
-A full controller replay then finishes all 5,981 source outcomes using simulated mapping replies, at most two requests in flight, and requests below 90 KB. Original quotations, IDs, provenance, source catalog, legacy checkpoint, settings, definitions, decisions, history, native state, and spent budget remain unchanged. The original copied file remains byte-for-byte intact. The working profile/run is never written or interrupted.
+The fixed representative schedule contains **180 tag/source pairs in three checking requests**, with at most two requests in flight and a maximum payload of **78,839 UTF-8 bytes**. It samples 149 unique sources; the other **5,832 remain unexamined**. Completion no longer depends on classifying every finding. The exact copied input file is unchanged, and the working profile/run is neither written nor interrupted.
 
-For the retained frozen list, sending semantic tag fields reduces repeated tag data from 59,746 to 28,162 bytes and the initial mapping schedule from 215 to 101 requests. This is a deterministic payload/scheduling comparison, not a live-provider completion-time measurement. The replay makes no live AI requests or native writes; its synthetic classifications do not establish scientific recommendation quality.
+The replay completes with simulated judgments and no live provider request or native write. These measurements establish request count, payload bounds, state preservation and finite completion; they do not measure live-provider latency or scientific recommendation quality. Different quotation sizes, response limits or unresolved judgments can require more requests.
 
-## Artifact and verification scope
+## Artifacts and limits
 
-The bundle's embedded source files match the delivered TypeScript. Installer and source archives are scanned for private titles/IDs and excluded profiles, state files, credentials, and build fixtures. Only aggregate private-replay results are public.
+The installer bundle's embedded sources match the delivered TypeScript, and its JavaScript/CSS match the package used for native validation. Installer and source archives are scanned for private paper titles/IDs, profiles, state files, credential files, and build fixtures. Only aggregate replay results are published.
 
-Native controls were checked programmatically; no screenshot review or live account authorization was performed for this patch. Existing incoming automation settings stay under explicit user control. No factual-extractor, terminology, consolidation-protocol, source-validation-policy, or state-schema version changes are required by this patch.
+Native controls are checked programmatically; no screenshot review or real-account sign-in is claimed. Factual extraction, terminology and source-validation policy 3 remain unchanged. New proposals use planner 4 and representative verification; historical proposals retain their existing policies.

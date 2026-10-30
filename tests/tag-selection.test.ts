@@ -7,8 +7,10 @@ import type {PaperFacts,TaxonomyProposal} from '../src/taxonomy.ts';
 import {conceptMappingFingerprint,refreshProposalEvidence,semanticDecisionKey} from '../src/taxonomy.ts';
 import {captureVocabularyBaseline,composeExtendedVocabulary} from '../src/vocabulary-extension.ts';
 import {prepare} from '../src/tag-preparation.ts';
-import {createTagSelection,nextSelectionRequests,noteSelectionDispatch,acceptSelectionResult,failSelectionTask,finishedSelectionProposal,resumeTagSelection,retryTagSelection,reviseTagSelection,selectionProgress,validTagSelectionWork,SELECTION_REQUEST_BYTE_LIMIT,SELECTION_SOURCE_LIMIT} from '../src/tag-selection.ts';
+import {createTagSelection as createSelection,nextSelectionRequests,noteSelectionDispatch,acceptSelectionResult,failSelectionTask,finishedSelectionProposal,resumeTagSelection,retryTagSelection,reviseTagSelection,selectionProgress,validTagSelectionWork,SELECTION_REQUEST_BYTE_LIMIT,SELECTION_SOURCE_LIMIT} from '../src/tag-selection.ts';
 import type {TagSelectionWork,TagSelectionRequest} from '../src/tag-selection.ts';
+
+function createTagSelection(...args:Parameters<typeof createSelection>){return createSelection(args[0],args[1],args[2],{...args[3],plannerVersion:3});}
 
 function fixture(papers=4,concepts=4){const facts:PaperFacts[]=Array.from({length:papers},(_,paper)=>({paperId:`paper-${paper}`,metadataFingerprint:`metadata-${paper}`,inputFingerprint:`input-${paper}`,provider:'retained-provider',model:'retained-model',extractionVersion:1,summary:'The experiment studies transport and electrochemical material responses.',needsPDF:false,concepts:Array.from({length:concepts},(_,concept)=>({name:`transport family ${concept%2} experiment ${paper}-${concept}`,facet:'phenomenon',evidence:[{source:'abstract',text:`This experiment establishes transport family ${concept%2} behavior for material ${paper}-${concept}.`}]}))}));return {facts,snapshot:createRegistrySnapshot(facts,createEmptyEvidenceCatalog())};}
 function inputs(request:TagSelectionRequest):Record<string,any>{return JSON.parse(request.prompt.split('INPUT_DATA_JSON:\n')[1]);}

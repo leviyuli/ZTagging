@@ -91,7 +91,7 @@ async function harness(data=snapshot(),options:HarnessOptions={}) {
     if(action==='dismiss-paper-attention'&&data.paperAttention)data.paperAttention.papers=data.paperAttention.papers.filter(paper=>!payload.ids.includes(paper.id));
     if(action==='save-settings')data.settings=payload.settings;
     if(action==='save-api-key'&&payload.provider==='deepseek')data.connection.deepseekKeyStored=true;
-    if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);return created.id;}
+    if(action==='create-detail'){const created={...payload.tag,id:'new-detail',status:'approved'};data.tags.push(created);data.tagPreparation?.tags.push(structuredClone(created));return created.id;}
     for(let i=0;i<emitOnInvoke;i++)emit();
   }};
   const ui=context.ManagerUI.mountManager(dom.win,api,uiOptions);await settle();
@@ -228,6 +228,34 @@ test('failed prepared changes keep unsaved editor text and a successful removal 
   const data=snapshot();data.tagPreparation=preparation();const failed=await harness(data,{page:'cleanup',failAction:'edit-prepared-tag'});t.after(()=>failed.ui.destroy());
   await failed.click('Edit tag FC');failed.change('tag-description','Keep my unsaved words.');await failed.click('Save');assert.equal(failed.doc.getElementById('tag-description').value,'Keep my unsaved words.');assert.match(failed.app.textContent,/could not be saved/);
   const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Edit tag FC');await h.click('Remove tag FC');assert.equal(h.doc.getElementById('tag-name'),null);
+});
+
+test('hidden drafts for removed suggestions remain reachable and Apply waits for the other edits too',async t=>{
+  const data=snapshot();data.tagPreparation=preparation([tag('a','Topic A'),tag('b','Topic B'),tag('c','Topic C')]);const native=structuredClone(data.papers);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());
+  for(const name of ['A','B','C']){await h.click(`Edit tag Topic ${name}`);h.change('tag-description',`My unfinished ${name} wording.`);}
+  data.tagPreparation.tags=data.tagPreparation.tags.filter(tag=>tag.id==='c');await h.emitUpdate();h.change('vocabulary-search','No matching rows');
+  assert.match(h.app.textContent,/2 drafts need a choice/);assert.equal(h.button('Apply tag list').disabled,true);
+  await h.click('Review unsaved draft Topic A');assert.equal(h.doc.getElementById('tag-description').value,'My unfinished A wording.');assert.equal(h.button('Save').disabled,true);assert.match(h.app.textContent,/This tag left the suggested list/);
+  await h.click('Cancel');assert.ok(h.button('Review unsaved draft Topic B'));await h.click('Discard unsaved draft Topic B');assert.equal(h.button('Apply tag list').disabled,true,'The unrelated C draft still needs a decision');
+  h.change('vocabulary-search','');await h.click('Edit tag Topic C');assert.equal(h.doc.getElementById('tag-description').value,'My unfinished C wording.');await h.click('Cancel');assert.equal(h.button('Apply tag list').disabled,false);
+  await h.click('Apply tag list');assert.deepEqual(h.actions,[{action:'apply-tag-list',payload:{id:'prepared'}}]);assert.deepEqual(data.papers,native);
+});
+
+test('an absent prepared tag can explicitly preserve its wording as a suggestion-only DIY tag',async t=>{
+  const data=snapshot(),draft=tag('detail','Grooved layer',{fullName:'Grooved catalyst layer',aliases:['grooved CL'],inclusions:['Substantive grooved layers.'],exclusions:['Unrelated grooves.'],examples:['A grooved layer experiment.'],broaderIds:['fc'],relatedIds:['pemfc'],matchingMode:'auto'});data.tagPreparation=preparation([draft,tag('fc','FC')]);
+  const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());await h.click('Edit tag Grooved layer');h.change('tag-description','My unsaved catalyst-layer wording.');
+  data.tagPreparation.tags=data.tagPreparation.tags.filter(tag=>tag.id!=='detail');await h.emitUpdate();assert.equal(h.button('Save').disabled,true);assert.match(h.app.textContent,/suggested-list relationships are not copied/);
+  await h.click('Save as DIY tag');assert.equal(h.actions.length,1);assert.equal(h.actions[0].action,'create-detail');
+  assert.deepEqual(h.actions[0].payload.tag,{...draft,id:'',description:'My unsaved catalyst-layer wording.',custom:true,status:'draft',matchingMode:'suggest',broaderIds:[],relatedIds:[]});
+  assert.equal(h.doc.getElementById('tag-name'),null);assert.equal(h.button('Review unsaved draft Grooved layer'),undefined);assert.equal(h.button('Apply tag list').disabled,false);assert.equal(data.tagPreparation.tags.find(tag=>tag.id==='new-detail')?.name,'Grooved layer');
+});
+
+test('failed DIY recovery retains an active removed draft until the user discards it',async t=>{
+  const data=snapshot();data.tagPreparation=preparation([tag('a','Topic A'),tag('b','Topic B')]);const saved=structuredClone(data.tags);
+  const h=await harness(data,{page:'cleanup',failAction:'create-detail'});t.after(()=>h.ui.destroy());await h.click('Edit tag Topic A');h.change('tag-description','Keep this text after a failed save.');data.tagPreparation.tags=data.tagPreparation.tags.filter(tag=>tag.id!=='a');await h.emitUpdate();
+  await h.click('Save as DIY tag');assert.equal(h.doc.getElementById('tag-description').value,'Keep this text after a failed save.');assert.ok(h.button('Review unsaved draft Topic A'));assert.equal(h.button('Apply tag list').disabled,true);assert.deepEqual(data.tags,saved);
+  await h.click('Discard unsaved draft Topic A');assert.equal(h.doc.getElementById('tag-name'),null);assert.equal(h.button('Apply tag list').disabled,false);assert.equal(h.actions.filter(call=>call.action==='edit-prepared-tag').length,0);
 });
 
 test('Add tag preserves a DIY name and defaults to suggested matching',async t=>{
@@ -410,6 +438,26 @@ test('tag selection shows fixed unique findings progress and queued requests sep
   const data=snapshot();data.queue={kind:'rebuild',status:'running',phase:'choosing',phaseProgress:{completed:4,total:5,label:'Old task count'},completed:744,total:744,failed:0,selection:{sourceCompleted:0,sourceTotal:928,completedRequests:0,queuedRequests:1,correctionsUsed:0,correctionAllowance:8,semanticRepairsUsed:0,semanticRepairAllowance:3,mappingCorrectionsUsed:0,mappingCorrectionAllowance:5}};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Choosing tags/);assert.match(h.app.textContent,/Supporting findings checked: 0 of 928/);assert.match(h.app.textContent,/0 requests completed · 1 requests queued/);assert.match(h.app.textContent,/Tag selection repairs: 0 of 3 used/);assert.match(h.app.textContent,/Source check corrections: 0 of 5 used/);assert.doesNotMatch(h.app.textContent,/Additional correction requests|Old task count|\bETA\b|estimated time|minutes remaining/i);
   data.queue.phase='mapping';data.queue.phaseProgress={completed:97,total:160,label:'Changing task count'};data.queue.selection={...data.queue.selection!,sourceCompleted:128,completedRequests:3,queuedRequests:5,correctionsUsed:2,semanticRepairsUsed:1,mappingCorrectionsUsed:1};await h.emitUpdate();assert.match(h.app.textContent,/Checking supporting findings/);assert.match(h.app.textContent,/Supporting findings checked: 128 of 928/);assert.match(h.app.textContent,/3 requests completed · 5 requests queued/);assert.match(h.app.textContent,/Tag selection repairs: 1 of 3 used/);assert.match(h.app.textContent,/Source check corrections: 1 of 5 used/);assert.doesNotMatch(h.app.textContent,/Additional correction requests|Changing task count/);const bar=h.all().find(node=>node.className==='progress-bar')!;assert.equal(bar.children[0].style.width,`${128/928*100}%`);
   data.queue.status='idle';data.queue.phase='ready';data.queue.selection.sourceCompleted=928;data.queue.selection.queuedRequests=0;await h.emitUpdate();assert.match(h.app.textContent,/Ready for review/);assert.match(h.app.textContent,/928 of 928/);assert.equal(h.actions.length,0);
+});
+
+test('a running legacy build offers faster preparation and prevents duplicate switching',async t=>{
+  const data=snapshot();data.queue={kind:'rebuild',status:'running',completed:744,total:744,failed:0,canUseFasterBuild:true};
+  let release!:()=>void;const pending=new Promise<void>(resolve=>{release=resolve;});
+  const h=await harness(data,{page:'activity',onSnapshot(call){if(call===2)return pending;}});t.after(()=>{release();h.ui.destroy();});
+  assert.equal(h.button('Use faster build').disabled,false);h.button('Use faster build').emit('click');await settle();
+  assert.deepEqual(h.actions,[{action:'use-faster-build',payload:{targetCount:60}}]);
+  assert.ok(h.all().filter(node=>node.localName==='button'&&node.textContent==='Use faster build').every(node=>node.disabled));
+  data.queue.switchingToFasterBuild=true;release();await settle();await h.emitUpdate();
+  assert.equal(h.button('Use faster build'),undefined);assert.equal(h.button('Switching to faster build…').disabled,true);
+  data.queue.canUseFasterBuild=false;data.queue.switchingToFasterBuild=false;await h.emitUpdate();assert.equal(h.button('Use faster build'),undefined);assert.equal(h.button('Switching to faster build…'),undefined);
+});
+
+test('representative preparation reports tags and examples without implying full-library verification',async t=>{
+  const data=snapshot();data.queue={kind:'rebuild',status:'running',phase:'mapping',completed:744,total:744,failed:0,selection:{verificationScope:'representative',tagsPrepared:50,tagsTotal:60,examplesChecked:96,examplesTotal:120,sourceCompleted:96,sourceTotal:5981,completedRequests:8,queuedRequests:2,correctionsUsed:0,correctionAllowance:10}};
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Checking examples/);assert.match(h.app.textContent,/Tags prepared: 50 of 60/);assert.match(h.app.textContent,/Examples checked: 96 of 120/);assert.match(h.app.textContent,/8 requests completed · 2 requests queued/);assert.doesNotMatch(h.app.textContent,/5981|Supporting findings checked|full coverage|\bETA\b/);assert.equal(h.all().find(node=>node.className==='progress-bar')!.children[0].style.width,`${50/60*100}%`);
+  data.queue.status='idle';data.queue.phase='ready';data.queue.selection!.tagsPrepared=60;data.queue.selection!.examplesChecked=120;data.queue.selection!.queuedRequests=0;data.tagPreparation={...preparation([tag('fc','FC',{coverage:2,currentlyTaggedCount:500})]),verificationScope:'representative'};await h.emitUpdate();assert.match(h.app.textContent,/Ready for review/);
+  h.ui.navigate({page:'cleanup'});assert.match(h.app.textContent,/2 verified example papers/);assert.doesNotMatch(h.app.textContent,/500 papers in this build|2 papers in this build|5981/);assert.equal(h.button('Apply tag list').disabled,false);
+  await h.click('Apply tag list');assert.deepEqual(h.actions,[{action:'apply-tag-list',payload:{id:'prepared'}}]);assert.ok(h.doc.getElementById('assignment-scope'));assert.equal(h.actions.some(call=>call.action==='tag'),false);
 });
 
 test('an exhausted selection has an explicit retry while connection and budget pauses keep Resume',async t=>{

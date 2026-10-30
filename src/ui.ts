@@ -420,15 +420,25 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queueStrip() {
     const q = currentState().queue;
     if (q.status === 'idle' && !q.total) return null;
-    const progress = q.selection ? { completed: q.selection.sourceCompleted, total: q.selection.sourceTotal, label: 'Supporting findings checked' } : q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
+    const progress = queueProgress();
     const percent = progress.total ? Math.min(100, progress.completed / progress.total * 100) : 0;
     const fill = h('span');
     fill.style.width = `${percent}%`;
     return h('div', 'run-strip',
       h('div', 'inline between', h('div', '', h('strong', '', queuePhaseLabel()), h('span', 'muted', ` · ${q.selection || q.phaseProgress ? `${progress.label}: ${progress.completed} of ${progress.total}` : `${q.completed} of ${q.total} papers read`}`)),
-        h('div', 'inline', q.status === 'running' ? button('Pause', () => run('pause'), 'small') : q.status === 'paused' ? resumeQueueButton('small') : null, button('View activity', () => nav('activity'), 'quiet small'))),
+        h('div', 'inline', fasterBuildButton('small'), q.status === 'running' ? button('Pause', () => run('pause'), 'small') : q.status === 'paused' ? resumeQueueButton('small') : null, button('View activity', () => nav('activity'), 'quiet small'))),
       q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
       h('div', 'progress-bar', fill));
+  }
+  function queueProgress() {
+    const q = currentState().queue;
+    if (q.selection?.verificationScope === 'representative') return { completed: q.selection.tagsPrepared ?? 0, total: q.selection.tagsTotal ?? 0, label: 'Tags prepared' };
+    return q.selection ? { completed: q.selection.sourceCompleted, total: q.selection.sourceTotal, label: 'Supporting findings checked' } : q.phaseProgress || (q.phase && q.phase !== 'reading' ? { completed: 0, total: 0, label: '' } : { completed: q.completed + q.failed, total: q.total, label: '' });
+  }
+  function fasterBuildButton(kind = '') {
+    const q = currentState().queue;
+    if (!q.canUseFasterBuild && !q.switchingToFasterBuild) return null;
+    return button(q.switchingToFasterBuild ? 'Switching to faster build…' : 'Use faster build', () => run('use-faster-build', { targetCount: 60 }, 'Switching to faster build. Completed paper analysis is kept.'), kind, q.switchingToFasterBuild === true);
   }
   function resumeQueueButton(kind = '', disabled = false) {
     const q = currentState().queue, retry = q.status === 'paused' && q.selection?.failed === true;
@@ -437,6 +447,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queuePhaseLabel() {
     const q = currentState().queue;
     if (q.status === 'paused') return 'Analysis paused';
+    if (q.phase === 'mapping' && q.selection?.verificationScope === 'representative') return 'Checking examples';
     const labels = { reading: 'Reading papers', organizing: 'Organizing tags', choosing: 'Choosing tags', mapping: 'Checking supporting findings', checking: 'Checking tag meanings', ready: 'Ready for review' };
     return q.phase ? labels[q.phase] : q.status === 'running' ? 'Analyzing papers' : 'Analysis complete';
   }
@@ -519,6 +530,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (!editorTag || !visible) return h('section', 'card editor editor-placeholder', empty('Make the tags yours', 'Choose Edit beside a tag, or add a topic you want to follow.'));
     const tag = editorTag;
     const preparationId = editorPreparationId;
+    const orphaned = !!preparationId && state?.tagPreparation?.id === preparationId && !state.tagPreparation.tags.some(saved => saved.id === tag.id);
     const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
     const advanced = h('details', 'editor-advanced', h('summary', '', 'More options'),
       lineField('aliases', 'Other names', 'Alternative names and abbreviations, one per line.'),
@@ -532,6 +544,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     advanced.open = editorAdvancedOpen;
     advanced.addEventListener('toggle', () => { if (advanced.isConnected) editorAdvancedOpen = advanced.open; });
     const form = h('form', 'editor-scroll',
+      orphaned ? h('p', 'notice warning', 'This tag left the suggested list. Copy your changes, save them as a DIY tag, or cancel this draft. DIY tags use suggestion-only matching; suggested-list relationships are not copied.') : null,
       field('Tag name', input('tag-name', tag.name, value => { tag.name = value; }, 'A short name you recognize')),
       field('Full name', input('tag-full-name', tag.fullName || '', value => { tag.fullName = value; }, 'Expand an abbreviation when helpful')),
       field('Meaning', textarea('tag-description', tag.description, value => { tag.description = value; }, 'What should papers with this tag discuss?')),
@@ -544,6 +557,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const save = async () => {
       if (busy) return;
+      if (orphaned) throw new Error('This tag left the suggested list. Save it as a DIY tag or cancel the draft.');
       if (!tag.name.trim() || !tag.description.trim()) throw new Error('Add a tag name and meaning before saving.');
       const submitted = copyTag(tag);
       if (preparationId) {
@@ -553,17 +567,33 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       editorDrafts.delete(`${preparationId}:${tag.id || 'new'}`);
       if (editorTag === tag) { editorTag = null;editorPreparationId = '';render(); }
     };
+    const saveAsDetail = async () => {
+      if (busy) return;
+      if (!tag.name.trim() || !tag.description.trim()) throw new Error('Add a tag name and meaning before saving.');
+      await run('create-detail', { tag: { ...copyTag(tag), id: '', custom: true, status: 'draft', matchingMode: 'suggest', broaderIds: [], relatedIds: [] } }, 'Your DIY tag is saved.');
+      editorDrafts.delete(`${preparationId}:${tag.id}`);
+      if (editorTag === tag) { editorTag = null;editorPreparationId = '';render(); }
+    };
     form.addEventListener('submit', event => { event.preventDefault();void save().catch(showError); });
     const cancel = () => { editorDrafts.delete(`${preparationId}:${tag.id || 'new'}`);editorTag = null;editorPreparationId = '';render(); };
-    return h('section', 'card editor tag-editor', h('div', 'card-header', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag')), form, h('div', 'card-footer editor-footer', button('Save', save, 'primary'), button('Cancel', cancel, 'quiet')));
+    return h('section', 'card editor tag-editor', h('div', 'card-header', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag')), form, h('div', 'card-footer editor-footer', button('Save', save, orphaned ? '' : 'primary', orphaned), orphaned ? button('Save as DIY tag', saveAsDetail, 'primary') : null, button('Cancel', cancel, 'quiet')));
   }
   function workingTags(preparation?: ManagerSnapshot['tagPreparation']) { return (preparation?.tags || currentState().tags.filter(tag => tag.status === 'approved' || tag.custom)).filter(tag => !tag.builtin); }
+  function currentDrafts() {
+    const drafts = new Map(editorDrafts);
+    if (editorTag) drafts.set(`${editorPreparationId}:${editorTag.id || 'new'}`, editorTag);
+    return drafts;
+  }
+  function orphanedPreparedDrafts() {
+    const preparation = state?.tagPreparation;
+    if (!preparation) return [];
+    const ids = new Set(preparation.tags.map(tag => tag.id));
+    return [...currentDrafts()].filter(([key, draft]) => key.startsWith(`${preparation.id}:`) && !ids.has(draft.id)).map(([, draft]) => draft);
+  }
   function hasUnsavedPreparedChanges() {
     const preparation = state?.tagPreparation;
     if (!preparation) return false;
-    const drafts = new Map(editorDrafts);
-    if (editorTag) drafts.set(`${editorPreparationId}:${editorTag.id || 'new'}`, editorTag);
-    for (const [key, draft] of drafts) {
+    for (const [key, draft] of currentDrafts()) {
       const relevant = key.startsWith(`${preparation.id}:`) || (key.startsWith(':') && draft.custom);
       if (!relevant) continue;
       const saved = preparation.tags.find(tag => tag.id === draft.id);
@@ -633,14 +663,24 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
             if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
           }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);actions.append(remove);
         }
-        const countLabel = preparation && !retained ? `${tag.coverage ?? 0} papers in this build` : `${tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
+        const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
         content.append(h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : tag.custom ? badge('Your topic', 'custom') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null)));
       }
       if (tags.length > 20) content.append(pagination(tags.length, vocabularyPage, next => { vocabularyPage = next; }, 20, 'tags'));
     }
     const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : 'Project collections and existing paper tags stay under your control.');
     note.id = 'tag-apply-note';
-    return h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, preparation ? tabs : null, note, h('div', 'tag-workspace-columns', content, tagEditor(editorVisible)));
+    const orphans = preparation ? orphanedPreparedDrafts() : [], draft = orphans[0];
+    const reviewDraft = draft ? button('Review draft', () => editTag(draft, preparation!.id), 'small') : null;
+    reviewDraft?.setAttribute('aria-label', `Review unsaved draft ${draft?.name}`);
+    const discardDraft = draft ? button('Discard', () => {
+      editorDrafts.delete(`${preparation!.id}:${draft.id}`);
+      if (editorPreparationId === preparation!.id && editorTag?.id === draft.id) { editorTag = null;editorPreparationId = ''; }
+      render();
+    }, 'small quiet') : null;
+    discardDraft?.setAttribute('aria-label', `Discard unsaved draft ${draft?.name}`);
+    const recovery = draft ? h('div', 'notice warning inline between', h('span', '', `${draft.name} left the suggested list. Your unsaved edits are kept.${orphans.length > 1 ? ` ${orphans.length} drafts need a choice.` : ''}`), h('div', 'inline', reviewDraft, discardDraft)) : null;
+    return h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, preparation ? tabs : null, note, recovery, h('div', 'tag-workspace-columns', content, tagEditor(editorVisible)));
   }
 
   function renderCleanup() {
@@ -968,8 +1008,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const corrections = q.selection?.semanticRepairAllowance !== undefined && q.selection.mappingCorrectionAllowance !== undefined
       ? h('div', '', h('p', 'card-description', `Tag selection repairs: ${q.selection.semanticRepairsUsed ?? 0} of ${q.selection.semanticRepairAllowance} used`), h('p', 'card-description', `Source check corrections: ${q.selection.mappingCorrectionsUsed ?? 0} of ${q.selection.mappingCorrectionAllowance} used`))
       : q.selection ? h('p', 'card-description', `Additional correction requests: ${q.selection.correctionsUsed} of ${q.selection.correctionAllowance} used`) : null;
-    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.selection ? h('div', 'section-gap', h('p', '', `Supporting findings checked: ${q.selection.sourceCompleted} of ${q.selection.sourceTotal}`), h('p', 'card-description', `${q.selection.completedRequests} requests completed · ${q.selection.queuedRequests} requests queued`), corrections) : q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
-      h('div', 'actions', resumeQueueButton('primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
+    const currentProgress = queueProgress();
+    const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`)), q.selection ? h('div', 'section-gap', h('p', '', `${currentProgress.label}: ${currentProgress.completed} of ${currentProgress.total}`), q.selection.verificationScope === 'representative' ? h('p', '', `Examples checked: ${q.selection.examplesChecked ?? 0} of ${q.selection.examplesTotal ?? 0}`) : null, h('p', 'card-description', `${q.selection.completedRequests} requests completed · ${q.selection.queuedRequests} requests queued`), corrections) : q.phaseProgress ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
+      h('div', 'actions', fasterBuildButton('primary'), resumeQueueButton(q.canUseFasterBuild || q.switchingToFasterBuild ? '' : 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
       h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('cleanup'), 'small')));
     const history = h('div', '');

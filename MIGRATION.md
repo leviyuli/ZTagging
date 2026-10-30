@@ -1,4 +1,20 @@
-# Upgrading to Smart Tags 0.7.1
+# Upgrading to Smart Tags 0.8.0
+
+## Version 0.8.0
+
+Install the update over the existing extension. Before writing **schema 7**, Smart Tags saves an immutable exact-byte **state.json.pre-v7.json** backup. An occupied filename with different bytes is preserved and a numbered suffix is used. Backup or migration-write failure stops without substituting an older valid `.bak`; older applications refuse to overwrite schema-7 state.
+
+Schema-6 migration changes only the schema field. It preserves cached factual extraction, quotations and provenance, source identities, selected snapshots, completed jobs, pending proposals, edits and answers, raw responses, old planner-3 checkpoints, journals, settings, credentials, and spent budget. Migration performs no provider request or native-library change. Factual extraction, terminology, and source-validation policy 3 remain unchanged.
+
+New builds use **representative planner 4**. For an unfinished older build whose paper reading is complete, choose **Use faster build** in Activity or the run's progress bar. This explicit action sets a preferred target of **60** and waits for active requests to settle before changing the saved schedule. It retains old work and responses in history, reuses valid facts and compatible exact-source decisions, and preserves researcher edits and exclusions. Installation or ordinary Resume does not silently convert an existing planner-3 build.
+
+Representative verification checks up to **three different example papers per tag**, using requests of at most **64 tag–source pairs and 90 KB**, with up to two independent requests in flight. Smaller output limits can reduce batch size. Valid results persist immediately; one bounded repair round checks unresolved pairs without repeating accepted ones. Authentication, quota, connection, permission, and budget failures still pause with the selected provider unchanged.
+
+Review counts describe **verified example papers**, not total matching library papers. Unsampled findings remain unexamined and cannot authorize outside-vocabulary or no_tag decisions. Policy-3 proofs still bind each accepted tag/source pair to its snapshot and fingerprints. Unsupported generated topics may be deferred; DIY and protected definitions are retained. Ambiguous examples may be omitted when another checked example grounds the same concept, while unresolved concept meanings remain researcher questions.
+
+A local simulation using a copied 744-paper build retained its 60 frozen tags and scheduled 180 example pairs in three requests, the largest 78,839 bytes; 5,832 findings remained unexamined. It used synthetic replies with no new chooser, extraction, native writes, or live provider calls. These figures demonstrate the saved schedule, not scientific accuracy or a completion-time guarantee.
+
+**Apply tag list** saves definitions only. Choose the assignment group separately in **Assign & automate**, review the paper suggestions, and confirm their native Apply with undo. Upgrading or switching build planners does not enable incoming assignment or satisfy its pilot gate.
 
 ## Version 0.7.1
 

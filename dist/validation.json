@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.7.1",
-  "verifiedAt": "2026-10-30T03:33:35.543Z",
+  "version": "0.8.0",
+  "verifiedAt": "2026-10-30T04:29:34.209Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Finite global tag selection and source-specific evidence mapping",
-  "schemaVersion": 6,
+  "scope": "Global tag selection with representative paper checks",
+  "schemaVersion": 7,
+  "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
-  "localSavedReplyRecovery": true,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 757,
+    "passed": 786,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 161,
+    "passed": 173,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -382,6 +382,54 @@
         "passed": true
       },
       {
+        "name": "v080IsolatedDataGuard",
+        "passed": true
+      },
+      {
+        "name": "v080IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v080LiveSwitchLetsCurrentCallsFinish",
+        "passed": true
+      },
+      {
+        "name": "v080LegacyRawWorkIsRetainedDuringSwitch",
+        "passed": true
+      },
+      {
+        "name": "v080RepresentativeChecksPersistBeforeRestart",
+        "passed": true
+      },
+      {
+        "name": "v080RepresentativeBuildFinishesWithSixtyTags",
+        "passed": true
+      },
+      {
+        "name": "v080RestartReusesCompletedChecksAndFrozenChoice",
+        "passed": true
+      },
+      {
+        "name": "v080ProgressDoesNotClaimExhaustiveVerification",
+        "passed": true
+      },
+      {
+        "name": "v080ApplySavesOnlyDefinitions",
+        "passed": true
+      },
+      {
+        "name": "v080CachedEvidenceNativeTagsAndColumnsStayIntact",
+        "passed": true
+      },
+      {
+        "name": "v080FreshBuildDefaultsToRepresentativeChecks",
+        "passed": true
+      },
+      {
+        "name": "v080FreshBuildReusesCachedFactsWithoutAssignment",
+        "passed": true
+      },
+      {
         "name": "v040IsolatedDataGuard",
         "passed": true
       },
@@ -662,7 +710,19 @@
         "passed": true
       }
     ],
-    "selection": {
+    "representativeSelection": {
+      "topics": 60,
+      "papers": 180,
+      "retainedFindings": 540,
+      "syntheticProviderRequests": 9,
+      "maximumConcurrentRequests": 2,
+      "serializedResume": true,
+      "freshGlobalChooserCount": 1,
+      "realAIRequests": 0,
+      "nativeTagWrites": 0,
+      "pdfExtractions": 0
+    },
+    "legacySelection": {
       "papers": 2,
       "findings": 66,
       "plannedCoreTags": 2,
@@ -685,12 +745,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.7.0",
-      "to": "0.7.1",
+      "from": "0.7.1",
+      "to": "0.8.0",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "c46d2d639e845267e0a68cf16535fedacb759e4b187d03fbf57764bd6295512f",
+      "packageHash": "daa53f12ab51ec09c31ecc7d6aacf560cea3f75e761493346632375574eb090e",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -702,11 +762,11 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 200,
+      "largeRenderMS": 124,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
-      "syntheticAIRequests": 8,
+      "syntheticAIRequests": 7,
       "realAIRequests": 0,
       "nativeTagWrites": 0,
       "independentEditor": true,
@@ -720,61 +780,65 @@
     "sparseTFIDFComparisonLimitPerTopic": 32,
     "defaultSoftTarget": 60,
     "shortlistMultiple": 4,
-    "globalProposalBeforeMapping": true,
-    "recursiveReductionRounds": false,
-    "maximumMappingSources": 128,
+    "globalDraftBeforeChecks": true,
+    "maximumExamplesPerTag": 3,
+    "distinctExamplePapers": true,
+    "maximumPairsPerRequest": 64,
     "maximumRequestUTF8Bytes": 90000,
     "outputLimitRespected": true,
-    "maximumConcurrentMappingRequests": 2,
+    "maximumConcurrentRequests": 2,
     "semanticRepairAllowance": 3,
-    "formatCorrectionAllowancePerTask": 1,
-    "contextualFollowupAllowancePerSource": 1,
-    "uniquePaperCategoryDiminishingReturns": true,
-    "sourceSpecificProofsBeforeCoverage": true,
+    "exampleCorrectionRounds": 1,
+    "sourceSpecificProofsBeforeExampleCoverage": true,
     "parentSupportRequiresValidatedChildren": true,
-    "outsideCoreDoesNotCreateNoTag": true,
+    "unsupportedGeneratedTagsDeferred": true,
+    "unsampledSourcesRemainUnexamined": true,
+    "sourceWideOutsideDoesNotRejectNewPairs": true,
     "protectedDIYAndManualDefinitionsPreserved": true,
-    "sourceAndMeaningChangesRevalidated": true
+    "meaningAndSourceChangesRevalidated": true
   },
   "execution": {
     "serializedBudgetReservationsAndPersistence": true,
     "rawRepliesSavedBeforeApplication": true,
-    "chargedCanceledRepliesRetained": true,
-    "completedTasksSurviveRestart": true,
+    "validPairsSavedBeforeRepair": true,
+    "completedChecksSurviveRestart": true,
     "ordinaryResumeDoesNotResetRepairAllowances": true,
-    "explicitTechnicalRetryRetainsHistoryAndSpending": true,
+    "explicitFasterBuildWaitsForActiveReplies": true,
+    "oldWorkAndChargesRetained": true,
     "unchangedRerunsReuseWork": true,
     "legacyConsolidationCheckpointsRetained": true
   },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Copied retained state with synthetic transport; no scientific quality claim",
+    "scope": "Read-only copied retained work with simulated representative judgments",
     "selectedPapers": 744,
     "completedJobs": 744,
     "cachedFacts": 752,
-    "registryEntries": 5174,
     "factualSources": 5981,
-    "shortlisted": 480,
-    "selectedCore": 71,
-    "globalPlanningRequests": 0,
-    "savedChooserReplyRecovered": true,
-    "chooserHistoryUnchanged": true,
-    "chooserDispatches": 4,
-    "mappingRequests": 101,
-    "initialMappingTasks": 101,
-    "syntheticRequests": 101,
+    "preferredTagCount": 60,
+    "frozenCoreTags": 60,
+    "supportedCoreTags": 16,
+    "representativePairs": 180,
+    "uniqueSampledSources": 149,
+    "unsampledSources": 5832,
+    "initialVerificationTasks": 3,
+    "verificationRequests": 3,
+    "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
-    "maxPromptUTF8Bytes": 89754,
-    "timeToMappingMS": 4945,
-    "totalSimulationMS": 55402,
+    "maxPromptUTF8Bytes": 78839,
+    "timeToRepresentativeQueueMS": 1354,
+    "totalSimulationMS": 3947,
+    "oldChooserAttempts": 4,
+    "rawChooserHistoryUnchanged": true,
+    "archivedOldWorkExact": true,
     "legacyCheckpointImmutable": true,
-    "sourceWordingIDsAndProvenanceUnchanged": true,
-    "settingsDecisionsAndNativeStateUnchanged": true,
+    "factsQuotesIDsAndProvenanceUnchanged": true,
+    "definitionsDecisionsOwnershipAndNativeDataUnchanged": true,
     "spentBudgetPreserved": true,
-    "sourceCopyExactBytesUnchanged": true,
     "selectedSnapshotOnly": true,
-    "sourceLedgerComplete": true,
-    "repeatedExtractionRequests": 0,
+    "unsampledSourcesUnexamined": true,
+    "sourceCopyExactBytesUnchanged": true,
+    "extractionRequests": 0,
     "nativeWrites": 0,
     "liveProviderRequests": 0
   },
@@ -792,8 +856,8 @@
   },
   "rightItemAndInformationPaneSection": false,
   "skills": {
-    "deslop": "Focused selection/controller/policy/UI diff review; removed dead recursive controller execution without unrelated rewrites.",
-    "codebaseDesign": "TagSelection owns census, ranking, finite task planning and source decisions. Tests cross module/public controller interfaces, with accessible manager controls and native integration checks."
+    "deslop": "Focused selection/controller/policy/UI review without unrelated rewrites.",
+    "codebaseDesign": "TagSelection retains its existing interface and owns representative selection, bounded scheduling, judgments and proposal preparation. Regressions cross module/public controller interfaces, accessible manager controls and native integration."
   },
   "workingLibraryModified": false,
   "workingRunInterrupted": false,
@@ -801,21 +865,20 @@
   "publicArtifactPrivateDataScan": "passed",
   "limits": [
     "Native interface checks used rendered Zotero controls, focus state and layout measurements.",
-    "Desktop screenshot review was unavailable because the computer-use Node runtime could not start (path not found).",
-    "No live AI request or real account authorization was performed.",
-    "Synthetic replies test scheduling, accounting and persistence, not scientific recommendation quality or live-provider latency.",
-    "Remote update-feed discovery was not exercised before publication; native in-place package upgrading and manifest/hash checks passed."
+    "No screenshot review or live account authorization was performed.",
+    "Simulated judgments validate scheduling, accounting and persistence, not scientific accuracy or live-provider latency.",
+    "Remote Zotero update-feed discovery was not exercised before publication; native in-place package upgrading and manifest/hash checks passed."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.7.1.xpi",
-      "bytes": 493986,
-      "sha256": "c46d2d639e845267e0a68cf16535fedacb759e4b187d03fbf57764bd6295512f"
+      "file": "smart-tags-0.8.0.xpi",
+      "bytes": 519799,
+      "sha256": "daa53f12ab51ec09c31ecc7d6aacf560cea3f75e761493346632375574eb090e"
     },
     "source": {
-      "file": "smart-tags-0.7.1-source.zip",
-      "bytes": 542448,
-      "sha256": "aa2db2552225afe1e4391cdf9e3225eebc6d3d17f9c4c44b471c8300bd60e65b"
+      "file": "smart-tags-0.8.0-source.zip",
+      "bytes": 576606,
+      "sha256": "a9d55a308730e0f7b987664e0b21115bc7c8887c1d6537c49eb91ee93feb8502"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

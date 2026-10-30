@@ -3,6 +3,7 @@ import { initialState } from '../src/controller.ts';
 import { fingerprint, paperFingerprint } from '../src/core.ts';
 import { createRegistrySnapshot, ensureFactConceptIds } from '../src/evidence.ts';
 import { createConsolidationWork, acceptConsolidationResult, nextConsolidationRequest } from '../src/library-consolidation.ts';
+import { createTagSelection } from '../src/tag-selection.ts';
 
 const clone=value=>JSON.parse(JSON.stringify(value));
 const normalized=value=>String(value).replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
@@ -54,6 +55,9 @@ export async function runNativeV053(app,check,config){
   let manager,nativeWrites=0,pdfReads=0;
   try{
     await navigator?.setMode('collections');app.state=fixture.state;
+    const facts=Object.values(app.state.facts).sort((a,b)=>a.paperId.localeCompare(b.paperId)),existing=app.consolidationDefinitions();
+    app.state.run.selection=createTagSelection(facts,existing,app.state.run.consolidation.snapshot,{plannerVersion:3,targetCount:60,maxOutputTokens:app.state.run.settings.maxOutputTokens,baseVersion:app.state.vocabularyVersion});
+    app.state.run.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:60,baseVersion:app.state.vocabularyVersion});
     app.env.host={...host,async list(){return clone(Object.values(app.state.papers));},async read(itemID){return clone(Object.values(app.state.papers).find(paper=>paper.itemID===itemID)??null);},async readTags(itemID){const paper=Object.values(app.state.papers).find(paper=>paper.itemID===itemID);return clone(paper?app.state.nativeTags[paper.id]:[]);},async pdfText(){pdfReads++;throw new Error('Retained facts must not request PDF extraction.');},async apply(){nativeWrites++;throw new Error('Consolidation cannot write native paper tags.');}};
     app.env.librarySnapshot=async()=>({papers:clone(Object.values(app.state.papers)),nativeTags:clone(app.state.nativeTags)});ai.hasApiKey=async()=>true;
     ai.completeJson=async(_system,prompt)=>{

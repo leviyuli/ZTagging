@@ -25,9 +25,15 @@ function harness(saved?:AppState){
       const ids=(label:string)=>data.conceptRegistry.filter((entry:{sources:{label:string}[]})=>entry.sources.some(source=>source.label===label)).map((entry:{registryId:string})=>entry.registryId);
       value={tags:[{key:'fc',name:'FC',fullName:'fuel cell',description:'A generated rewrite that must not change the approved meaning.',facet:'system',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:[]},{key:'aemfc',name:'AEMFC',fullName:'anion exchange membrane fuel cell',description:'Anion exchange membrane fuel cell systems.',facet:'system',aliases:[],parentKeys:['fc'],relatedKeys:[],supportRegistryIds:ids('AEMFC')},{key:'eis',name:'EIS',fullName:'electrochemical impedance spectroscopy',description:'A generated description of impedance measurements.',facet:'method',aliases:[],parentKeys:[],relatedKeys:[],supportRegistryIds:ids('Electrochemical impedance spectroscopy')}],merges:[],excluded:[]};
     }else if(data.selectionPhase==='mapping'){
+      if(data.requestedPairs)value={judgements:data.requestedPairs.map((pair:any)=>{
+        const source=data.sources.find((source:any)=>source.sourceId===pair.sourceId),tag=data.tags.find((tag:any)=>tag.id===pair.tagId);assert.ok(source);assert.ok(tag);
+        const exact=source.name==='AEMFC'&&tag.name==='AEMFC'||source.name==='Electrochemical impedance spectroscopy'&&tag.name==='EIS',relation=exact?'equivalent':source.name==='AEMFC'&&tag.name==='FC'?'subtype':'unrelated';
+        return {tagId:pair.tagId,registryId:pair.registryId,sourceIds:[pair.sourceId],relation,reason:relation==='unrelated'?'The actual source describes another scientific concept.':'The quotation explicitly establishes this technology or method.'};
+      })};else{
       const judgements=[],outside=[];
       for(const source of data.sources){const sourceId=source.sourceId,entry=data.permittedRegistry.find((value:any)=>value.sourceIds.includes(sourceId)),name=source.name.toLowerCase(),tag=data.tags.find((value:any)=>name==='aemfc'?value.name==='AEMFC':name==='electrochemical impedance spectroscopy'&&value.name==='EIS');if(tag)judgements.push({tagId:tag.id,registryId:entry.registryId,sourceIds:[sourceId],relation:'equivalent',reason:'The actual quotation explicitly establishes the chosen scientific topic.'});else outside.push({sourceIds:[sourceId],reason:'No selected core describes this separate finding.',disposition:'outside-core'});}
       value={judgements,outside};
+      }
     }else if(data.approvedVocabulary){
       value={summary:'A fuel-cell impedance experiment.',concepts:[],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.filter((tag:{name:string})=>tag.name==='AEMFC'||tag.name==='EIS').map((tag:{id:string})=>({tagId:tag.id,reason:'The abstract directly establishes this studied concept.',confidence:'high',match:'substantive',evidence:[{source:'abstract',text:data.paper.abstract}]}))};
     }else if(data.preparationPolicyVersion)throw new Error('No legacy preparation request is required.');

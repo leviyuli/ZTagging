@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- Replaced exhaustive source mapping in new builds with representative planner 4: up to three different example papers per tag, at most 64 tag–source pairs and 90 KB per request, with up to two requests in flight.
+- Labelled checked examples separately from library-wide matches. Unsampled findings stay unexamined and cannot become outside-core or no_tag decisions. Every counted example still requires an exact-source policy-3 proof.
+- Preserved valid pair results across malformed neighboring rows, restart, and one bounded repair round. Compatible positive and negative decisions are reused; only unresolved pairs need technical retry.
+- Deferred unsupported generated topics while retaining DIY definitions and protected edits. Omitted ambiguous examples when another positive example grounds the same concept; retained questions for genuinely unresolved meanings.
+- Added explicit **Use faster build** for an unfinished older build. It sets a preferred target of 60, lets active requests settle, reuses completed analysis and compatible proofs, and retains old replies, edits, counters, and spending in history.
+- Upgraded state to schema 7 with an immutable exact-byte backup. Existing schema-6 planner-3 checkpoints remain unchanged until the researcher chooses a different workflow. Extraction, terminology, source-validation policy, selected providers, and native-library safeguards remain unchanged.
+- Kept Apply tag list limited to definitions. Paper assignment still starts separately for its own group and requires reviewed native Apply with undo; incoming automation retains its pilot gate.
+
 ## 0.7.1
 
 - Fixed tag selection stopping when a generated alias conflicts with a protected DIY topic. Existing user names, meanings, IDs, matching settings, and native assignments remain unchanged.

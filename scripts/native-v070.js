@@ -2,6 +2,8 @@
 import { initialState } from '../src/controller.ts';
 import { fingerprint, paperFingerprint } from '../src/core.ts';
 import { normalizeFacts } from '../src/taxonomy.ts';
+import { createRegistrySnapshot } from '../src/evidence.ts';
+import { createTagSelection } from '../src/tag-selection.ts';
 
 const clone=value=>JSON.parse(JSON.stringify(value));
 const normalized=value=>String(value).replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
@@ -27,6 +29,9 @@ export async function runNativeV070(app,check,config){
       const paper={id:`v070-shadow-${paperIndex}`,itemID:700_000+paperIndex,libraryID:Zotero.Libraries.userLibraryID,key:`V070${paperIndex}`,title:`V070QA retained paper ${paperIndex}`,abstract:concepts.map(concept=>concept.evidence[0].text).join(' '),keywords:[],fingerprint:''};paper.fingerprint=paperFingerprint(paper);app.state.papers[paper.id]=paper;app.state.nativeTags[paper.id]=[{tag:'Manual synthetic project',type:0}];app.state.facts[paper.id]=normalizeFacts({summary:'Retained scientific findings.',concepts,needsPDF:false},paper,'retained-synthetic','retained-model');
     }
     app.state.run={id:'v070-finite-selection',kind:'rebuild',scope:'selected',automatic:false,status:'paused',jobs:Object.keys(app.state.papers).map(paperId=>({id:`job-${paperId}`,paperId,status:'completed'})),vocabCursor:0,vocabFinished:false,message:'Resume retained source checking.',spentUSD:0,settings:clone(app.state.settings),vocabularyVersion:app.state.vocabularyVersion};
+    const facts=Object.values(app.state.facts).sort((a,b)=>a.paperId.localeCompare(b.paperId)),existing=app.consolidationDefinitions(),registry=createRegistrySnapshot(facts,app.state.evidenceCatalog);
+    app.state.run.selection=createTagSelection(facts,existing,registry,{plannerVersion:3,targetCount:2,maxOutputTokens:512,baseVersion:app.state.vocabularyVersion});
+    app.state.run.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:2,baseVersion:app.state.vocabularyVersion});
     const factsBefore=fingerprint(app.state.facts),nativeBefore=fingerprint(app.state.nativeTags);
     app.env.host={...host,async list(){return clone(Object.values(app.state.papers));},async read(itemID){return clone(Object.values(app.state.papers).find(paper=>paper.itemID===itemID)??null);},async readTags(itemID){const paper=Object.values(app.state.papers).find(paper=>paper.itemID===itemID);return clone(paper?app.state.nativeTags[paper.id]:[]);},async pdfText(){pdfReads++;throw new Error('The retained complete facts need no PDF extraction.');},async apply(){nativeWrites++;throw new Error('Selection and mapping cannot write native paper tags.');}};
     app.env.librarySnapshot=async()=>({papers:clone(Object.values(app.state.papers)),nativeTags:clone(app.state.nativeTags)});ai.getSession=async()=>({connected:true,sharing:true,email:null,accountId:'native-synthetic',accounts:[]});

@@ -35,6 +35,7 @@ export interface TaxonomyProposal {
   machineDecisions?:Record<string,MachineEvidenceDecision>;
   preparationPolicyVersion?:2|3;
   mappingPolicyVersion?:3;
+  verificationScope?:'representative'|'exhaustive';
   mappedSourceIds?:Record<string,string[]>;
   inheritanceReviewSourceIds?:Record<string,string[]>;
   retainedDefinitionIds?:string[];
