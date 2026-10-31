@@ -31,7 +31,10 @@ function harness(ready = true, available = true) {
     hidden = false;
     disabled = false;
     value = '';
+    scrollTop = 0;
     selectionStart: number | null = 0;
+    selectionEnd: number | null = 0;
+    focusOptions?: FocusOptions;
     constructor(name: string) { this.localName = name; this.ownerDocument = doc; }
     get firstChild() { return this.children[0] || null; }
     get textContent(): string { return this.ownText + this.children.map(child => child.textContent).join(''); }
@@ -50,8 +53,8 @@ function harness(ready = true, available = true) {
     removeAttribute(name: string) { this.attrs.delete(name); }
     addEventListener(type: string, listener: () => void) { this.listeners.set(type, [...this.listeners.get(type) || [], listener]); }
     fire(type: string) { if (!this.disabled) for (const listener of this.listeners.get(type) || []) listener(); }
-    focus() { doc.activeElement = this; }
-    setSelectionRange(start: number) { this.selectionStart = start; }
+    focus(options?: FocusOptions) { doc.activeElement = this; this.focusOptions = options; }
+    setSelectionRange(start: number, end = start) { this.selectionStart = start; this.selectionEnd = end; }
     querySelector(selector: string): Element | null { return descendants(this).find(node => selector.startsWith('.') ? node.className.split(' ').includes(selector.slice(1)) : node.localName === selector) || null; }
   }
   const doc: any = { activeElement: null,
@@ -258,4 +261,30 @@ test('shared-detail locations include outgoing, incoming and legacy contexts wit
 
 test('all saved definitions appear directly under scientific categories and offer the same actions',async()=>{
  const h=harness(),navigator=mountNavigator(h.win,h.api,{onEditTag(){}});await navigator.refresh();assert.ok(h.label('RCL'),'A researcher-authored definition is visible without opening a separate class.');assert.doesNotMatch(h.sidebar.textContent,/Shared details|Your topics|User details/);assert.ok(h.text('＋ Create tag'));h.label('FC')!.fire('click');await h.flush();assert.ok(h.text('Assign to selected papers'));assert.ok(h.text('Preview matches'));assert.ok(h.text('Edit definition'));h.text('Assign to selected papers')!.fire('click');await h.flush();assert.deepEqual(h.invocations[0],['assign-detail',{tagId:'fc',scope:'selected',itemIDs:[2]}]);await navigator.destroy();
+});
+
+test('selecting, expanding and combining tags retains the tree position and the focused control',async()=>{
+  const h=harness(),navigator=mountNavigator(h.win,h.api);await navigator.refresh();
+  const tree=()=>h.nodes().find(node=>node.className==='smart-tags-tree')!;tree().scrollTop=320;
+  for(const label of ['FC','Collapse FC']){const control=h.label(label)!;control.focus();control.fire('click');await h.flush();assert.equal(tree().scrollTop,320);assert.equal(h.win.document.activeElement.getAttribute('data-smart-tags-focus'),control.getAttribute('data-smart-tags-focus'));assert.deepEqual(h.win.document.activeElement.focusOptions,{preventScroll:true});}
+  h.text('Any')!.focus();h.text('Any')!.fire('click');await h.flush();assert.equal(tree().scrollTop,320);assert.equal(h.win.document.activeElement,h.text('Any'));assert.equal(navigator.filter.mode,'any');
+  h.text('Clear')!.fire('click');await h.flush();assert.equal(tree().scrollTop,320);assert.equal(navigator.filter.selections.length,0);
+  await navigator.destroy();
+});
+
+test('search keeps its caret and results position across background refresh and restores the tree when cleared',async()=>{
+  const h=harness(),navigator=mountNavigator(h.win,h.api);await navigator.refresh();
+  const tree=()=>h.nodes().find(node=>node.className==='smart-tags-tree')!,search=()=>h.nodes().find(node=>node.className==='smart-tags-search')!;tree().scrollTop=410;
+  search().value='fuel';search().focus();search().setSelectionRange(1,3);search().fire('input');await h.flush();assert.equal(tree().scrollTop,0);assert.equal(h.win.document.activeElement,search());assert.equal(search().selectionStart,1);assert.equal(search().selectionEnd,3);
+  tree().scrollTop=70;h.setSnapshot({queue:{completed:8}});await h.runTimers();await navigator.refresh();assert.equal(tree().scrollTop,70);assert.equal(h.win.document.activeElement,search());assert.equal(search().selectionStart,1);assert.equal(search().selectionEnd,3);
+  search().value='';search().setSelectionRange(0);search().fire('input');await h.flush();assert.equal(tree().scrollTop,410);assert.equal(h.win.document.activeElement,search());assert.equal(search().value,'');
+  await navigator.destroy();
+});
+
+test('scroll positions remain independent between windows and survive a Collections round trip',async()=>{
+  const first=harness(),firstNavigator=mountNavigator(first.win,first.api);await firstNavigator.refresh();const firstTree=()=>first.nodes().find(node=>node.className==='smart-tags-tree')!;firstTree().scrollTop=260;
+  const second=harness(),secondNavigator=mountNavigator(second.win,second.api);await secondNavigator.refresh();const secondTree=()=>second.nodes().find(node=>node.className==='smart-tags-tree')!;secondTree().scrollTop=95;
+  first.label('FC')!.fire('click');await first.flush();await secondNavigator.refresh();assert.equal(firstTree().scrollTop,260);assert.equal(secondTree().scrollTop,95);
+  await firstNavigator.setMode('collections');await firstNavigator.refresh();await firstNavigator.setMode('tags');assert.equal(firstTree().scrollTop,260);assert.equal(secondTree().scrollTop,95);
+  await firstNavigator.destroy();await secondNavigator.destroy();
 });

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {fingerprint} from '../src/core.ts';
 import type {TagDefinition} from '../src/core.ts';
 import {createEmptyEvidenceCatalog,createRegistrySnapshot} from '../src/evidence.ts';
-import {createTaxonomyProposal,refreshProposalEvidence} from '../src/taxonomy.ts';
+import {conceptMappingFingerprint,conceptMeaningFingerprint,createTaxonomyProposal,refreshProposalEvidence,semanticDecisionKey,validMappedSourceDecision} from '../src/taxonomy.ts';
 import type {PaperFacts} from '../src/taxonomy.ts';
 import {prepare,applyRepair} from '../src/tag-preparation.ts';
 import {getNoTagDefinition} from '../src/tag-policy.ts';
-import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,composeExtendedVocabulary} from '../src/vocabulary-extension.ts';
+import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,refreshExtensionProposal,composeExtendedVocabulary} from '../src/vocabulary-extension.ts';
 
 function definition(id:string,name:string,fullName=name,extra:Partial<TagDefinition>={}):TagDefinition{return {id,name,fullName,description:`Approved scientific scope of ${fullName}.`,facet:'system',aliases:[],broaderIds:[],relatedIds:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',matchingMode:'auto',...extra};}
 function fact(name:string,quote=`This experiment studies ${name}.`):PaperFacts{return {paperId:'new-sample-paper',metadataFingerprint:'new-metadata',inputFingerprint:'new-input',provider:'retained-provider',model:'retained-model',extractionVersion:1,summary:name,needsPDF:false,concepts:[{name,facet:'system',evidence:[{source:'abstract',text:quote}]}]};}
@@ -78,4 +78,41 @@ test('baseline merge suggestions and attempted model edits cannot retire or alte
 test('combined graph validation rejects ambiguous new aliases and unknown contextual destinations at composition',()=>{
   const old=definition('fc','FC','fuel cell'),baseline=captureVocabularyBaseline([old],3),data=incoming([fact('new experiment')],[{key:'new',name:'new experiment'}],baseline),scoped=reconcileExtensionProposal(data.proposal,baseline);scoped.tags[0].name='FC';assert.throws(()=>composeExtendedVocabulary(scoped),/Ambiguous/);scoped.tags[0].name='new experiment';scoped.extension!.relatedIds[scoped.tags[0].id]=['foreign-approved-id'];assert.throws(()=>composeExtendedVocabulary(scoped),/Unknown related/);
   const changed=structuredClone(baseline);changed.definitions[0].description='A forged alternate authority.';assert.throws(()=>reconcileExtensionProposal(scoped,changed),/baseline/);
+});
+
+function checkedAddition(baseline:ReturnType<typeof captureVocabularyBaseline>,name='interfacial resistance',extra:Record<string,unknown>={}){
+  const data=incoming([fact(name)],[{key:'new-tag',name,facet:'phenomenon',...extra}],baseline),proposal=data.proposal;proposal.mappingPolicyVersion=3;proposal.preparationPolicyVersion=3;proposal.tagPolicyVersion=2;proposal.verificationScope='representative';proposal.machineDecisions={};proposal.mappedSourceIds={};
+  for(const tag of proposal.tags)for(const source of Object.values(data.snapshot.sources)){const registry=Object.values(data.snapshot.entries).find(entry=>entry.sourceIds.includes(source.factConceptId))!;proposal.mappedSourceIds[tag.id]=[source.factConceptId];proposal.machineDecisions[semanticDecisionKey(tag.id,source.factConceptId)]={tagId:tag.id,sourceId:source.factConceptId,registryId:registry.registryId,snapshotId:data.snapshot.id,meaningFingerprint:conceptMeaningFingerprint(tag),tagFingerprint:conceptMappingFingerprint(tag),sourceFingerprint:fingerprint(source),policyVersion:3,relation:'equivalent',reason:'The exact retained source establishes this proposed meaning.',origin:'ai'};}
+  return refreshProposalEvidence(reconcileExtensionProposal(proposal,baseline));
+}
+
+test('refreshing an extension after a saved deletion keeps additions and exact source proof without resurrecting the deleted tag',()=>{
+  const kept=definition('saved-fc','FC','fuel cell'),removed=definition('saved-we','WE','water electrolysis'),baseline=captureVocabularyBaseline([kept,removed],5),proposal=checkedAddition(baseline),addition=proposal.tags.find(tag=>tag.name==='interfacial resistance')!,sourceIds=proposal.support[addition.id].sourceIds;
+  proposal.rawResponse={synthetic:'The original paid response is retained.'};const before=fingerprint(proposal),rawBefore=fingerprint(proposal.rawResponse),refreshed=refreshExtensionProposal(proposal,[kept],6);
+  assert.equal(refreshed.baseVersion,6);assert.equal(refreshed.extension!.baseline.version,6);assert.deepEqual(refreshed.tags.find(tag=>tag.id===kept.id),kept);assert.ok(!refreshed.tags.some(tag=>tag.id===removed.id));assert.deepEqual(refreshed.tags.find(tag=>tag.id===addition.id),addition);assert.deepEqual(refreshed.support[addition.id].sourceIds,sourceIds);assert.ok(sourceIds!.every(id=>validMappedSourceDecision(refreshed,addition,id)));assert.equal(refreshed.issues.length,0);assert.equal(fingerprint(refreshed.evidenceSnapshot),fingerprint(proposal.evidenceSnapshot));assert.deepEqual(refreshed.candidateIds,proposal.candidateIds);assert.deepEqual(refreshed.candidateKeys,proposal.candidateKeys);assert.equal(fingerprint(refreshed.rawResponse),rawBefore);assert.equal(fingerprint(proposal),before);assert.deepEqual(refreshExtensionProposal(JSON.parse(JSON.stringify(refreshed)),[kept],6),refreshed);
+});
+
+test('refresh removes links to deleted or changed saved meanings while preserving unchanged new-tag judgments',()=>{
+  const parent=definition('parent','transport','transport',{facet:'phenomenon'}),removed=definition('removed','membrane response','membrane response',{facet:'phenomenon'}),baseline=captureVocabularyBaseline([parent,removed],3),proposal=checkedAddition(baseline,'interfacial resistance',{parentKeys:['parent'],relatedKeys:['removed']}),addition=proposal.tags.find(tag=>tag.name==='interfacial resistance')!,sourceIds=proposal.support[addition.id].sourceIds!,updated={...parent,description:'A newly narrowed saved meaning.'};proposal.unresolvedRelationships=[{tagId:addition.id,kind:'parent',reference:'transport'},{tagId:addition.id,kind:'related',reference:removed.id}];
+  const refreshed=refreshExtensionProposal(proposal,[updated],4),tag=refreshed.tags.find(tag=>tag.id===addition.id)!;assert.deepEqual(refreshed.tags.find(tag=>tag.id===parent.id),updated);assert.deepEqual(tag.broaderIds,[]);assert.deepEqual(tag.relatedIds,[]);assert.deepEqual(refreshed.extension!.relatedIds[addition.id]??[],[]);assert.deepEqual(refreshed.unresolvedRelationships,[]);assert.deepEqual(refreshed.support[parent.id].paperIds,[]);assert.deepEqual(refreshed.support[addition.id].sourceIds,sourceIds);assert.ok(sourceIds.every(id=>validMappedSourceDecision(refreshed,tag,id)));assert.equal(refreshed.issues.length,0);
+});
+
+test('refresh strips speculative aliases before canonical comparison and preserves newly saved definitions exactly',()=>{
+  const baseline=captureVocabularyBaseline([],1),proposal=checkedAddition(baseline),addition=proposal.tags[0],saved=definition('conductivity','ionic conductivity','ionic conductivity',{facet:'phenomenon'});addition.aliases=['ionic conductivity'];
+  const refreshed=refreshExtensionProposal(proposal,[saved],2),retained=refreshed.tags.find(tag=>tag.id===addition.id)!;assert.ok(retained);assert.notEqual(retained.id,saved.id);assert.deepEqual(retained.aliases,[]);assert.deepEqual(refreshed.tags.find(tag=>tag.id===saved.id),saved);assert.equal(refreshed.tags.length,2);assert.equal(refreshed.candidateIds!['new-tag'],addition.id);assert.equal(refreshed.issues.length,0);
+});
+
+test('refresh keeps an independently equivalent new saved identity without claiming old proof for its changed scope',()=>{
+  const proposal=checkedAddition(captureVocabularyBaseline([],1)),addition=proposal.tags[0],saved=definition('newly-saved','interfacial resistance','interfacial resistance',{facet:'phenomenon',description:'The current saved scope with an explicit material restriction.',inclusions:['Only the newly selected material.']}),refreshed=refreshExtensionProposal(proposal,[saved],2);
+  assert.equal(refreshed.tags.length,1);assert.deepEqual(refreshed.tags[0],saved);assert.equal(refreshed.candidateIds!['new-tag'],saved.id);assert.deepEqual(refreshed.support[saved.id].sourceIds,[]);assert.deepEqual(refreshed.support[saved.id].paperIds,[]);assert.ok(Object.values(refreshed.machineDecisions??{}).every(decision=>!validMappedSourceDecision(refreshed,saved,decision.sourceId)));assert.equal(refreshed.issues.length,0);assert.notEqual(addition.id,saved.id);
+});
+
+test('refresh expands a conflicting display label or defers it without changing saved scientific meanings',()=>{
+  const proposal=checkedAddition(captureVocabularyBaseline([],1),'interfacial resistance',{name:'interface',fullName:'interfacial resistance'}),addition=proposal.tags[0],saved=definition('interface-method','interface','interface analysis',{facet:'method'}),expanded=refreshExtensionProposal(proposal,[saved],2);assert.equal(expanded.tags.find(tag=>tag.id===addition.id)!.name,'interfacial resistance');assert.deepEqual(expanded.tags.find(tag=>tag.id===saved.id),saved);
+  const sameLabel=definition('method','interfacial resistance','interfacial resistance method',{facet:'method'}),deferred=refreshExtensionProposal(proposal,[sameLabel],2);assert.ok(!deferred.tags.some(tag=>tag.id===addition.id));assert.deepEqual(deferred.tags[0],sameLabel);assert.ok(deferred.excluded.some(value=>value.name==='interface'));assert.equal(deferred.candidateIds!['new-tag'],addition.id);assert.equal(deferred.support[addition.id],undefined);
+});
+
+test('refresh cannot hide a known scientific contradiction or a stale source fingerprint',()=>{
+  const proposal=checkedAddition(captureVocabularyBaseline([],1)),broken=structuredClone(proposal);broken.tags[0].name='Co';broken.tags[0].fullName='cobalt';broken.tags[0].aliases=['CO'];assert.throws(()=>refreshExtensionProposal(broken,[definition('gas','CO','carbon monoxide',{facet:'component'})],2),/scientifically distinct/);
+  const stale=structuredClone(proposal),decision=Object.values(stale.machineDecisions!)[0];decision.sourceFingerprint='not-the-retained-source';const refreshed=refreshExtensionProposal(stale,[],2),tag=refreshed.tags[0];assert.deepEqual(refreshed.support[tag.id].paperIds,[]);assert.ok(refreshed.validationIssues!.some(issue=>issue.code==='unvalidated-source'));assert.equal(validMappedSourceDecision(refreshed,tag,decision.sourceId),undefined);
 });

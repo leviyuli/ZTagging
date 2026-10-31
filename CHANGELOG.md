@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0
+
+- Preserve navigator scroll, focus and search caret through selection, expansion, refresh and Collections switching.
+- Fold Existing tags into My tags and show one deduplicated library union. Approved aliases share canonical rows and paper counts; native names without meanings remain unchanged. Shelves may overlap; assignment counts include only usable definitions.
+- Refresh prepared additions against the current saved list through Update and apply. Respect deletions and edited meanings, retain original work and spending, and reuse compatible checks instead of requiring a new build.
+- Prefer precise imported keywords for new topic labels and expose verified keyword wording to global selection. Keep cached extraction, source identities and historical normalization unchanged.
+- Group known DRT wording variants in completed topic reports, retain distinct compound topics, and simplify rows to topic names, paper counts and links.
+
 ## 0.10.3
 
 - Fixed extension builds repeatedly rejecting the whole generated list when aliases overlap saved tags or other candidates. Saved names, meanings, aliases and IDs remain authoritative; conflicting generated aliases are removed without inferring equivalence.

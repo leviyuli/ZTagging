@@ -102,6 +102,10 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   let error = '';
   const expanded = new Set<string>();
   const counts = new Map<string, number>();
+  const focusTargets = new Map<string, HTMLElement>();
+  let renderedQuery = '';
+  let treeScrollTop = 0;
+  let searchScrollTop = 0;
   let observerID: any;
   let unsubscribe = () => {};
   const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] => {
@@ -116,9 +120,14 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   let tabs: { tags: HTMLButtonElement; collections: HTMLButtonElement } | undefined;
   let stylesheet: Element | undefined;
 
-  function button(text: string, action: () => void | Promise<void>, className = '') {
+  function focusTarget(node: HTMLElement, key: string) {
+    node.setAttribute('data-smart-tags-focus', key);
+    focusTargets.set(key, node);
+  }
+  function button(text: string, action: () => void | Promise<void>, className = '', focusKey?: string) {
     const node = el('button', className, text);
     node.type = 'button';
+    if (focusKey) focusTarget(node, focusKey);
     node.addEventListener('click', () => { Promise.resolve().then(action).catch(reportError); });
     return node;
   }
@@ -162,6 +171,12 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     const keys = new Set([...literalNames].map(canonicalTagKey));
     return new Set(libraryItems.flatMap(item => item.names).filter(name => !literalNames.has(name) && keys.has(canonicalTagKey(name))));
   }
+  function rememberScroll() {
+    const tree = content?.querySelector<HTMLElement>('.smart-tags-tree');
+    if (!tree || content?.hidden) return;
+    if (renderedQuery.trim()) searchScrollTop = tree.scrollTop;
+    else treeScrollTop = tree.scrollTop;
+  }
   async function setMode(next: Mode) {
     if (destroyed || !pane) return;
     if (next === 'tags' && (!adapter.available || !nativeDOMAvailable)) {
@@ -169,11 +184,12 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
       render(); return;
     }
     if (next === mode) { if (next === 'tags') await applyFilter(); return; }
+    rememberScroll();
     error = '';
     mode = next;
     if (next === 'collections') await adapter.restore();
     else await applyFilter();
-    updateVisibility(); render();
+    render();
   }
   async function toggleSelection(tag: DisplayTag, contextId?: string) {
     const key = selectionKey(tag.id, contextId);
@@ -193,15 +209,16 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     const row = el('div', 'smart-tags-concept-row');
     row.style.setProperty('--smart-tags-depth', String(depth));
     const open = expanded.has(tag.id);
+    const focusKey = [...ancestors, contextId || '', tag.id].map(encodeURIComponent).join('/');
     const expander = button(branches ? (open ? '⌄' : '›') : '', () => {
       if (expanded.has(tag.id)) expanded.delete(tag.id); else expanded.add(tag.id);
       render();
-    }, 'smart-tags-expander');
+    }, 'smart-tags-expander', `expand:${focusKey}`);
     expander.disabled = !branches;
     expander.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${tag.name}`);
     if (branches) expander.setAttribute('aria-expanded', String(open));
     const selected = filter.selections.some(value => selectionKey(value.conceptId, value.contextId) === selectionKey(tag.id, contextId));
-    const select = button('', () => toggleSelection(tag, contextId), 'smart-tags-concept-select');
+    const select = button('', () => toggleSelection(tag, contextId), 'smart-tags-concept-select', `select:${focusKey}`);
     select.setAttribute('role', 'checkbox');
     select.setAttribute('aria-checked', String(selected));
     select.setAttribute('aria-label', contextId ? `${tag.name} within ${all.find(value => value.id === contextId)?.name || contextId}` : tag.name);
@@ -219,23 +236,27 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   }
   function render() {
     if (!root || !content || !status || !tabs || destroyed) return;
+    rememberScroll();
+    const active = doc.activeElement as HTMLInputElement | null;
+    const focusedKey = active?.getAttribute('data-smart-tags-focus');
+    const caret = focusedKey === 'search' ? [active?.selectionStart, active?.selectionEnd] : undefined;
+    if (renderedQuery !== query) searchScrollTop = 0;
+    renderedQuery = query;
+    focusTargets.clear();
     updateVisibility();
     status.textContent = error;
     status.hidden = !error;
     content.replaceChildren();
     const search = el('input', 'smart-tags-search');
+    focusTarget(search, 'search');
     search.type = 'search'; search.placeholder = 'Search tags'; search.value = query;
     search.setAttribute('aria-label', 'Search names, full names, aliases and definitions');
     search.addEventListener('input', () => {
-      const start = search.selectionStart;
       query = search.value; render();
-      const next = content?.querySelector<HTMLInputElement>('.smart-tags-search');
-      next?.focus();
-      if (next && start !== null) { try { next.setSelectionRange(start, start); } catch {} }
     });
     const tools = el('div', 'smart-tags-tools');
-    const all = button('All', async () => { filter = { ...filter, mode: 'all' }; render(); await applyFilter(); });
-    const any = button('Any', async () => { filter = { ...filter, mode: 'any' }; render(); await applyFilter(); });
+    const all = button('All', async () => { filter = { ...filter, mode: 'all' }; render(); await applyFilter(); }, '', 'match-all');
+    const any = button('Any', async () => { filter = { ...filter, mode: 'any' }; render(); await applyFilter(); }, '', 'match-any');
     for (const [node, value] of [[all, 'all'], [any, 'any']] as const) {
       node.classList.toggle('is-active', filter.mode === value); node.setAttribute('aria-pressed', String(filter.mode === value));
     }
@@ -251,11 +272,11 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
         const context = definitions().find(value => value.id === selection.contextId);
         const chip = button(`${context ? `${context.name} + ` : ''}${tag?.name || 'Unavailable concept'} ×`, async () => {
           filter = { ...filter, selections: filter.selections.filter(value => value !== selection) }; render(); await applyFilter();
-        }, 'smart-tags-filter-chip');
+        }, 'smart-tags-filter-chip', `remove:${selectionKey(selection.conceptId, selection.contextId)}`);
         chip.setAttribute('aria-label', `Remove ${context ? `${context.name} and ` : ''}${tag?.name || 'unavailable concept'} filter`);
         chips.append(chip);
       }
-      chips.append(button('Clear', async () => { filter = { ...filter, selections: [] }; render(); await applyFilter(); }, 'smart-tags-clear'));
+      chips.append(button('Clear', async () => { filter = { ...filter, selections: [] }; render(); await applyFilter(); }, 'smart-tags-clear', 'clear'));
       content.append(chips);
     }
     const tree = el('div', 'smart-tags-tree');
@@ -289,7 +310,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     const context = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.custom && !tag.builtin)).find(Boolean);
     actions.append(button('＋ Create tag', () => {
       if (options.onCreateDetail) options.onCreateDetail(context?.id); else options.openManager?.();
-    }));
+    }, '', 'create'));
     const selectedDetail = [...filter.selections].reverse().map(selection => definitions().find(tag => tag.id === selection.conceptId && !tag.builtin)).find(Boolean);
     if (selectedDetail) {
       actions.append(el('div', 'smart-tags-detail-title', selectedDetail.name));
@@ -297,14 +318,20 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
         const itemIDs = (win.ZoteroPane?.getSelectedItems?.() || []).filter((item: any) => item.isRegularItem?.() && !item.deleted && item.libraryID === Zotero.Libraries.userLibraryID).map((item: any) => item.id);
         await api.invoke('assign-detail', { tagId: selectedDetail.id, scope: 'selected', itemIDs });
         await refresh();
-      }));
+      }, '', 'assign'));
       actions.append(button('Preview matches', async () => {
         await api.invoke('preview-detail', { tagId: selectedDetail.id, scope: 'library' }); options.openManager?.();
-      }));
-      if (options.onEditTag) actions.append(button('Edit definition', () => options.onEditTag!(selectedDetail.id)));
+      }, '', 'preview'));
+      if (options.onEditTag) actions.append(button('Edit definition', () => options.onEditTag!(selectedDetail.id), '', 'edit'));
     }
-    if (options.openManager) actions.append(button('Open tag manager ↗', options.openManager, 'smart-tags-manage'));
+    if (options.openManager) actions.append(button('Open tag manager ↗', options.openManager, 'smart-tags-manage', 'manager'));
     content.append(actions);
+    if (mode === 'tags') {
+      const focused = focusedKey ? focusTargets.get(focusedKey) : undefined;
+      focused?.focus({ preventScroll: true });
+      if (focused === search && caret?.[0] != null && caret[1] != null) { try { search.setSelectionRange(caret[0], caret[1]); } catch {} }
+      tree.scrollTop = query.trim() ? searchScrollTop : treeScrollTop;
+    }
   }
   function scheduleRefresh() {
     if (destroyed || !root) return;

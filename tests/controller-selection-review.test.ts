@@ -41,7 +41,7 @@ function fixture(hierarchy=false) {
   };
   return {state,calls,documents,controller:new AppController(state,env),select:(id:number)=>{selected=id;},mapWith:(handler:typeof map)=>{map=handler;},writes:()=>writes};
 }
-async function build(h:ReturnType<typeof fixture>,id:number) {h.select(id);await h.controller.invoke('prepare-tags',{scope:'selected',mode:'replace'});await h.controller.waitForIdle();assert.equal(h.state.tagPreparation?.status,'ready',h.state.run?.message);}
+async function build(h:ReturnType<typeof fixture>,id:number,mode:'replace'|'extend'='replace') {h.select(id);await h.controller.invoke('prepare-tags',{scope:'selected',mode});await h.controller.waitForIdle();assert.equal(h.state.tagPreparation?.status,'ready',h.state.run?.message);}
 async function importedFirstBuild(h:ReturnType<typeof fixture>) {
   await build(h,1);await h.controller.invoke('export-taxonomy-proposal',{id:h.state.taxonomyProposal!.id});await build(h,2);
   const oldWork=copy(h.state.run!.selection!);await h.controller.invoke('import-vocabulary',{value:h.documents[0]});return oldWork;
@@ -79,4 +79,24 @@ test('a second prepared edit is rejected before changing an in-flight review or 
     assert.equal(h.state.taxonomyProposal!.tags.find(value=>value.id===tag.id)!.description,'First revised transport scope.');assert.equal(fingerprint(h.state.run!.selection),before);assert.equal(fingerprint(h.state.userEditedTagIds),choices);
   }finally{release();await h.controller.waitForIdle();}
   assert.equal(h.state.run!.status,'idle');assert.equal(h.state.tagPreparation!.status,'ready');assert.deepEqual(h.state.run!.selectionReplies,[]);const calls=h.calls.length;await h.controller.invoke('resume');await h.controller.waitForIdle();assert.equal(h.calls.length,calls);assert.equal(h.state.run!.status,'idle');assert.deepEqual(h.state.run!.selectionReplies,[]);assert.equal(h.writes(),0);
+});
+
+test('Update and apply refreshes an extension after a saved tag is deleted without rereading papers or resurrecting it',async()=>{
+  const h=fixture();await build(h,1);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});
+  const removed=h.state.tags[0].id;await build(h,2,'extend');
+  const original=copy(h.state.run!.selection!),facts=fingerprint(h.state.facts),calls=h.calls.length,spending=h.state.run!.spentUSD;
+  const raw=fingerprint(original.tasks.map(task=>task.attempts));await h.controller.invoke('delete-tag',{id:removed});
+  const view=(await h.controller.snapshot()).tagPreparation!;assert.equal(view.needsRefresh,true);assert.equal(view.canApply,true);
+  const result=await h.controller.invoke('apply-tag-list',{id:view.id});await h.controller.waitForIdle();
+  assert.deepEqual(result,{page:'assignment'});assert.equal(h.state.taxonomyProposal,null);assert.ok(!h.state.tags.some(tag=>tag.id===removed));assert.equal(h.calls.length,calls);assert.equal(fingerprint(h.state.facts),facts);assert.equal(h.state.run!.spentUSD,spending);assert.equal(h.writes(),0);
+  assert.equal(JSON.stringify(h.state.tagSelectionHistory!.find(entry=>entry.work.id===original.id)?.work),JSON.stringify(original));assert.equal(fingerprint(h.state.run!.selection!.tasks.slice(0,original.tasks.length).map(task=>task.attempts)),raw);assert.equal(h.state.run!.selection!.snapshotId,original.snapshotId);
+});
+
+test('refreshing an extension preserves a renamed and edited saved meaning and a newly added user tag',async()=>{
+  const h=fixture();await build(h,1);await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});await build(h,2,'extend');
+  const saved=h.state.tags[0],calls=h.calls.length;await h.controller.invoke('save-tag',{tag:{...saved,name:'My saved transport topic',description:'An explicitly revised scientific transport meaning.'}});
+  const extra=await h.controller.invoke('create-detail',{tag:{name:'My independent marker',description:'A manually chosen research marker.',facet:'phenomenon',aliases:[],inclusions:[],exclusions:[],examples:[],broaderIds:[],relatedIds:[],matchingMode:'suggest'}}) as string;
+  const current=fingerprint(h.state.tags),snapshot=(await h.controller.snapshot()).tagPreparation!;assert.equal(snapshot.needsRefresh,true);
+  await h.controller.invoke('apply-tag-list',{id:snapshot.id});await h.controller.waitForIdle();
+  assert.equal(h.state.tags.find(tag=>tag.id===saved.id)!.name,'My saved transport topic');assert.equal(h.state.tags.find(tag=>tag.id===saved.id)!.description,'An explicitly revised scientific transport meaning.');assert.ok(h.state.tags.some(tag=>tag.id===extra));assert.equal(h.calls.length,calls);assert.equal(h.writes(),0);assert.notEqual(fingerprint(h.state.tags),current);
 });

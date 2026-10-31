@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.10.3.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.10.3.xpi).
+2. Select [`smart-tags-0.11.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.11.0.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -27,9 +27,13 @@ Version **0.10.2** keeps previous tag-plan caches out of new reading progress. R
 
 Version **0.10.3** repairs conflicting generated names and aliases locally, keeping saved tag meanings unchanged. Update and use **Retry this step** on a paused build: completed paper analysis and saved replies are reused before another tag-selection request. Conflicting candidates can be left out without blocking the usable tags; scientific contradictions still require correction.
 
+Version **0.11.0** keeps the navigator's scroll position and focus, combines native names with **My tags**, and gives library shelves comparable counts. A completed extension prepared before a saved-tag edit offers **Update and apply**, reusing its papers and compatible checks while respecting deleted or edited definitions.
+
 ## Keep using and extending your tag library
 
 Use **Tag library → Add tag** or edit an existing definition. Choose a shelf to browse its tags, or rename it to suit your work. New builds create their own shelves; tags you add join the chosen shelf or My tags. A shelf does not make its tags synonyms or subtypes. A topic can be useful even when no current paper matches it. Matching and assignment keep their existing suggestion, review, and manual-choice protections.
+
+**All tags** is the unique union of saved definitions and native names without definitions. **My tags** includes your native Zotero tags; the former Existing tags shelf is folded into it. Approved alternate names share their canonical tag's row and unique-paper count. Undefined names keep their exact spelling and can be left alone or given a meaning. Shelves may share tags, so their counts are not additive; assignment lists count only tags with saved meanings.
 
 For papers from another field, open **Build tags**, select those papers or their collections, and use **Extend my saved tag list**. This is the default after a tag list has been applied. **New tags to suggest** starts at 30 and can be edited for each extension; **Settings → Default new tags per extension** changes that default. The initial 60-tag preference is separate: a library can grow from about 60 to 90 to 120 through successive extensions, without a combined 60-tag ceiling. These are targets, not quotas for unsupported concepts.
 
@@ -50,6 +54,10 @@ Paper analysis is cached independently of the tag list. Factual summaries, conce
 An unchanged rebuild reuses completed facts and saved consolidation output. You can prepare a new list over a paused, unapproved rebuild; it replaces the pending review while retaining cached paper analysis. Pause or close Zotero during a run, then resume from saved progress. Changed metadata or newly available PDF evidence refreshes affected papers.
 
 Tag selection starts with a local census of unique-paper support and sparse text similarity. It ranks useful topics with diminishing returns for repeatedly covering the same paper and category, without quotas for smaller fields. Similarity helps route candidates; it does not establish synonymy or scientific evidence. A bounded global shortlist supplies the model with names, coverage counts, and representative context. The model proposes reusable meanings, and a local selection pass keeps the useful core plus necessary parents. Unselected details remain in the factual catalog for later use without creating one tag for every finding.
+
+Imported paper keywords are preferred as topic names when they express the supported meaning clearly. Familiar abbreviations and saved names still take precedence over creating alternate spellings. Keywords guide extraction and naming; they do not bypass scientific context checks or automatically become native assignments. In Zotero, the keyword input comes from imported automatic tags, not manual project tags. Existing cached findings are retained; their verified keyword passages can guide subsequent builds without repeated extraction.
+
+The completed assignment's outside-topic report groups established wording variants such as the singular/plural full name of DRT analysis. It retains the underlying paper records and keeps compound topics, such as dry cathode operation together with water starvation, separate from narrower topics. Extending from selected papers compares new definitions with saved meanings; neither overlapping wording nor a repeated build guarantees that all topics are equivalent.
 
 Once names and meanings are fixed, Smart Tags checks examples from up to **three different papers per tag**. Requests contain at most **64 tag–source pairs and 90 KB**, with smaller batches when the output limit requires them. Up to two independent requests can run concurrently. A decision applies only to its exact tag, source, snapshot, and meaning; a shared keyword never approves other papers. Parent support can use validated subtype examples.
 

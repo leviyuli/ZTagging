@@ -90,6 +90,7 @@ export interface DisplayTagPreparation {
   tags: DisplayTag[];
   questions: DisplayTagQuestion[];
   canApply: boolean;
+  needsRefresh?: boolean;
   scopeCount: number;
   targetCount: number;
   error?: string;
@@ -137,6 +138,7 @@ export interface ManagerSnapshot {
   assignmentReview?: DisplayAssignmentReview;
   assignmentReviews?: DisplayAssignmentReview[];
   tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean }[] }[];
+  tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean }[];
   diyComparison?: {
     id: string;
     status: 'ready' | 'queued' | 'running' | 'paused';

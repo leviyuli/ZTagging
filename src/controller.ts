@@ -25,13 +25,13 @@ import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYD
 import {validConsolidationWork} from './library-consolidation.ts';
 import type {ConsolidationWork} from './library-consolidation.ts';
 import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
-import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,composeExtendedVocabulary} from './vocabulary-extension.ts';
+import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,composeExtendedVocabulary,refreshExtensionProposal} from './vocabulary-extension.ts';
 import type {VocabularyBaseline} from './vocabulary-extension.ts';
 import {createTagSelection,nextSelectionRequests,noteSelectionDispatch,acceptSelectionResult,failSelectionTask,finishedSelectionProposal,selectionProgress,validTagSelectionWork,resumeTagSelection,retryTagSelection,reviseTagSelection,SELECTION_MAX_REQUESTS} from './tag-selection.ts';
 import type {TagSelectionWork,TagSelectionRequest} from './tag-selection.ts';
 import {createAssignmentRun,triageAssignmentSuggestions,assignmentRunProgress,updateAssignmentRun,finishAssignmentRun,updateUncoveredTopics,resolveUncoveredTopics,groupUncoveredTopics,validAssignmentRunRecord,validUncoveredTopicRecord} from './assignment-review.ts';
 import type {AssignmentRunRecord,AssignmentReviewJob,UncoveredTopicRecord} from './assignment-review.ts';
-import {migrateTagShelves,createBuildTagShelf,renameTagShelf,updateTagShelfMembers,selectTagShelfDefinitions,nativeTagShelfEntries,validTagShelves,MY_TAGS_SHELF_ID} from './tag-shelves.ts';
+import {migrateTagShelves,createBuildTagShelf,renameTagShelf,updateTagShelfMembers,selectTagShelfDefinitions,libraryTagShelfEntries,resolveTagShelfId,validTagShelves,MY_TAGS_SHELF_ID} from './tag-shelves.ts';
 import type {TagShelf} from './tag-shelves.ts';
 import {resetPaperAnalysis} from './analysis-reset.ts';
 import type {AnalysisResetRecord} from './analysis-reset.ts';
@@ -586,7 +586,23 @@ export class AppController implements ManagerAPI {
     const tags=new Map(proposal.tags.map(tag=>[tag.id,tag]));
     for(const tag of proposal.extension?.baseline.definitions??[])tags.set(tag.id,tag);
     for(const tag of this.state.tags)if(tag.custom&&!tags.has(tag.id)&&!removed.has(tag.id))tags.set(tag.id,tag);
-    return {id:preparation.id,status:preparation.status,verificationScope:proposal.verificationScope,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',scopeCount:proposal.paperIds.length,targetCount:this.state.settings.coreConceptLimit??60,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
+    return {id:preparation.id,status:preparation.status,verificationScope:proposal.verificationScope,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',needsRefresh:this.extensionNeedsRefresh(proposal),scopeCount:proposal.paperIds.length,targetCount:this.state.settings.coreConceptLimit??60,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
+  }
+  private extensionNeedsRefresh(proposal=this.state.taxonomyProposal) {
+    return !!proposal?.extension&&proposal.extension.baseline.fingerprint!==captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint;
+  }
+  private async refreshPreparedExtension(current:PreparationResult) {
+    if(!this.extensionNeedsRefresh(current.proposal))return current;
+    await this.ensureReviewIdle();
+    const proposal=refreshExtensionProposal(current.proposal,scientificDefinitions(this.state.tags),this.state.vocabularyVersion);
+    const run=this.selectionReviewRun(current.proposal);this.rememberPreparation();this.archiveSelection(run);
+    const work=copy(run.selection!);work.baseline=copy(proposal.extension!.baseline);work.baseVersion=proposal.baseVersion;work.existing=copy(this.consolidationDefinitions());
+    work.protectedTagIds=[...new Set([...work.protectedTagIds,...work.baseline.definitions.map(tag=>tag.id)])];
+    run.selection=reviseTagSelection(work,proposal);run.extensionBaseline=copy(work.baseline);run.vocabularyVersion=this.state.vocabularyVersion;
+    this.state.taxonomyProposal=copy(run.selection.proposal!);
+    const facts=proposal.paperIds.map(id=>this.state.facts[id]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
+    run.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing:this.consolidationDefinitions(),limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,buildMode:'extend',baselineFingerprint:work.baseline.fingerprint,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{})});
+    const refreshed=this.refreshPreparation()!;run.message=refreshed.state.status==='ready'?'Your additions match the current tag list.':'Checking your additions against the updated tag list…';await this.save();return refreshed;
   }
   private updateExtensionContexts(proposal:TaxonomyProposal,tags:readonly TagDefinition[]) {
     if(!proposal.extension)return;
@@ -727,7 +743,9 @@ export class AppController implements ManagerAPI {
     if(this.maintenanceWorker)throw new Error('Pause or finish the current run first.');
     if(this.state.run?.status==='running')throw new Error('Wait for the automatic checks to finish.');
     if(this.worker)await this.worker;
-    const current=this.requirePreparation(id);
+    const current=await this.refreshPreparedExtension(this.requirePreparation(id));
+    if(current.state.status==='checking'||(current.state.pendingSourceCount??0)>0){await this.continueSelectionReview(current,true);return {page:'cleanup'};}
+    if(current.state.status==='questions')return {page:'cleanup'};
     if(current.state.status!=='ready'||current.state.questions.length)throw new Error('Answer the remaining questions, or finish the automatic checks first.');
     const preparation=copy(current.state);
     this.rememberPreparation();
@@ -736,6 +754,7 @@ export class AppController implements ManagerAPI {
     delete this.state.tagPreparation;
     if(this.state.run?.kind==='rebuild')this.state.run.message='Your tag list is saved. Choose papers to preview assignments.';
     await this.save();
+    return {page:'assignment'};
   }
   private async reconciliationInput():Promise<ReconciliationInput> {
     const papers=await this.env.host.list('library');
@@ -865,7 +884,7 @@ export class AppController implements ManagerAPI {
   private allTags() {
     return [...scientificDefinitions(this.state.tags),getNoTagDefinition()];
   }
-  private shelves() {return this.state.tagShelves??=migrateTagShelves(this.state.tags);}
+  private shelves() {return this.state.tagShelves=migrateTagShelves(this.state.tags,this.state.tagShelves);}
   private async resetAnalysis() {
     await this.invoke('pause');
     await Promise.allSettled([this.worker,this.maintenanceWorker,this.commitTail]);
@@ -876,12 +895,12 @@ export class AppController implements ManagerAPI {
     try{await this.save();}catch(error){this.state=previous;throw error;}
   }
   private addTagToShelf(tagId:string,shelfId?:string) {
-    const shelves=this.shelves(),target=shelves.find(shelf=>shelf.id===(shelfId&&shelfId!=='all'?shelfId:MY_TAGS_SHELF_ID));
+    const shelves=this.shelves(),id=resolveTagShelfId(shelves,shelfId&&shelfId!=='all'?shelfId:MY_TAGS_SHELF_ID),target=shelves.find(shelf=>shelf.id===id);
     if(!target)throw new Error('Choose a shelf for this tag.');
     this.state.tagShelves=updateTagShelfMembers(shelves,target.id,[...target.tagIds,tagId],this.state.tags);
   }
   private async shelfNativeTags(shelfId:string) {
-    if(this.shelves().find(shelf=>shelf.id===shelfId)?.kind!=='existing')return this.state.nativeTags;
+    const shelves=this.shelves();if(resolveTagShelfId(shelves,shelfId)!==MY_TAGS_SHELF_ID)return this.state.nativeTags;
     const library=await this.env.librarySnapshot?.();
     if(library)return library.nativeTags;
     const native:Record<string,NativeTag[]>={};
@@ -889,10 +908,11 @@ export class AppController implements ManagerAPI {
     return native;
   }
   private shelfDisplay(nativeTags:Record<string,NativeTag[]>):NonNullable<ManagerSnapshot['tagShelves']> {
-    const shelves=this.shelves(),native=nativeTagShelfEntries(nativeTags,this.state.tags);
+    const shelves=this.shelves();
     return shelves.map(shelf=>{
       const selected=selectTagShelfDefinitions(this.state.tags,shelves,shelf.id,nativeTags);
-      return {...shelf,tagIds:selected.assignableIds,count:shelf.kind==='existing'?native.length:selected.assignableIds.length,...(shelf.kind==='existing'?{nativeNames:native.map(entry=>({name:entry.name,paperCount:entry.paperIds.length,...(entry.definitionIds.length===1?{tagId:entry.definitionIds[0]}:{}),protected:entry.protected}))}:{})};
+      const rows=libraryTagShelfEntries(nativeTags,this.state.tags,shelf.tagIds,shelf.id===MY_TAGS_SHELF_ID);
+      return {...shelf,tagIds:selected.assignableIds,count:rows.length,...(shelf.id===MY_TAGS_SHELF_ID?{nativeNames:rows}:{})};
     });
   }
   private excluded(id:string) {
@@ -1111,7 +1131,7 @@ export class AppController implements ManagerAPI {
   private workflowDisplay(nativeTags:Record<string,NativeTag[]>):NonNullable<ManagerSnapshot['workflow']> {
     const workflow=this.workflowState(),active=new Set(scientificDefinitions(this.state.tags).filter(tag=>tag.status==='approved').map(tag=>tag.id));
     const assignedPaperCount=new Set(workflow.assignmentPaperIds.filter(paperId=>Object.entries(this.state.ownership[paperId]??{}).some(([tagId,assignment])=>active.has(tagId)&&(nativeTags[paperId]??[]).some(tag=>canonicalTagKey(tag.tag)===canonicalTagKey(assignment.name))))).size;
-    return {buildMode:workflow.buildMode,buildScope:workflow.buildScope,buildPaperCount:new Set(workflow.buildPaperIds).size,assignmentScope:workflow.assignmentScope,assignmentTagShelfId:workflow.assignmentTagShelfId??'all',assignmentPaperCount:new Set(workflow.assignmentPaperIds).size,assignedPaperCount,assignmentPilotReady:this.pilotReviewIssue()===undefined};
+    return {buildMode:workflow.buildMode,buildScope:workflow.buildScope,buildPaperCount:new Set(workflow.buildPaperIds).size,assignmentScope:workflow.assignmentScope,assignmentTagShelfId:resolveTagShelfId(this.shelves(),workflow.assignmentTagShelfId??'all'),assignmentPaperCount:new Set(workflow.assignmentPaperIds).size,assignedPaperCount,assignmentPilotReady:this.pilotReviewIssue()===undefined};
   }
   private bulkAssignmentSuggestions(runId:string) {
     return this.state.suggestions.filter(s=>{
@@ -1184,14 +1204,13 @@ export class AppController implements ManagerAPI {
     const papers=library?library.papers.map(p=>({...p,summary:this.state.papers[p.id]?.summary??'',concepts:this.state.papers[p.id]?.concepts??[],pdfText:this.state.papers[p.id]?.pdfText})):Object.values(this.state.papers);
     const definitions=this.allTags();
     const coverage=new Map<string,Set<string>>(definitions.map(t=>[t.id,new Set<string>()]));
-    const nativeEntries=Object.entries(nativeTags),nativePaperIds=nativeEntries.map(([id])=>id),shelfNative:Record<string,NativeTag[]>={};
-    let papersByNativeName:Map<string,Set<string>>|undefined;
+    const nativeEntries=Object.entries(nativeTags),nativePaperIds=nativeEntries.map(([id])=>id),shelfNative:Record<string,NativeTag[]>={},papersByNativeName=new Map<string,Set<string>>();
+    for(const [paperId,native] of nativeEntries)for(const assignment of native){const name=assignment.tag,key=canonicalTagKey(name),ids=papersByNativeName.get(key)??new Set<string>();ids.add(paperId);papersByNativeName.set(key,ids);(shelfNative[paperId]??=[]).push({tag:name,type:assignment.type});}
     for(const tag of definitions){
       const compiled=compileConceptFilter(definitions,{mode:'all',selections:[{conceptId:tag.id}]});
       if(compiled.empty)continue;
       // These counts select one global concept, so its approved descendants/aliases are
       // one alternative-name group. Canonicalize each native assignment once per snapshot.
-      if(!papersByNativeName){papersByNativeName=new Map();for(const [paperId,native] of nativeEntries)for(const assignment of native){const name=assignment.tag,key=canonicalTagKey(name),ids=papersByNativeName.get(key)??new Set<string>();ids.add(paperId);papersByNativeName.set(key,ids);(shelfNative[paperId]??=[]).push({tag:name,type:assignment.type});}}
       for(const name of compiled.clauses[0]?.groups[0]??[])for(const paperId of papersByNativeName.get(canonicalTagKey(name))??[])coverage.get(tag.id)!.add(paperId);
     }
     const tags=definitions.map(tag=>{
@@ -1215,7 +1234,7 @@ export class AppController implements ManagerAPI {
     const assignmentReviews=this.assignmentDisplays();
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,workflow:this.workflowDisplay(nativeTags),
-      tagShelves:this.shelfDisplay(shelfNative),existingTags:this.existingTagDisplay(),diyComparison:this.diyComparisonDisplay(),assignmentReviews,assignmentReview:assignmentReviews[0],paperAttention:attention,metadataPreview:metadataDisplay,
+      tagShelves:this.shelfDisplay(shelfNative),tagLibraryEntries:libraryTagShelfEntries(shelfNative,this.state.tags),existingTags:this.existingTagDisplay(),diyComparison:this.diyComparisonDisplay(),assignmentReviews,assignmentReview:assignmentReviews[0],paperAttention:attention,metadataPreview:metadataDisplay,
       paperExclusionPreview:this.state.paperExclusionPreview?{id:this.state.paperExclusionPreview.id,exclude:this.state.paperExclusionPreview.exclude,changes:this.state.paperExclusionPreview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Item',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined,
       tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
       analyzedPaperCount:Object.keys(this.state.papers).length,taxonomyReady:this.state.taxonomyReady,tagPreparation:this.preparationDisplay(),
@@ -1341,7 +1360,7 @@ export class AppController implements ManagerAPI {
         current.state.excluded.push({tagId:id,name:tag.name,reason:'Removed by the researcher.',origin:'researcher'});
         this.state.taxonomyProposal=current.proposal;this.state.tagPreparation=current.state;this.refreshPreparation();if(current.proposal.mappingPolicyVersion===3&&this.state.run?.selection)this.state.run.selection=reviseTagSelection(this.state.run.selection,current.proposal);await this.save();break;
       }
-      case 'apply-tag-list': await this.applyPreparedTags(String(payload.id));break;
+      case 'apply-tag-list': return this.applyPreparedTags(String(payload.id));
       case 'export-tag-analysis': {const current=this.requirePreparation(String(payload.id));return this.dispatch('export-taxonomy-proposal',{id:current.proposal.id});}
       case 'scan': await this.scan(payload.scope??'library');break;
       case 'rebuild':case 'tag': await this.start(action,payload.scope??'pilot',false,undefined,undefined,payload.mode,undefined,payload.tagShelfId);break;
@@ -1816,14 +1835,14 @@ export class AppController implements ManagerAPI {
     if(kind==='rebuild'){this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;}
     if(this.state.run)this.archiveSelection(this.state.run);
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reading papers for your tag list…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
-    if(shelf){this.state.run.tagShelfId=tagShelfId??'all';this.state.run.tagIds=[...shelf.assignableIds];}
+    if(shelf){this.state.run.tagShelfId=resolveTagShelfId(this.shelves(),tagShelfId??'all');this.state.run.tagIds=[...shelf.assignableIds];}
     const selectedScope=['pilot','selected','collections','library'].includes(scope)?scope as Scope:undefined;
     if(kind==='rebuild'){
       this.state.run.buildMode=buildMode;
       if(buildMode==='extend'){this.state.run.extensionBaseline=captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion);const target=this.number(additionalTargetCount??this.state.settings.extensionTagTarget??30,1,500);if(!Number.isInteger(target))throw new Error('Choose a whole number of additional tags.');this.state.run.additionalTargetCount=target;}
       this.state.workflow={...workflow,buildMode,buildScope:selectedScope??'selected',buildPaperIds:papers.map(paper=>paper.id)};
-    }else if(!automatic&&!detailId)this.state.workflow={...workflow,assignmentScope:selectedScope??'selected',assignmentPaperIds:papers.map(paper=>paper.id),assignmentTagShelfId:tagShelfId??'all'};
-    if(kind==='tag')(this.state.assignmentRuns??=[]).push({...createAssignmentRun({id:this.state.run.id,paperIds:papers.map(paper=>paper.id),vocabularyVersion:this.state.vocabularyVersion}),jobs:this.assignmentJobs(this.state.run),scope,automatic,...(shelf?{tagShelfId,tagIds:[...shelf.assignableIds]}:{})});
+    }else if(!automatic&&!detailId)this.state.workflow={...workflow,assignmentScope:selectedScope??'selected',assignmentPaperIds:papers.map(paper=>paper.id),assignmentTagShelfId:this.state.run.tagShelfId??'all'};
+    if(kind==='tag')(this.state.assignmentRuns??=[]).push({...createAssignmentRun({id:this.state.run.id,paperIds:papers.map(paper=>paper.id),vocabularyVersion:this.state.vocabularyVersion}),jobs:this.assignmentJobs(this.state.run),scope,automatic,...(shelf?{tagShelfId:this.state.run.tagShelfId,tagIds:[...shelf.assignableIds]}:{})});
     if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
     if(cachedSelection)this.state.run.cachedSelection=cachedSelection;
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}

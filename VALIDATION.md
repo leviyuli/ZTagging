@@ -1,31 +1,35 @@
-# v0.10.3 validation
+# v0.11.0 validation
 
 Target: Zotero 10.0.6 on Windows. Exact installer/source hashes and aggregate results are in [dist/validation.json](dist/validation.json).
 
-## Correction
+## Navigation and library
 
-The reported 20-paper build finished extraction, then exhausted chooser repairs because generated aliases overlapped saved names and other candidates. Rejecting every tag for a repairable presentation conflict prevented the build from reaching example checking.
+Navigator selection, expansion and background refresh preserve scroll position, focused controls and the search caret. Tree and search positions are separate; clearing search and switching through Collections restore the appropriate view. Tests cover independent library windows and unchanged item columns.
 
-TagSelection now checks known scientific contradictions first, removes conflicting generated alias claims before comparing candidates with saved definitions, and preserves saved names, meanings, aliases and IDs. Alias overlap alone cannot establish equivalence. A conflicting generated label can use its own unique supplied full name; otherwise that candidate is deferred with its original identity, reply and factual sources retained. Its incident relationships cannot become approved links. Scientifically incompatible names, aliases, relationships or evidence remain blocked.
+Existing tags is folded into My tags without renaming or deleting native assignments. All tags counts the unique union of saved definitions and exact undefined native names; My tags combines explicit membership with the native inventory. Approved aliases share a canonical row and unique-paper count. Generated shelves retain their membership and names; shelves can overlap and their totals are not additive. Assignment uses only definitions with meanings. Legacy shelf selections resolve to My tags while paid run scopes and tag IDs remain unchanged.
 
-Resume and Retry reparse complete replies from the current active generation before another chooser dispatch. They preserve previous attempts, errors, counters and spending. New tags still require current source-specific example judgments. Remaining naming failures have a plain paused-state explanation without exposing IDs or blaming the paper count or connection.
+The controller materializes native labels once per snapshot and reuses them for counts and shelf rows, including when no approved definitions exist. Existing large-library performance regressions pass without increasing raw-native reads with the number of definitions or shelves.
 
-## Automated checks
+## Extension recovery and topics
 
-`npm run verify` passed TypeScript, **917 automated tests** (including **84 manager-interface tests**), and the production build. Tests cross the selection and public-controller interfaces; obsolete presentation-conflict assertions are replaced with checks of safe recovery and preserved scientific distinctions.
+Update and apply compares prepared additions against the current saved definitions. Deleted saved tags are not restored; edited meanings, researcher-created tags, IDs and matching settings remain authoritative. Original preparation and paid work are archived before revision. Compatible exact-source checks are reused, while invalid derived matches cannot supply coverage. Pending checks remain on Build tags; successful Apply opens the independent assignment setup. Native assignment still requires a separate reviewed Apply.
 
-## Isolated Zotero checks
+New requests prefer precise imported keyword labels. The chooser receives bounded labels only from validated keyword quotations in its current snapshot. Manual project tags and invented keyword provenance are excluded. Cached extraction, original quotations, source IDs, normalization versions and historical proof fingerprints remain unchanged.
 
-All **215 packaged native checks passed** in a separate Zotero profile and data directory. The new scenario recovers twelve saved chooser replies, keeps distinct resistance and conductivity meanings, preserves six saved definitions, and follows public Retry through example checking and Apply tag list. It checks exact-source support, Co/CO protection, unchanged native tags and columns, and no extra chooser or extraction request. Retained scenarios cover phase-specific progress, shelves, navigator/search restoration, assignment, metadata and undo.
+Completed topic reports group explicit DRT full-name variants without rewriting individual topic records. Bare ambiguous acronyms, chemical symbols and compound cathode/water-starvation topics remain distinct. Applying definitions alone does not resolve an uncovered topic; successful reassignment is still required. Normal report rows show names, paper counts and links rather than repeated explanations.
 
-The exact 0.10.3 package passed Zotero's AddonManager upgrade over disabled 0.10.2 without uninstalling. Stable ID, native data, columns and installer hash match.
+## Automated and isolated checks
 
-## Private replay and artifact checks
+`npm run verify` passed TypeScript, **938 automated tests**, including **85 manager-interface tests**, and the production build. Tests cross module interfaces, public controller actions and accessible controls. Obsolete assertions were replaced with the new behavior while preserving stale-source, manual-choice, migration, budget, cancellation and undo checks.
 
-A private read-only replay uses the reported 20-paper build and its twelve paid chooser replies. Local recovery preserves all 50 cached factual analyses, the immutable snapshot, candidate identities or independently established canonical identities, saved definitions, raw replies and spending. It reuses the generated draft without another chooser or extraction request, then schedules two remaining representative checks with a largest payload of 73,713 bytes. Simulated pair responses exercise completion; they do not establish scientific accuracy or predict live latency. Unsampled findings remain unexamined.
+All **228 packaged native checks passed**, exercising navigator scroll and focus in a separate Zotero window, unified library rows, keyword provenance, DRT grouping, and Update and apply after saved-tag rename/deletion. Retained checks cover search, restoration, shelves, assignment, metadata and undo. Zotero's AddonManager upgraded the exact tested package from disabled **0.10.3 to 0.11.0** without uninstalling, with matching installer hash, stable ID, native data and columns. All synthetic native work is confined to a separate profile and data directory; no live provider is contacted.
 
-The older 19-paper, reading-progress and 744-paper compatibility replays are retained. No working-profile writes or live provider calls are made. Schema 9, extractor, terminology and proof-policy versions, budget controls and incoming automation are unchanged.
+## Private replay and delivery
 
-Production JavaScript/CSS and embedded sources must match the native-tested installer and delivered TypeScript. Public archives exclude profiles, databases, private fixtures, state and credentials and are scanned against private item IDs and titles. Published results are aggregates only.
+A private read-only replay of the reported 48-paper completed build preserved all **95 cached analyses**, saved definitions, native data, source identities, original chooser history and spending. One deleted saved tag remained deleted; **129 saved definitions plus 26 additions produced 155**. The refreshed view had **174 All tags rows and 164 My tags rows**. Public Apply completed with zero new provider or extraction requests, five local PDF checks and zero native writes. The original selection was archived exactly and the copied source file remained byte-identical.
 
-Focused deslop/codebase-design review keeps conflict handling inside TagSelection without expanding its public interface. Native checks use simulated replies and rendered controls; no screenshot review or live account authorization is claimed. Public HTTPS update metadata and downloadable bytes are checked separately after publication.
+The older 19-paper, 20-paper, reading-progress and 744-paper compatibility replays also pass without live requests or working-library writes. The 744-paper representative schedule remains three requests, with its original facts, raw replies, budget and 5,832 unsampled sources preserved.
+
+The installer, production JavaScript/CSS and embedded TypeScript must match the native-tested bundle. Source archives exclude profiles, databases, private replay fixtures, state and credentials and are scanned against private library titles and item IDs. Public reports contain aggregate results only. Update metadata, package hashes and published downloadable bytes are verified separately after publication.
+
+Focused deslop/codebase-design review keeps navigation state in Navigator, shelf union rules in TagShelves, conservative refresh in VocabularyExtension, report grouping in AssignmentReview and provider/persistence work in the controller. State remains schema 9; updating makes no provider request and enables no automation. Native validation uses rendered controls and simulated replies, with no screenshot review or live-account authorization claim.

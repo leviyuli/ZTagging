@@ -3,18 +3,34 @@ import assert from 'node:assert/strict';
 import {fingerprint} from '../src/core.ts';
 import type {TagDefinition} from '../src/core.ts';
 import {getNoTagDefinition} from '../src/tag-policy.ts';
-import {ALL_TAG_SHELVES_ID,EXISTING_TAG_SHELF_ID,MY_TAGS_SHELF_ID,migrateTagShelves,createTagShelf,renameTagShelf,updateTagShelfMembers,createBuildTagShelf,nativeTagShelfEntries,selectTagShelfDefinitions,validTagShelves} from '../src/tag-shelves.ts';
+import {ALL_TAG_SHELVES_ID,EXISTING_TAG_SHELF_ID,MY_TAGS_SHELF_ID,migrateTagShelves,createTagShelf,renameTagShelf,updateTagShelfMembers,createBuildTagShelf,nativeTagShelfEntries,libraryTagShelfEntries,resolveTagShelfId,selectTagShelfDefinitions,validTagShelves} from '../src/tag-shelves.ts';
 
 const definition=(id:string,name=id,extra:Partial<TagDefinition>={}):TagDefinition=>({id,name,fullName:name,description:`The scientific meaning of ${name}.`,facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto',...extra});
 
 test('migration adds ID-based shelves without changing existing definitions, names, matching flags, or historical identities',()=>{
   const definitions=[definition('fc','FC'),definition('eis','EIS',{facet:'method'}),definition('researcher','RCL',{custom:true,matchingMode:'suggest'}),definition('unapproved','Not ready',{status:'draft',custom:true}),getNoTagDefinition()],before=fingerprint(definitions),shelves=migrateTagShelves(definitions);
-  assert.deepEqual(shelves.map(shelf=>[shelf.name,shelf.tagIds,shelf.kind]),[['Generated tags 1',['fc','eis'],'generated'],['My tags',['researcher'],'user'],['Existing tags',[],'existing']]);assert.equal(validTagShelves(shelves),true);assert.ok(shelves.every(shelf=>shelf.createdAt===undefined));assert.equal(fingerprint(definitions),before);assert.deepEqual(migrateTagShelves(definitions),shelves);assert.deepEqual(migrateTagShelves(definitions,shelves),shelves);
+  assert.deepEqual(shelves.map(shelf=>[shelf.name,shelf.tagIds,shelf.kind]),[['Generated tags 1',['fc','eis'],'generated'],['My tags',['researcher'],'user']]);assert.equal(validTagShelves(shelves),true);assert.ok(shelves.every(shelf=>shelf.createdAt===undefined));assert.equal(fingerprint(definitions),before);assert.deepEqual(migrateTagShelves(definitions),shelves);assert.deepEqual(migrateTagShelves(definitions,shelves),shelves);
   const retained=structuredClone(shelves);retained[0].name='Transport papers';retained[0].tagIds.push('removed-but-historical-id');assert.deepEqual(migrateTagShelves(definitions,retained),retained);assert.notEqual(migrateTagShelves(definitions,retained)[0].tagIds,retained[0].tagIds);
 });
 
-test('empty initialization leaves the first generated shelf available for the first real build and preserves an existing native shelf name',()=>{
-  const initial=migrateTagShelves([]);assert.deepEqual(initial.map(shelf=>shelf.name),['My tags','Existing tags']);const first=createBuildTagShelf(initial,[],[definition('new')],'2026-10-30T00:00:00.000Z');assert.equal(first.at(-1)!.name,'Generated tags 1');const renamed=renameTagShelf(first,EXISTING_TAG_SHELF_ID,' Native tags · 原有 ');assert.equal(renamed.find(shelf=>shelf.kind==='existing')!.name,'Native tags · 原有');assert.deepEqual(migrateTagShelves([],renamed),renamed);
+test('empty initialization leaves the first generated shelf available and legacy shelf links resolve to My tags',()=>{
+  const initial=migrateTagShelves([]);assert.deepEqual(initial.map(shelf=>shelf.name),['My tags']);const first=createBuildTagShelf(initial,[],[definition('new')],'2026-10-30T00:00:00.000Z');assert.equal(first.at(-1)!.name,'Generated tags 1');const renamed=renameTagShelf(first,EXISTING_TAG_SHELF_ID,' Native tags · 原有 ');assert.equal(renamed.find(shelf=>shelf.id===MY_TAGS_SHELF_ID)!.name,'Native tags · 原有');assert.deepEqual(migrateTagShelves([],renamed),renamed);assert.equal(resolveTagShelfId(renamed,EXISTING_TAG_SHELF_ID),MY_TAGS_SHELF_ID);
+});
+
+test('merging the legacy native shelf preserves renamed My tags, historical memberships and generated shelves across restart',()=>{
+  const tags=[definition('generated'),definition('mine'),definition('legacy')],previous=[{id:'generated-shelf',name:'Membrane studies',kind:'generated' as const,tagIds:['generated']},{id:MY_TAGS_SHELF_ID,name:'My chosen topics',kind:'user' as const,tagIds:['mine']},{id:EXISTING_TAG_SHELF_ID,name:'Renamed old library names',kind:'existing' as const,tagIds:['legacy','mine','historical']}],before=fingerprint({tags,previous}),merged=migrateTagShelves(tags,previous);
+  assert.deepEqual(merged,[previous[0],{...previous[1],tagIds:['mine','legacy','historical']}]);assert.deepEqual(migrateTagShelves(tags,JSON.parse(JSON.stringify(merged))),merged);assert.equal(resolveTagShelfId(merged,EXISTING_TAG_SHELF_ID),MY_TAGS_SHELF_ID);assert.deepEqual(selectTagShelfDefinitions(tags,merged,EXISTING_TAG_SHELF_ID).assignableIds,['mine','legacy']);assert.equal(fingerprint({tags,previous}),before);
+});
+
+test('All tags and My tags count deduplicated meanings and unique papers while retaining unknown exact names',()=>{
+  const tags=[definition('eis','EIS',{fullName:'electrochemical impedance spectroscopy',aliases:['impedance method'],facet:'method'}),definition('fc','FC'),definition('mine','My future topic',{custom:true}),getNoTagDefinition()],native={'paper-1':[{tag:'EIS',type:0},{tag:'impedance method',type:1},{tag:' Unknown topic ',type:0},{tag:'no_tag',type:0}],'paper-2':[{tag:'electrochemical impedance spectroscopy',type:1},{tag:'Unknown topic',type:0},{tag:' Unknown topic ',type:1}]},before=fingerprint({tags,native}),shelves=migrateTagShelves(tags),all=libraryTagShelfEntries(native,tags),mine=libraryTagShelfEntries(native,tags,shelves.find(shelf=>shelf.id===MY_TAGS_SHELF_ID)!.tagIds);
+  assert.equal(all.length,6);assert.equal(mine.length,5);assert.ok(mine.length<=all.length);assert.equal(all.filter(row=>row.tagId==='eis').length,1);assert.deepEqual(all.find(row=>row.tagId==='eis'),{name:'EIS',tagId:'eis',paperCount:2});assert.equal(mine.find(row=>row.name===' Unknown topic ')!.paperCount,2);assert.equal(mine.find(row=>row.name==='Unknown topic')!.paperCount,1);assert.ok(all.some(row=>row.tagId==='fc'&&row.paperCount===0));assert.ok(!mine.some(row=>row.tagId==='fc'));assert.deepEqual(mine.find(row=>row.name==='no_tag'),{name:'no_tag',paperCount:1,protected:true});assert.deepEqual(selectTagShelfDefinitions(tags,shelves,MY_TAGS_SHELF_ID,native).assignableIds,['eis','mine']);
+  const generated=libraryTagShelfEntries(native,tags,['fc','eis'],false);assert.equal(generated.length,2);assert.equal(generated.find(row=>row.tagId==='eis')!.paperCount,2);assert.equal(fingerprint({tags,native}),before);
+});
+
+test('ambiguous aliases do not inflate one definition or invent a meaning for an unknown native name',()=>{
+  const tags=[definition('a','First meaning',{aliases:['Shared label']}),definition('b','Second meaning',{aliases:['Shared label']})],native={'paper-1':[{tag:'Shared label',type:0},{tag:'Co',type:0},{tag:'CO',type:0}]},rows=libraryTagShelfEntries(native,tags);
+  assert.equal(rows.length,5);assert.deepEqual(rows.find(row=>row.name==='Shared label'),{name:'Shared label',paperCount:1});assert.deepEqual(rows.filter(row=>row.tagId).map(row=>row.paperCount),[0,0]);assert.ok(rows.some(row=>row.name==='Co')&&rows.some(row=>row.name==='CO'));
 });
 
 test('successive approved builds add only new active identities without a combined sixty-tag ceiling',()=>{
@@ -24,7 +40,7 @@ test('successive approved builds add only new active identities without a combin
 });
 
 test('any shelf can be renamed with scientific symbols and interior spacing preserved while the virtual all view cannot',()=>{
-  let shelves=migrateTagShelves([definition('one')]);for(const [id,name] of [[shelves[0].id,' Co / CO · pH '],[MY_TAGS_SHELF_ID,'My  methods'],[EXISTING_TAG_SHELF_ID,'本地タグ']]){const before=structuredClone(shelves),next=renameTagShelf(shelves,id,name);assert.equal(next.find(shelf=>shelf.id===id)!.name,name.trim());assert.deepEqual(next.find(shelf=>shelf.id===id)!.tagIds,before.find(shelf=>shelf.id===id)!.tagIds);assert.deepEqual(shelves,before);shelves=next;}
+  let shelves=migrateTagShelves([definition('one')]);for(const [id,name] of [[shelves[0].id,' Co / CO · pH '],[MY_TAGS_SHELF_ID,'My  methods']]){const before=structuredClone(shelves),next=renameTagShelf(shelves,id,name);assert.equal(next.find(shelf=>shelf.id===id)!.name,name.trim());assert.deepEqual(next.find(shelf=>shelf.id===id)!.tagIds,before.find(shelf=>shelf.id===id)!.tagIds);assert.deepEqual(shelves,before);shelves=next;}
   assert.throws(()=>renameTagShelf(shelves,ALL_TAG_SHELVES_ID,'Other'),/view/);assert.throws(()=>renameTagShelf(shelves,shelves[0].id,' '),/1–80/);assert.throws(()=>renameTagShelf(shelves,shelves[0].id,'x'.repeat(81)),/1–80/);assert.throws(()=>renameTagShelf(shelves,shelves[0].id,'My  methods'),/already uses/);
 });
 

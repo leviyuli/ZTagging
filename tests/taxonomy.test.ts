@@ -43,6 +43,11 @@ test('fact extraction inputs are independent of vocabulary and include PDF text 
   assert.ok(buildFactExtractionPrompt(p).includes('independently of any tag vocabulary'));
 });
 
+test('extraction prefers imported keyword names with supporting context without turning every keyword into a tag',()=>{
+  const p={...paper(),keywords:['ionic conduction','generic keyword']},prompt=buildFactExtractionPrompt(p),data=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]);
+  assert.deepEqual(data.paper.keywords,p.keywords);assert.match(prompt,/first-choice names.*supported by the title, abstract or PDF/);assert.match(prompt,/keyword quotation alongside the supporting passage/);assert.match(prompt,/omit vague or incidental keywords/);assert.ok(!data.approvedVocabulary);assert.equal(prompt.includes('assign tags'),true);
+});
+
 test('a global 50-paper proposal consolidates old 107 drafts into canonical parent/children and preserves DIY',()=>{
   const existing=Array.from({length:107},(_,i)=>definition(`old-${i}`,`Fine concept ${i}`));
   const diy=definition('rcl','RCL',{custom:true,facet:'phenomenon',matchingMode:'manual',status:'approved',description:'Catalyst-layer resistance.'});existing.push(diy);

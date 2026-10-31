@@ -83,9 +83,10 @@ test('an explicit replacement cannot reuse an extension checkpoint and may omit 
   await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id});assert.equal(h.state.tags.some(tag=>tag.id==='old-co'),false);assert.ok(h.state.tags.some(tag=>tag.id==='old-detail'));assert.ok(h.native['1:OLD'].some(tag=>tag.tag==='FC'));assert.equal(h.writes.length,0);
 });
 
-test('an extension cannot overwrite a definition changed after its baseline was captured',async()=>{
+test('refreshing an extension keeps a changed saved definition and reuses its checked additions',async()=>{
   const h=harness();approved(h);await build(h);const tag=h.state.tags.find(tag=>tag.id==='old-detail')!;await h.controller.invoke('save-tag',{tag:{...tag,description:'A researcher revised this niche definition.'}});
-  await assert.rejects(h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id}),/changed|new extension/i);assert.equal(h.state.tags.find(value=>value.id===tag.id)!.description,'A researcher revised this niche definition.');assert.equal(h.writes.length,0);
+  const saved=clone(h.state.tags.find(value=>value.id===tag.id)!),additionId=h.state.taxonomyProposal!.tags.find(value=>value.name==='AEMFC')!.id,calls=h.calls.length,facts=fingerprint(h.state.facts),native=fingerprint(h.native),spent=h.state.run!.spentUSD,snapshot=fingerprint(h.state.taxonomyProposal!.evidenceSnapshot);
+  assert.equal((await h.controller.snapshot()).tagPreparation!.needsRefresh,true);assert.deepEqual(await h.controller.invoke('apply-tag-list',{id:h.state.tagPreparation!.id}),{page:'assignment'});assert.deepEqual(h.state.tags.find(value=>value.id===tag.id),saved);assert.ok(h.state.tags.some(value=>value.id===additionId&&value.name==='AEMFC'));assert.equal(h.calls.length,calls);assert.equal(fingerprint(h.state.facts),facts);assert.equal(fingerprint(h.state.taxonomyEvidence),snapshot);assert.equal(h.state.run!.spentUSD,spent);assert.equal(fingerprint(h.native),native);assert.equal(h.writes.length,0);assert.equal(validState(h.state),true);
 });
 
 test('analysis export, import and invalid-merge recovery preserve extension semantics and its baseline',async()=>{

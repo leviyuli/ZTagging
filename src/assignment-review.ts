@@ -19,6 +19,8 @@ const unique=(values:readonly string[])=>[...new Set(values)].sort();
 const sameEvidence=(paper:PaperRecord,evidence:readonly Evidence[])=>fingerprint(validateEvidence(paper,evidence))===fingerprint(evidence);
 const currentFingerprint=(paper:PaperRecord)=>paper.fingerprint||paperFingerprint(paper);
 const approvedVocabularyFingerprint=(definitions:readonly TagDefinition[])=>fingerprint(definitions.filter(tag=>tag.status==='approved'&&!isNoTagDefinition(tag)).sort((a,b)=>a.id.localeCompare(b.id)));
+const reportTopicNames=new Map(['DRT analysis','distribution of relaxation time','distribution of relaxation times','distribution of relaxation time analysis','distribution of relaxation times analysis'].map(name=>[canonicalTagKey(name),'DRT analysis']));
+const reportTopicName=(name:string)=>reportTopicNames.get(canonicalTagKey(name))??terminologyFor(name)?.name??name;
 
 export function createAssignmentRun(input:{id?:string;paperIds:readonly string[];vocabularyVersion:number;createdAt?:string}):AssignmentRunRecord {
   return {id:input.id??allocateOpaqueId('assignment'),paperIds:unique(input.paperIds),vocabularyVersion:input.vocabularyVersion,status:'analysis',suggestionIds:[],createdAt:input.createdAt??new Date().toISOString()};
@@ -60,7 +62,7 @@ export function updateUncoveredTopics(records:readonly UncoveredTopicRecord[],in
   return next;
 }
 function topicMatchesTag(name:string,tag:TagDefinition):boolean {
-  const named=terminologyFor(name)?.name,identity=terminologyFor(tag.name)?.name??terminologyFor(tag.fullName??'')?.name;if(named&&identity)return named===identity;return [tag.name,tag.fullName??'',...tag.aliases].some(label=>canonicalTagKey(label)===canonicalTagKey(name));
+  const named=terminologyFor(name)?.name,identity=terminologyFor(tag.name)?.name??terminologyFor(tag.fullName??'')?.name;if(named&&identity)return named===identity;return [tag.name,tag.fullName??'',...tag.aliases].some(label=>canonicalTagKey(reportTopicName(label))===canonicalTagKey(reportTopicName(name)));
 }
 export function resolveUncoveredTopics(records:readonly UncoveredTopicRecord[],input:{paper:PaperRecord;vocabularyVersion:number;appliedSuggestions:readonly ReviewSuggestion[];definitions:readonly TagDefinition[];now?:string}):UncoveredTopicRecord[] {
   const inputFingerprint=currentFingerprint(input.paper),tags=new Map(input.definitions.map(tag=>[tag.id,tag])),matched=input.appliedSuggestions.filter(suggestion=>suggestion.applied&&suggestion.operation!=='remove'&&suggestion.paperId===input.paper.id&&suggestion.vocabularyVersion===input.vocabularyVersion&&suggestion.inputFingerprint===inputFingerprint&&suggestion.tagId!==NO_TAG_ID&&suggestion.evidence.length&&sameEvidence(input.paper,suggestion.evidence)).flatMap(suggestion=>{const tag=tags.get(suggestion.tagId);return tag&&tag.status==='approved'&&!isNoTagDefinition(tag)?[tag]:[];}),now=input.now??new Date().toISOString(),vocabularyFingerprint=approvedVocabularyFingerprint(input.definitions);
@@ -68,7 +70,7 @@ export function resolveUncoveredTopics(records:readonly UncoveredTopicRecord[],i
   return records.map(record=>record.status==='active'&&record.paperId===input.paper.id&&record.inputFingerprint===inputFingerprint&&(record.vocabularyVersion<input.vocabularyVersion||record.vocabularyFingerprint!==undefined&&record.vocabularyFingerprint!==vocabularyFingerprint)&&(record.kind==='outside-vocabulary'?matched.length>0:!!record.name&&covers(record.name))?{...record,status:'resolved',resolvedAt:now,updatedAt:now}:record);
 }
 export function groupUncoveredTopics(records:readonly UncoveredTopicRecord[]):UncoveredTopicGroup[] {
-  const groups=new Map<string,UncoveredTopicGroup>();for(const record of records.filter(record=>record.status==='active')){const key=record.kind==='outside-vocabulary'?'outside-vocabulary':`topic:${terminologyFor(record.name??'')?.name??canonicalTagKey(record.name??'')}`,group=groups.get(key)??{id:`topic-group-${fingerprint(key)}`,kind:record.kind,name:record.name??'Outside the current tag list',paperIds:[],recordIds:[],count:0};group.paperIds=unique([...group.paperIds,record.paperId]);group.recordIds.push(record.id);group.count=group.paperIds.length;groups.set(key,group);}return [...groups.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));
+  const groups=new Map<string,UncoveredTopicGroup>();for(const record of records.filter(record=>record.status==='active')){const name=record.kind==='outside-vocabulary'?'Outside the current tag list':reportTopicName(record.name??''),key=record.kind==='outside-vocabulary'?'outside-vocabulary':`topic:${canonicalTagKey(name)}`,group=groups.get(key)??{id:`topic-group-${fingerprint(key)}`,kind:record.kind,name,paperIds:[],recordIds:[],count:0};group.paperIds=unique([...group.paperIds,record.paperId]);group.recordIds.push(record.id);group.count=group.paperIds.length;groups.set(key,group);}return [...groups.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));
 }
 const strings=(value:unknown):value is string[]=>Array.isArray(value)&&value.every(item=>typeof item==='string');
 export function validAssignmentRunRecord(value:unknown):value is AssignmentRunRecord {

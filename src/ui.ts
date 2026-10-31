@@ -636,7 +636,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function workingTags(preparation?: ManagerSnapshot['tagPreparation']) { return (preparation?.tags || approvedTags()).filter(tag => !tag.builtin); }
   function tagShelfOptions(assignment = false): [string,string][] {
-    return [['all', `All saved tags · ${approvedTags().length}`], ...(currentState().tagShelves || []).map(shelf => [shelf.id, `${shelf.name} · ${assignment ? approvedTags().filter(tag => shelf.tagIds.includes(tag.id)).length : shelf.count}`] as [string,string])];
+    const s = currentState();
+    return [['all', `${assignment ? 'All matching tags' : 'All tags'} · ${assignment ? approvedTags().length : s.tagLibraryEntries?.length ?? approvedTags().length}`], ...(s.tagShelves || []).map(shelf => [shelf.id, `${shelf.name} · ${assignment ? approvedTags().filter(tag => shelf.tagIds.includes(tag.id)).length : shelf.count}`] as [string,string])];
   }
   function libraryShelfControls() {
     const shelf = currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
@@ -675,6 +676,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const note = doc.getElementById('tag-apply-note');
     if (note) note.textContent = dirty ? 'Save or cancel your edits before applying this tag list.' : 'Next, choose which papers to tag. No paper tags change yet.';
   }
+  async function applyTagList(preparation: NonNullable<ManagerSnapshot['tagPreparation']>) {
+    const result = await run('apply-tag-list', { id: preparation.id });
+    if (result?.page === 'cleanup') { notify(currentState().tagPreparation?.status === 'questions' ? 'Answer the remaining questions before applying.' : 'Your additions are being compared with the current tag list.');return; }
+    notify('Tag list saved. Choose which papers to tag next.');
+    buildMode = 'extend';buildScope = 'selected';assignmentView = 'setup';nav('assignment');
+  }
   function renderVocabulary(prepared = false) {
     const s = currentState();
     const preparation = prepared ? s.tagPreparation : undefined;
@@ -682,7 +689,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const extending = !!preparation && s.workflow?.buildMode === 'extend';
     const query = vocabQuery.trim().toLocaleLowerCase();
     const shelf = !prepared ? s.tagShelves?.find(shelf => shelf.id === libraryTagShelfId) : undefined;
-    const nativeNames = shelf?.kind === 'existing' ? (shelf.nativeNames || []).filter(entry => !query || `${entry.name} ${entry.tagId ? tagById(entry.tagId)?.description || '' : ''}`.toLocaleLowerCase().includes(query)) : undefined;
+    const libraryEntries = !prepared ? shelf ? shelf.nativeNames : s.tagLibraryEntries : undefined;
+    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return !query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query); });
     const tags = workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)));
     const questions = preparation?.questions || [];
     const view = preparation && questions.length ? tagView : 'tags';
@@ -691,7 +699,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil((nativeNames?.length ?? tags.length) / 20) - 1));
     tagQuestionPage = Math.min(tagQuestionPage, Math.max(0, Math.ceil(questions.length / 10) - 1));
     const status = preparation?.status === 'checking' ? 'Checking your tags…' : preparation?.status === 'questions' ? `${questions.length} ${questions.length === 1 ? 'question needs' : 'questions need'} your choice` : preparation?.status === 'failed' ? 'Your tag list needs another try' : preparation ? 'Your tag list is ready' : shelf?.name || 'Your tags';
-    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : nativeNames ? `${nativeNames.length} existing names · adding a meaning is optional` : `${tags.length} saved tags`), extending ? h('p', 'card-description', 'Suggested additions and updates; your other saved tags are kept.') : null), h('div', 'inline', button('Add tag', () => newTag(true), preparation ? 'quiet' : 'primary'), preparation ? button('Apply tag list', async () => { await run('apply-tag-list', { id: preparation.id }, 'Tag list saved. Choose which papers to tag next.');buildMode = 'extend';buildScope = 'selected';assignmentView = 'setup';nav('assignment'); }, 'primary', !preparation.canApply || preparation.status === 'checking') : null));
+    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : nativeNames ? `${nativeNames.length} tags · ${nativeNames.filter(entry => entry.tagId).length} with a saved meaning` : `${tags.length} saved tags`), extending ? h('p', 'card-description', preparation?.needsRefresh ? 'Your saved tags changed. Compare these additions with the current list and apply.' : 'Your saved tags are kept.') : null), h('div', 'inline', button('Add tag', () => newTag(true), preparation ? 'quiet' : 'primary'), preparation ? button(preparation.needsRefresh ? 'Update and apply' : 'Apply tag list', () => applyTagList(preparation), 'primary', !preparation.canApply || preparation.status === 'checking') : null));
     if (preparation) header.querySelector<HTMLButtonElement>('.primary')!.id = 'apply-tag-list';
     const tabs = h('div', 'tag-workspace-tabs');
     tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Tags and questions');
@@ -720,36 +728,39 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     } else {
       if (!prepared && s.tagShelves?.length) content.append(libraryShelfControls());
       content.append(h('div', 'tag-list-search', input('vocabulary-search', vocabQuery, value => { vocabQuery = value;vocabularyPage = 0;render(); }, 'Find a tag or another name…', 'search')));
-      if (!(nativeNames?.length ?? tags.length)) content.append(empty('No tags here yet', nativeNames ? 'Existing library names will appear here. You can leave them as they are.' : 'Build tags from a few papers, or add a tag of your own.'));
+      if (!(nativeNames?.length ?? tags.length)) content.append(empty('No tags here yet', 'Build tags from a few papers, or add a tag of your own.'));
       for (const entry of (nativeNames || []).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
         const tag = entry.tagId ? tagById(entry.tagId) : undefined;
         const protectedName = entry.protected || entry.name === 'no_tag' || tag?.builtin;
-        const edit = !protectedName ? button(tag ? 'Edit meaning' : 'Add meaning', () => {
-          if (tag) editTag(tag);
-          else { newTag(true, undefined, false);editorTag!.name = entry.name;editorTag!.fullName = entry.name;editorTag!.aliases = [entry.name];render();doc.getElementById('tag-description')?.focus(); }
+        if (tag && !protectedName) { content.append(savedTagRow(tag, entry.paperCount));continue; }
+        const edit = !protectedName ? button('Add meaning', () => {
+          newTag(true, undefined, false);editorTag!.name = entry.name;editorTag!.fullName = entry.name;editorTag!.aliases = [entry.name];render();doc.getElementById('tag-description')?.focus();
         }, 'quiet small') : null;
-        edit?.setAttribute('aria-label', `${tag ? 'Edit' : 'Add'} meaning for ${entry.name}`);
-        content.append(h('article', 'tag-row', h('div', 'inline between', h('strong', '', entry.name), edit), h('p', 'card-description', `${entry.paperCount} papers · ${protectedName ? 'Excluded from tagging' : tag ? 'Meaning saved' : 'No meaning added'}`), tag ? h('p', '', tag.description) : null));
+        edit?.setAttribute('aria-label', `Add meaning for ${entry.name}`);
+        content.append(h('article', 'tag-row', h('div', 'inline between', h('strong', '', entry.name), edit), h('p', 'card-description', `${entry.paperCount} papers · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`)));
       }
       for (const tag of (nativeNames ? [] : tags).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
-        const retained = !!preparation && tag.retained === true;
-        const edit = button(retained ? 'Edit in tag library' : 'Edit', () => retained ? navigate({ page: 'vocabulary', tagId: tag.id }) : editTag(tag, preparation?.id || ''), 'small quiet');edit.setAttribute('aria-label', retained ? `Edit saved tag ${tag.name} in tag library` : `Edit tag ${tag.name}`);
-        const actions = h('div', 'inline', edit);
-        if (!retained) {
-          const remove = button('Remove', async () => {
-            if (busy) return;
-            if (!preparation) { await run('delete-tag', { id: tag.id }, 'Tag removed from your list.'); }
-            else await run('remove-prepared-tag', { id: preparation.id, tagId: tag.id }, 'Tag removed from this list.');
-            editorDrafts.delete(`${preparation?.id || ''}:${tag.id}`);
-            if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
-          }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);actions.append(remove);
-        }
-        const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
-        content.append(h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null)));
+        content.append(savedTagRow(tag));
       }
       if ((nativeNames?.length ?? tags.length) > 20) content.append(pagination(nativeNames?.length ?? tags.length, vocabularyPage, next => { vocabularyPage = next; }, 20, 'tags'));
     }
-    const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : 'Project collections and existing paper tags stay under your control.');
+    function savedTagRow(tag: DisplayTag, paperCount?: number) {
+      const retained = !!preparation && tag.retained === true;
+      const edit = button(retained ? 'Edit in tag library' : 'Edit', () => retained ? navigate({ page: 'vocabulary', tagId: tag.id }) : editTag(tag, preparation?.id || ''), 'small quiet');edit.setAttribute('aria-label', retained ? `Edit saved tag ${tag.name} in tag library` : `Edit tag ${tag.name}`);
+      const actions = h('div', 'inline', edit);
+      if (!retained) {
+        const remove = button('Remove', async () => {
+          if (busy) return;
+          if (!preparation) { await run('delete-tag', { id: tag.id }, 'Tag removed from your list.'); }
+          else await run('remove-prepared-tag', { id: preparation.id, tagId: tag.id }, 'Tag removed from this list.');
+          editorDrafts.delete(`${preparation?.id || ''}:${tag.id}`);
+          if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
+        }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);actions.append(remove);
+      }
+      const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${paperCount ?? tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
+      return h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null));
+    }
+    const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : 'Shelves can share tags. Each tag appears once in All tags.');
     note.id = 'tag-apply-note';
     const orphans = preparation ? orphanedPreparedDrafts() : [], draft = orphans[0];
     const reviewDraft = draft ? button('Review draft', () => editTag(draft, preparation!.id), 'small') : null;
@@ -1021,8 +1032,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const paperIds = [...new Set(selected.flatMap(topic => topic.paperIds))];
     const target = topicAdditionalTarget ?? currentState().settings.extensionTagTarget ?? 30;
     const targetInput = input('topic-additional-tag-target', String(target), value => { topicAdditionalTarget = Number(value);render(); }, '', 'number');targetInput.min = '1';targetInput.max = '500';targetInput.step = '1';
-    const body = h('div', '', h('p', 'card-description', 'These topics were reported by the completed assignment. They have not been added to your tag list.'));
-    for (const topic of topics.slice(topicPage * 20, (topicPage + 1) * 20)) body.append(h('article', 'tag-row', checkbox(`assignment-topic-${topic.id}`, selectedTopicIds.has(topic.id), topic.name, checked => { checked ? selectedTopicIds.add(topic.id) : selectedTopicIds.delete(topic.id);render(); }), h('p', 'card-description', `${topic.paperIds.length} papers${topic.reason ? ` · ${topic.reason}` : ''}`), h('div', 'warning-papers', ...topic.paperIds.slice(0, 3).map(id => paperButton(id)))));
+    const body = h('div', '', h('p', 'card-description', 'Choose topics to build additions from these papers. New tags are compared with your saved meanings.'));
+    for (const topic of topics.slice(topicPage * 20, (topicPage + 1) * 20)) body.append(h('article', 'tag-row', checkbox(`assignment-topic-${topic.id}`, selectedTopicIds.has(topic.id), topic.name, checked => { checked ? selectedTopicIds.add(topic.id) : selectedTopicIds.delete(topic.id);render(); }), h('p', 'card-description', `${topic.paperIds.length} ${topic.paperIds.length === 1 ? 'paper' : 'papers'}`), h('div', 'warning-papers', ...topic.paperIds.slice(0, 3).map(id => paperButton(id)))));
     if (!topics.length) body.append(h('p', '', 'No uncovered topics are waiting.'));
     if (topics.length > 20) body.append(pagination(topics.length, topicPage, next => { topicPage = next; }, 20, 'topics'));
     if (topics.length) body.append(field('New tags to suggest', targetInput, 'Saved tags are kept. Your combined tag library can grow beyond 60.'), h('div', 'actions', button('Extend from selected topics', async () => { await run('extend-assignment-topics', { runId: review.id, paperIds, additionalTargetCount: target }, 'Preparing additions from the selected topic papers.');if (!currentState().paperExclusionPreview) nav('cleanup'); }, 'primary', !paperIds.length || !Number.isInteger(target) || target < 1 || target > 500 || currentState().queue.status === 'running')));

@@ -1,4 +1,12 @@
-# Upgrading to Smart Tags 0.10.3
+# Upgrading to Smart Tags 0.11.0
+
+## Version 0.11.0
+
+State remains schema 9. Opening the updated extension folds the old Existing tags shelf into My tags, preserving the My tags name, memberships and generated shelves. Old Existing-shelf selections resolve to My tags; paid assignment scopes and captured tag IDs stay unchanged. Native tag names and assignments are not renamed or removed.
+
+If a completed extension was prepared before you edited the saved list, choose **Update and apply**. The current definitions are authoritative, deleted saved tags are not restored, and original work is archived before comparison. Compatible example checks are reused; changed meanings cannot inherit outdated match claims. Any remaining checks use the selected connection and budget, and applying definitions remains separate from paper assignment.
+
+Keyword preferences affect future requests and can use keyword passages already present in cached findings. They do not invalidate cached extraction or rewrite original wording, identifiers, proof fingerprints, or normalization policies. DRT grouping changes report presentation only and retains individual topic records. Updating makes no provider request and enables no automation.
 
 ## Version 0.10.3
 
