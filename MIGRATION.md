@@ -1,4 +1,8 @@
-# Upgrading to Smart Tags 0.11.0
+# Upgrading to Smart Tags 0.11.1
+
+## Version 0.11.1
+
+This is a display correction. Both menus show total library entries and the subset ready for AI assignment, using the same shelf names and counts. State remains schema 9; no shelf memberships, meanings, native assignments, cached facts, provider settings or spending change. Existing shelves may overlap.
 
 ## Version 0.11.0
 

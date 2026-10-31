@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.11.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.11.0.xpi).
+2. Select [`smart-tags-0.11.1.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.11.1.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -33,7 +33,9 @@ Version **0.11.0** keeps the navigator's scroll position and focus, combines nat
 
 Use **Tag library → Add tag** or edit an existing definition. Choose a shelf to browse its tags, or rename it to suit your work. New builds create their own shelves; tags you add join the chosen shelf or My tags. A shelf does not make its tags synonyms or subtypes. A topic can be useful even when no current paper matches it. Matching and assignment keep their existing suggestion, review, and manual-choice protections.
 
-**All tags** is the unique union of saved definitions and native names without definitions. **My tags** includes your native Zotero tags; the former Existing tags shelf is folded into it. Approved alternate names share their canonical tag's row and unique-paper count. Undefined names keep their exact spelling and can be left alone or given a meaning. Shelves may share tags, so their counts are not additive; assignment lists count only tags with saved meanings.
+**All tags** is the unique union of saved definitions and native names without definitions. **My tags** includes your native Zotero tags; the former Existing tags shelf is folded into it. Approved alternate names share their canonical tag's row and unique-paper count. Undefined names keep their exact spelling and can be left alone or given a meaning. Shelves may share tags, so their counts are not additive; only tags with saved meanings are used for AI assignment.
+
+Both shelf menus show the same counts, for example **199 total · 155 ready**. Ready tags have saved meanings and can be used for AI assignment; the remaining names stay visible in the library. Generated tags already assigned to papers can also appear in My tags. In that example, 154 generated tags plus 164 My tags share 119 entries, giving **154 + 164 − 119 = 199** unique tags. A shelf with every tag ready shows just its tag count.
 
 For papers from another field, open **Build tags**, select those papers or their collections, and use **Extend my saved tag list**. This is the default after a tag list has been applied. **New tags to suggest** starts at 30 and can be edited for each extension; **Settings → Default new tags per extension** changes that default. The initial 60-tag preference is separate: a library can grow from about 60 to 90 to 120 through successive extensions, without a combined 60-tag ceiling. These are targets, not quotas for unsupported concepts.
 

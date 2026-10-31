@@ -1,6 +1,14 @@
-# v0.11.0 validation
+# v0.11.1 validation
 
 Target: Zotero 10.0.6 on Windows. Exact installer/source hashes and aggregate results are in [dist/validation.json](dist/validation.json).
+
+## Count display correction
+
+Both shelf menus now use identical labels for the same total and ready counts. For the reported library, All tags is **199 total, 155 ready** and My tags is **164 total, 120 ready**. The 44 native names without saved meanings are visible in both views but are not supplied as assignment definitions. All-ready shelves show their tag count. The library sidebar uses the unique total too.
+
+A read-only audit confirms 154 unique generated definitions, one additional researcher definition and 119 generated definitions shared with My tags: **154 + 164 − 119 = 199**. These shelves overlap; adding their counts would double-count shared entries. This patch changes labels and nearby help only, preserving membership, assignment scope, cached analyses, manual choices, automation settings, provider selection and budgets.
+
+The new manager regression reproduces those exact counts with synthetic data and verifies both menus, the sidebar, shared help, assignment payload and unchanged library state. The packaged native check compares the two rendered menus and confirms no provider or native write. Private source data stays outside public fixtures and archives.
 
 ## Navigation and library
 
@@ -20,9 +28,9 @@ Completed topic reports group explicit DRT full-name variants without rewriting 
 
 ## Automated and isolated checks
 
-`npm run verify` passed TypeScript, **938 automated tests**, including **85 manager-interface tests**, and the production build. Tests cross module interfaces, public controller actions and accessible controls. Obsolete assertions were replaced with the new behavior while preserving stale-source, manual-choice, migration, budget, cancellation and undo checks.
+`npm run verify` passed TypeScript, **939 automated tests**, including **86 manager-interface tests**, and the production build. Tests cross module interfaces, public controller actions and accessible controls. Obsolete assertions were replaced with the new behavior while preserving stale-source, manual-choice, migration, budget, cancellation and undo checks.
 
-All **228 packaged native checks passed**, exercising navigator scroll and focus in a separate Zotero window, unified library rows, keyword provenance, DRT grouping, and Update and apply after saved-tag rename/deletion. Retained checks cover search, restoration, shelves, assignment, metadata and undo. Zotero's AddonManager upgraded the exact tested package from disabled **0.10.3 to 0.11.0** without uninstalling, with matching installer hash, stable ID, native data and columns. All synthetic native work is confined to a separate profile and data directory; no live provider is contacted.
+All **229 packaged native checks passed**, including rendered shelf-menu equality, navigator scroll and focus in a separate Zotero window, unified library rows, keyword provenance, DRT grouping, and Update and apply after saved-tag rename/deletion. Retained checks cover search, restoration, shelves, assignment, metadata and undo. Zotero's AddonManager upgraded the exact package from disabled **0.11.0 to 0.11.1** without uninstalling, with matching installer hash, stable ID, native data and columns. All synthetic native work is confined to a separate profile and data directory; no live provider is contacted.
 
 ## Private replay and delivery
 

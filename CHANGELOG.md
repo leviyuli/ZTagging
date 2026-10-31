@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+
+- Show identical total and ready counts in the library and assignment shelf menus. Replace All matching tags with All tags and keep the library sidebar badge on the same unique total.
+- Explain that ready tags have saved meanings and that overlapping shelves are not added together. Shelf membership and AI assignment eligibility remain unchanged.
+
 ## 0.11.0
 
 - Preserve navigator scroll, focus and search caret through selection, expansion, refresh and Collections switching.

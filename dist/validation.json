@@ -1,21 +1,21 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.11.0",
-  "verifiedAt": "2026-10-31T07:23:59.267Z",
+  "version": "0.11.1",
+  "verifiedAt": "2026-10-31T07:51:29.035Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Stable navigator, unified native tag shelves, keyword preference and prepared-extension refresh",
+  "scope": "Consistent total and ready shelf counts across library and assignment",
   "schemaVersion": 9,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 938,
+    "passed": 939,
     "failed": 0
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 228,
+    "passed": 229,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -830,6 +830,10 @@
         "passed": true
       },
       {
+        "name": "v0111ShelfMenusShowSameTotalAndReadyCounts",
+        "passed": true
+      },
+      {
         "name": "v0110TopicReportGroupsDRTWithoutMergingDifferentCathodeScopes",
         "passed": true
       },
@@ -1032,12 +1036,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.10.3",
-      "to": "0.11.0",
+      "from": "0.11.0",
+      "to": "0.11.1",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "729f8596eed07d62ef72d91cc6e023f174537c11b20a148793c66910d4fb8c1f",
+      "packageHash": "c526db6386a62154f4e5d8907560cd938616ff2d063a9ec4c02423c11b00445d",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -1049,7 +1053,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 227,
+      "largeRenderMS": 130,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -1101,6 +1105,10 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "reviewWorkflow": {
+    "libraryAndAssignmentUseIdenticalShelfLabels": true,
+    "totalAndReadyCountsExplicit": true,
+    "sidebarUsesUniqueLibraryTotal": true,
+    "shelfMembershipAndAssignmentEligibilityUnchanged": true,
     "navigatorScrollFocusAndCaretPreserved": true,
     "existingShelfMergedIntoMyTags": true,
     "allLibraryCountsDeduplicated": true,
@@ -1288,6 +1296,38 @@
     "nativeWrites": 0,
     "localPDFChecks": 5
   },
+  "privateShelfCountAudit": {
+    "status": "passed",
+    "scope": "Read-only library-count audit",
+    "allLibraryRows": 199,
+    "allReadyDefinitions": 155,
+    "myLibraryRows": 164,
+    "myReadyDefinitions": 120,
+    "generatedShelfCounts": [
+      40,
+      30,
+      29,
+      29,
+      26
+    ],
+    "generatedMembershipSum": 154,
+    "generatedUniqueDefinitions": 154,
+    "generatedAndMyDefinitionOverlap": 119,
+    "savedDefinitionsOutsideGeneratedShelves": 1,
+    "namesNotAvailableForAIMatching": 44,
+    "undefinedNativeNames": 44,
+    "protectedMarkers": 0,
+    "myUndefinedNativeNames": 44,
+    "myProtectedMarkers": 0,
+    "allEqualsReadyPlusOtherRows": true,
+    "myEqualsReadyPlusOtherRows": true,
+    "naiveGeneratedPlusMyTotal": 318,
+    "unionGeneratedAndMyTotal": 199,
+    "nativeWrites": 0,
+    "providerRequests": 0,
+    "workingProfileWrites": 0,
+    "sourceCopyExactBytesUnchanged": true
+  },
   "unchangedBehavior": {
     "factualExtractorVersion": true,
     "terminologyVersion": true,
@@ -1318,14 +1358,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.11.0.xpi",
-      "bytes": 607414,
-      "sha256": "729f8596eed07d62ef72d91cc6e023f174537c11b20a148793c66910d4fb8c1f"
+      "file": "smart-tags-0.11.1.xpi",
+      "bytes": 607606,
+      "sha256": "c526db6386a62154f4e5d8907560cd938616ff2d063a9ec4c02423c11b00445d"
     },
     "source": {
-      "file": "smart-tags-0.11.0-source.zip",
-      "bytes": 712008,
-      "sha256": "21b441ea279ecebecfe93cfafcbe0cff6c182cc73aeca17d42a71867bbe3f540"
+      "file": "smart-tags-0.11.1-source.zip",
+      "bytes": 713663,
+      "sha256": "96d16deabf2978d5ab7329ef73d736481dd85a03ab489c64044bee69ddc37273"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"
