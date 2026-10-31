@@ -15,7 +15,7 @@ const completed=value=>({value,usageKnown:true,usage:{inputTokens:100,outputToke
 export async function runNativeV040(app,check,config){
   check('v040IsolatedDataGuard',normalized(Zotero.DataDirectory.dir)===normalized(config.data));
   check('v040IsolatedProfileGuard',normalized(Services.dirsvc.get('ProfD',Ci.nsIFile).path)===normalized(config.profile));
-  check('v040StateSchema',app.state.schemaVersion === 9);
+  check('v040StateSchema',app.state.schemaVersion === initialState().schemaVersion);
   const before=clone(app.state),host=app.env.host,ai=app.env.ai,oldList=host.list,oldComplete=ai.completeJson,oldApply=host.apply,oldInvoke=app.invoke;
   const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),oldMode=navigator?.mode;
   const nativePaper=Object.values(before.papers).find(paper=>paper.title==='Smart Tags smoke: catalyst-layer resistance in PEM electrolysis');

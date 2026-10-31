@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.0
+
+- Add Shelf actions with Rename and Merge. A combined shelf replaces selected sources by default, retains My tags' native inventory under the combined name when selected, deduplicates memberships and historical redirects, and supports conflict-aware Undo without changing paper tags.
+- Add All, Ready and Needs meaning views with cross-page native-name selection, linked papers and batch Prepare meanings. AI results use checked paper context to suggest standard names or existing saved definitions; useful results save together while uncertain names remain unready.
+- Verify every affected paper before approving a shared legacy name as an alias. Preserve scientific distinctions, existing definitions, manual locks/rejections and suggestion-only defaults; names without context require manual input.
+- Persist bounded definition requests, raw replies, allocated identities, correction counters, provider/model provenance and spending. Queue behind existing work, preserve completed checks on pause/restart, and avoid repeating validated contexts on retry.
+- Limit progress strips to Activity and the task's page; completed applied builds show Tag list saved in Activity. Keep meaning review independently scrollable with Save visible.
+- Upgrade to schema 10 with collision-safe exact-byte backup, preserving cached analyses, historical proofs, settings, credentials, native data and paid work.
+
 ## 0.11.1
 
 - Show identical total and ready counts in the library and assignment shelf menus. Replace All matching tags with All tags and keep the library sidebar badge on the same unique total.

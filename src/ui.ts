@@ -7,7 +7,7 @@ import type { WarningRecord } from './warnings';
 
 type Child = Node | string | null | undefined | false;
 type MenuAction = { id: string; label: string; run: () => void | Promise<unknown> };
-type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'search' | 'reset-analysis' } | null;
+type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'search' | 'reset-analysis' | 'merge-shelves' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
 const pageTitles: Record<ManagerPage, [string, string]> = {
@@ -54,6 +54,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let newTagShelfId: string | undefined;
   const shelfNameDrafts = new Map<string,string>();
   let renamingShelf = '';
+  let libraryTagStatus: 'all' | 'ready' | 'undefined' = 'all';
+  const selectedNativeNames = new Set<string>();
+  const mergeShelfIds = new Set<string>();
+  let mergedShelfName = '';
+  let replaceMergedShelves = true;
+  let nativeMeaningWorkId = '';
+  let nativeMeaningReviewHidden = false;
+  let nativeMeaningPage = 0;
+  const excludedNativeMeaningRows = new Set<string>();
   let reviewDetailsOpen = false;
   let legacyToolsOpen = false;
   let buildMode: BuildMode = 'replace';
@@ -376,6 +385,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
           buildMode = state.taxonomyReady ? 'extend' : state.workflow?.buildMode || 'replace';
           workflowInitialized = true;
         }
+        if (state.tagShelves) {
+          const shelfIds = new Set(state.tagShelves.map(shelf => shelf.id));
+          if (libraryTagShelfId !== 'all' && !shelfIds.has(libraryTagShelfId)) { libraryTagShelfId = 'all';vocabularyPage = 0;renamingShelf = ''; }
+          if (assignmentTagShelfId !== 'all' && !shelfIds.has(assignmentTagShelfId)) assignmentTagShelfId = state.workflow?.assignmentTagShelfId && shelfIds.has(state.workflow.assignmentTagShelfId) ? state.workflow.assignmentTagShelfId : 'all';
+        }
         if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
       } while (refreshAgain && !disposed);
       render();
@@ -470,6 +484,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function queueStrip() {
     const q = currentState().queue;
     if (q.status === 'idle' && !q.total) return null;
+    if (page !== 'activity') {
+      if (q.status === 'idle' && !(q.kind === 'rebuild' && currentState().tagPreparation)) return null;
+      const owner = q.ownerPage || (q.taskLabel ? undefined : q.kind === 'rebuild' ? 'cleanup' : q.kind === 'tag' ? 'assignment' : undefined);
+      if (!(owner === 'cleanup' && (page === 'build' || page === 'cleanup') || owner === 'assignment' && (page === 'assignment' || page === 'review') || owner === 'vocabulary' && page === 'vocabulary')) return null;
+    }
     const progress = queueProgress();
     const percent = progress.total ? Math.min(100, progress.completed / progress.total * 100) : 0;
     const fill = h('span');
@@ -502,6 +521,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const q = currentState().queue;
     if (q.taskLabel) return q.status === 'paused' ? `${q.taskLabel} · paused` : q.taskLabel;
     if (q.status === 'paused') return q.switchingToFasterBuild ? 'Faster build paused' : q.phase === 'choosing' ? 'Choosing tags · paused' : q.phase === 'reading' ? 'Reading papers · paused' : 'Analysis paused';
+    if (q.kind === 'rebuild' && q.status === 'idle' && q.phase === 'ready' && !currentState().tagPreparation) return 'Tag list saved';
     if (q.phase === 'mapping' && q.selection?.verificationScope === 'representative') return 'Checking examples';
     const labels = { reading: 'Reading papers', organizing: 'Organizing tags', choosing: 'Choosing tags', mapping: 'Checking supporting findings', checking: 'Checking tag meanings', ready: 'Ready for review' };
     return q.phase ? labels[q.phase] : q.status === 'running' ? 'Analyzing papers' : 'Analysis complete';
@@ -643,10 +663,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function libraryShelfControls() {
     const shelf = currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
-    const controls = h('div', 'toolbar', field('Shelf', select('tag-library-shelf', libraryTagShelfId, tagShelfOptions(), value => { libraryTagShelfId = value;vocabularyPage = 0;renamingShelf = '';render(); }, 'Tag library shelf'), shelfCountHelp));
-    if (shelf) controls.append(button('Rename shelf…', () => { renamingShelf = shelf.id;shelfNameDrafts.set(shelf.id, shelf.name);render(); }, 'quiet small'));
+    const commands: MenuAction[] = [];
+    if (shelf) commands.push({id:'rename',label:'Rename shelf…',run:() => { renamingShelf = shelf.id;shelfNameDrafts.set(shelf.id, shelf.name);render(); }});
+    if ((currentState().tagShelves?.length || 0) > 1) commands.push({id:'merge',label:'Merge shelves…',run:() => {
+      mergeShelfIds.clear();if (shelf) mergeShelfIds.add(shelf.id);
+      mergedShelfName = 'Combined tags';let suffix = 2;while (currentState().tagShelves?.some(value => value.name === mergedShelfName)) mergedShelfName = `Combined tags ${suffix++}`;
+      modal = {kind:'merge-shelves'};render();
+    }});
+    const controls = h('div', 'shelf-controls', field('Shelf', select('tag-library-shelf', libraryTagShelfId, tagShelfOptions(), value => { libraryTagShelfId = value;vocabularyPage = 0;renamingShelf = '';render(); }, 'Tag library shelf')), field('Show', select('tag-library-status', libraryTagStatus, [['all','All tags'],['ready','Ready'],['undefined','Needs meaning']], value => { libraryTagStatus = value;vocabularyPage = 0;render(); }, 'Tag readiness')), actionMenu('tag-shelf-actions','Actions','Shelf actions',commands));
     if (shelf && renamingShelf === shelf.id) controls.append(field('Shelf name', input('tag-shelf-name', shelfNameDrafts.get(shelf.id) ?? shelf.name, value => { shelfNameDrafts.set(shelf.id, value); })), button('Save shelf name', async () => { await run('rename-tag-shelf', { id: shelf.id, name: (shelfNameDrafts.get(shelf.id) || '').trim() }, 'Shelf renamed.');renamingShelf = '';render(); }, 'small'), button('Cancel rename', () => { renamingShelf = '';render(); }, 'small quiet'));
-    return controls;
+    return h('div','shelf-toolbar',controls,h('p','card-description',shelfCountHelp));
   }
   function currentDrafts() {
     const drafts = new Map(editorDrafts);
@@ -684,6 +710,33 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     notify('Tag list saved. Choose which papers to tag next.');
     buildMode = 'extend';buildScope = 'selected';assignmentView = 'setup';nav('assignment');
   }
+  function addNativeMeaning(name: string) {
+    newTag(true, undefined, false);editorTag!.name = name;editorTag!.fullName = name;editorTag!.aliases = [name];render();doc.getElementById('tag-description')?.focus();
+  }
+  function nativeMeaningsReview() {
+    const work = currentState().nativeDefinitionPreparation;
+    if (!work || work.status === 'applied') return null;
+    if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningReviewHidden = false;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
+    if (nativeMeaningReviewHidden) return null;
+    const rows = work.rows.filter(row => !row.applied), ready = rows.filter(row => row.status === 'ready' && !excludedNativeMeaningRows.has(row.id));
+    nativeMeaningPage = Math.min(nativeMeaningPage,Math.max(0,Math.ceil(rows.length / 20) - 1));
+    const running = work.status === 'running' || work.status === 'queued';
+    const body = h('div','native-meaning-review',h('p','card-description',running ? `${work.completed} of ${work.total} names prepared` : 'Save the useful meanings together. Paper tags stay unchanged.'));
+    const spentUSD = work.spentUSD ?? 0;
+    if (spentUSD > 0) body.append(h('p','card-description',`Estimated API use: $${spentUSD.toFixed(4)}${work.budgetUSD === undefined ? '' : ` of $${work.budgetUSD.toFixed(2)}`}`));
+    if (work.error) body.append(h('p','notice warning',humanMessage(work.error)));
+    for (const row of rows.slice(nativeMeaningPage * 20,(nativeMeaningPage + 1) * 20)) {
+      const source = row.name && row.name !== row.sourceName ? h('p','card-description',`From: ${row.sourceName}`) : null;
+      const heading = row.status === 'ready' ? checkbox(`prepared-native-tag-${row.id}`,!excludedNativeMeaningRows.has(row.id),row.name || row.sourceName,checked => { checked ? excludedNativeMeaningRows.delete(row.id) : excludedNativeMeaningRows.add(row.id);render(); }) : h('strong','',row.sourceName);
+      const known = approvedTags().some(tag => [tag.name,tag.fullName,...tag.aliases].includes(row.sourceName));
+      body.append(h('article','tag-row',h('div','inline between',heading,row.status === 'ready' ? badge(row.targetTagId ? 'Use saved tag' : 'New tag','approved') : row.status === 'pending' ? badge('Waiting') : known ? badge('Meaning saved','approved') : button('Add meaning',() => addNativeMeaning(row.sourceName),'quiet small')),source,row.description ? h('p','',row.description) : null,row.status === 'question' || row.status === 'failed' ? h('p','card-description',known ? 'This name now has a saved meaning.' : row.question || 'Add a meaning for this name, or leave it out.') : null,row.paperIds.length ? h('div','warning-papers',...row.paperIds.slice(0,3).map(id => paperButton(id))) : null));
+    }
+    if (rows.length > 20) body.append(pagination(rows.length,nativeMeaningPage,next => { nativeMeaningPage = next; },20,'meanings'));
+    const actions = h('div','inline',ready.length ? button(`Save ${ready.length} ${ready.length === 1 ? 'meaning' : 'meanings'}`,() => run('apply-tag-meanings',{id:work.id,rowIds:ready.map(row => row.id)},'Tag meanings saved. Paper tags are unchanged.'),'primary',running || !work.canApply) : null,work.status === 'paused' ? button('Resume preparation',() => run('retry-tag-meanings',{id:work.id},'Preparing the remaining meanings.'),'small') : null,button('Back to tags',() => { nativeMeaningReviewHidden = true;render(); },'quiet small'),button('Discard preparation',() => run('cancel-tag-meanings',{id:work.id},'Prepared meanings discarded.'),'quiet small'));
+    const panel = card(work.status === 'queued' ? 'Meanings queued' : running ? 'Preparing meanings…' : work.status === 'paused' ? 'Meaning preparation paused' : 'Prepared meanings',work.status === 'queued' ? 'Starts after the current analysis finishes.' : 'Names and meanings are based on the linked papers.',body,actions,'native-meaning-panel');
+    const scroll = panel.querySelector<HTMLElement>('.card-body')!;scroll.id = 'tag-list-scroll';scroll.setAttribute('data-view-key',`meanings:${work.id}:${nativeMeaningPage}`);
+    return panel;
+  }
   function renderVocabulary(prepared = false) {
     const s = currentState();
     const preparation = prepared ? s.tagPreparation : undefined;
@@ -692,8 +745,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const query = vocabQuery.trim().toLocaleLowerCase();
     const shelf = !prepared ? s.tagShelves?.find(shelf => shelf.id === libraryTagShelfId) : undefined;
     const libraryEntries = !prepared ? shelf ? shelf.nativeNames : s.tagLibraryEntries : undefined;
-    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return !query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query); });
-    const tags = workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)));
+    if (!prepared && s.tagLibraryEntries) {
+      const available = new Set(s.tagLibraryEntries.filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag').map(entry => entry.name));
+      for (const name of selectedNativeNames) if (!available.has(name)) selectedNativeNames.delete(name);
+    }
+    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return (libraryTagStatus === 'all' || libraryTagStatus === 'ready' && !!tag || libraryTagStatus === 'undefined' && !tag && !entry.protected && entry.name !== 'no_tag') && (!query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query)); });
+    const tags = workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)) && (prepared || libraryTagStatus !== 'undefined'));
     const questions = preparation?.questions || [];
     const view = preparation && questions.length ? tagView : 'tags';
     const savedIds = new Set(approvedTags().map(tag => tag.id));
@@ -710,7 +767,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(view === value));tabs.append(tab);
     }
     const content = h('div', 'tag-workspace-list card');
-    content.id = 'tag-list-scroll';content.setAttribute('data-view-key', `${preparation?.id || s.vocabularyVersion}:${view}:${view === 'tags' ? vocabularyPage : tagQuestionPage}`);
+    content.id = 'tag-list-scroll';content.setAttribute('data-view-key', `${preparation?.id || `library:${libraryTagShelfId}:${libraryTagStatus}:${vocabQuery}`}:${view}:${view === 'tags' ? vocabularyPage : tagQuestionPage}`);
     if (preparation?.status === 'failed') content.append(h('div', 'notice warning', h('p', '', humanMessage(preparation.error || 'We could not finish preparing tags. Your completed paper analysis is saved.')), button('Try again', () => run('retry-tag-preparation', { id: preparation.id }, 'Checking your tags again.'), 'small')));
     if (preparation?.status === 'checking') content.append(h('div', 'notice info', h('p', '', 'Your papers have been read. We are checking the tag names and meanings.'), s.queue.status !== 'running' ? button('Resume checks', () => run('retry-tag-preparation', { id: preparation.id }, 'Checking your tags.'), 'small') : null));
     if (view === 'questions') {
@@ -730,16 +787,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     } else {
       if (!prepared && s.tagShelves?.length) content.append(libraryShelfControls());
       content.append(h('div', 'tag-list-search', input('vocabulary-search', vocabQuery, value => { vocabQuery = value;vocabularyPage = 0;render(); }, 'Find a tag or another name…', 'search')));
+      const selectable = (nativeNames || []).filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag');
+      if (!preparation && (selectable.length || selectedNativeNames.size)) {
+        const selection = h('div','tag-meaning-selection',selectable.length ? button('Select all names',() => { for(const entry of selectable)selectedNativeNames.add(entry.name);render(); },'quiet small') : null);
+        if (selectedNativeNames.size) selection.append(h('span','muted',`${selectedNativeNames.size} selected`),button('Prepare meanings',async () => { await run('prepare-tag-meanings',{names:[...selectedNativeNames],shelfId:libraryTagShelfId},'Preparing meanings from the selected tags and their papers.');selectedNativeNames.clear();nativeMeaningReviewHidden = false;render(); },'primary small',!canAnalyze() || s.nativeDefinitionPreparation?.status === 'queued' || s.nativeDefinitionPreparation?.status === 'running'),button('Clear selection',() => { selectedNativeNames.clear();render(); },'quiet small'));
+        content.append(selection);
+      }
       if (!(nativeNames?.length ?? tags.length)) content.append(empty('No tags here yet', 'Build tags from a few papers, or add a tag of your own.'));
       for (const entry of (nativeNames || []).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
         const tag = entry.tagId ? tagById(entry.tagId) : undefined;
         const protectedName = entry.protected || entry.name === 'no_tag' || tag?.builtin;
         if (tag && !protectedName) { content.append(savedTagRow(tag, entry.paperCount));continue; }
-        const edit = !protectedName ? button('Add meaning', () => {
-          newTag(true, undefined, false);editorTag!.name = entry.name;editorTag!.fullName = entry.name;editorTag!.aliases = [entry.name];render();doc.getElementById('tag-description')?.focus();
-        }, 'quiet small') : null;
+        const edit = !protectedName ? button('Add meaning', () => addNativeMeaning(entry.name), 'quiet small') : null;
         edit?.setAttribute('aria-label', `Add meaning for ${entry.name}`);
-        content.append(h('article', 'tag-row', h('div', 'inline between', h('strong', '', entry.name), edit), h('p', 'card-description', `${entry.paperCount} papers · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`)));
+        content.append(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} papers · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? h('div','warning-papers',...entry.paperIds.slice(0,3).map(id => paperButton(id))) : null));
       }
       for (const tag of (nativeNames ? [] : tags).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
         content.append(savedTagRow(tag));
@@ -774,7 +835,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }, 'small quiet') : null;
     discardDraft?.setAttribute('aria-label', `Discard unsaved draft ${draft?.name}`);
     const recovery = draft ? h('div', 'notice warning inline between', h('span', '', `${draft.name} left the suggested list. Your unsaved edits are kept.${orphans.length > 1 ? ` ${orphans.length} drafts need a choice.` : ''}`), h('div', 'inline', reviewDraft, discardDraft)) : null;
-    const workspace = h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, preparation && questions.length ? tabs : null, note, recovery, h('div', 'tag-workspace-columns', content, tagEditor(editorVisible)));
+    const meanings = !preparation ? nativeMeaningsReview() : null;
+    const reopenMeanings = !preparation && s.nativeDefinitionPreparation && s.nativeDefinitionPreparation.status !== 'applied' && nativeMeaningReviewHidden ? button('Review prepared meanings',() => { nativeMeaningReviewHidden = false;render(); },'quiet small') : null;
+    const workspace = h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, preparation && questions.length ? tabs : null, note, recovery, reopenMeanings, h('div', 'tag-workspace-columns', meanings || content, tagEditor(editorVisible)));
     return workspace;
   }
 
@@ -1318,6 +1381,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const body = h('div', 'modal-scroll');
     let title = '';
     let applyLabel = '';
+    let applyDisabled = false;
     let apply: () => Promise<unknown>;
     if (active.kind === 'apply' || active.kind === 'finish') {
       const ids = new Set(active.ids);
@@ -1332,6 +1396,17 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       for (const item of suggestions.slice(modalPage * PAGE_SIZE, (modalPage + 1) * PAGE_SIZE)) tbody.append(h('tr', '', h('td', '', paperTitle(item.paperId)), h('td', '', badge(item.operation === 'remove' ? 'Remove' : 'Add', item.operation === 'remove' ? 'removal' : 'approved')), h('td', '', h('strong', '', tagName(item.tagId))), h('td', '', item.evidence[0]?.text || 'Review manually')));
       table.append(tbody); body.append(h('div', 'table-wrap', table), pagination(suggestions.length, modalPage, next => { modalPage = next; }));
       apply = async () => { await run(active.kind === 'finish' ? 'finish-assignment' : 'apply-suggestions', active.kind === 'finish' ? { runId: active.runId, ...(active.acceptRemaining ? { acceptRemaining: true } : {}) } : { ids: active.ids }, active.kind === 'finish' ? 'Assignment finished.' : 'Reviewed tag assignments applied.'); selectedSuggestions.clear(); modal = null; render(); };
+    } else if (active.kind === 'merge-shelves') {
+      title = 'Merge shelves';applyLabel = 'Merge shelves';
+      const shelves = currentState().tagShelves || [], selected = shelves.filter(shelf => mergeShelfIds.has(shelf.id));
+      const unique = new Set(selected.flatMap(shelf => (shelf.nativeNames || approvedTags().filter(tag => shelf.tagIds.includes(tag.id)).map(tag => ({name:tag.name,tagId:tag.id}))).map(entry => entry.tagId ? `tag:${entry.tagId}` : `name:${entry.name}`)));
+      body.append(h('p','','Combine shelf contents without merging tag meanings or changing paper tags.'),h('div','shelf-merge-sources',...shelves.map(shelf => checkbox(`merge-shelf-${shelf.id}`,mergeShelfIds.has(shelf.id),`${shelf.name} · ${shelf.count}`,checked => { checked ? mergeShelfIds.add(shelf.id) : mergeShelfIds.delete(shelf.id);render(); }))),field('Combined shelf name',input('merged-shelf-name',mergedShelfName,value => { mergedShelfName = value;render(); })),h('p','card-description',`${selected.length} shelves · ${unique.size} unique tags`),checkbox('replace-merged-shelves',replaceMergedShelves,'Replace selected shelves',checked => { replaceMergedShelves = checked;render(); }),h('p','card-description',replaceMergedShelves && mergeShelfIds.has('tag-shelf-my-tags') ? 'Native Zotero names stay available in the combined shelf.' : 'Tags and paper assignments are preserved.'));
+      applyDisabled = selected.length < 2 || !mergedShelfName.trim();
+      apply = async () => {
+        const result = await run('merge-tag-shelves',{sourceIds:[...mergeShelfIds],name:mergedShelfName.trim(),replaceSources:replaceMergedShelves},'Shelves merged.');
+        if (replaceMergedShelves && mergeShelfIds.has(assignmentTagShelfId)) assignmentTagShelfId = result?.shelfId || 'all';
+        libraryTagShelfId = result?.shelfId || 'all';vocabularyPage = 0;renamingShelf = '';modal = null;render();
+      };
     } else if (active.kind === 'create-diy') {
       title = 'Create tag definitions';
       applyLabel = 'Analyze and create tags';
@@ -1357,7 +1432,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       apply = async () => { if (!searchName.trim()) throw new Error('Enter a name for this saved search.'); await run('save-search', { name: searchName.trim(), filter: { mode: conceptFilter.mode, selections: conceptFilter.selections.map(selection => ({ ...selection })) } }, 'Saved search created in Zotero.'); modal = null; render(); };
     }
     const close = () => { modal = null; render(); };
-    const content = h('section', 'modal', h('div', 'card-header', h('h2', '', title), button('Close', close, 'quiet small')), body, h('div', 'card-footer', button(applyLabel, apply, 'primary'), button('Cancel', close)));
+    const content = h('section', 'modal', h('div', 'card-header', h('h2', '', title), button('Close', close, 'quiet small')), body, h('div', 'card-footer', button(applyLabel, apply, 'primary', applyDisabled), button('Cancel', close)));
     content.setAttribute('role', 'dialog');
     content.setAttribute('aria-modal', 'true');
     content.setAttribute('aria-label', title);
@@ -1494,12 +1569,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
   }
   function fitTagWorkspace() {
-    for (const selector of ['.tag-editor', '.tag-workspace-list']) {
+    for (const selector of ['.tag-editor', '.tag-workspace-list', '.native-meaning-panel']) {
       const panel = doc.querySelector<HTMLElement>(selector);
       if (!panel || (selector === '.tag-editor' && (win.innerWidth <= 900 || win.innerHeight <= 600))) continue;
       const available = Math.max(100, win.innerHeight - Math.max(16, panel.getBoundingClientRect().top) - 16);
       panel.style.maxHeight = `${available}px`;
-      if (selector === '.tag-editor') panel.style.height = `${available}px`;
+      if (selector !== '.tag-workspace-list') panel.style.height = `${available}px`;
     }
   }
 

@@ -1,21 +1,33 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.11.1",
-  "verifiedAt": "2026-10-31T07:51:29.035Z",
+  "version": "0.12.0",
+  "verifiedAt": "2026-10-31T08:38:54.476Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Consistent total and ready shelf counts across library and assignment",
-  "schemaVersion": 9,
+  "scope": "Shelf merging, grounded batch definitions for native names and task-scoped progress",
+  "schemaVersion": 10,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 939,
+    "passed": 987,
     "failed": 0
   },
   "nativeSmoke": {
+    "nativeMeanings": {
+      "cachedPapers": 2,
+      "syntheticRequests": 1,
+      "extractionRequests": 0,
+      "pdfReads": 0,
+      "nativeTagWrites": 0,
+      "shelfMergeKeepsDefinitions": true,
+      "meaningsSavedWithoutNativeCleanup": true,
+      "unresolvedProjectNameRemainsUndefined": true,
+      "completedProgressScopedToActivity": true,
+      "realProviderRequests": 0
+    },
     "status": "passed",
-    "passed": 229,
+    "passed": 236,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -850,6 +862,34 @@
         "passed": true
       },
       {
+        "name": "v0120IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0120RenderedMergeDeduplicatesMembershipWithoutChangingTags",
+        "passed": true
+      },
+      {
+        "name": "v0120ReadinessFilterShowsOnlyUndefinedNativeNames",
+        "passed": true
+      },
+      {
+        "name": "v0120MeaningReviewScrollsWithSaveVisible",
+        "passed": true
+      },
+      {
+        "name": "v0120SelectedNamesPrepareOnlyGroundedDefinitionsAndRealQuestions",
+        "passed": true
+      },
+      {
+        "name": "v0120DefinitionApplyPreservesNativeNamesFactsAndManualProject",
+        "passed": true
+      },
+      {
+        "name": "v0120CompletedBuildProgressStaysInActivity",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -1036,12 +1076,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.11.0",
-      "to": "0.11.1",
+      "from": "0.11.1",
+      "to": "0.12.0",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "c526db6386a62154f4e5d8907560cd938616ff2d063a9ec4c02423c11b00445d",
+      "packageHash": "c1c2ce8b30340d440599a166162a0c25c0a1225d1ae1813004a6c26ed68231a3",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -1053,7 +1093,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 130,
+      "largeRenderMS": 194,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -1066,7 +1106,7 @@
     "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
   },
   "nativeBundleMatchesInstaller": true,
-  "bundledSourceFilesMatch": 26,
+  "bundledSourceFilesMatch": 27,
   "selection": {
     "sparseTFIDFComparisonLimitPerTopic": 32,
     "defaultSoftTarget": 60,
@@ -1104,7 +1144,34 @@
     "unchangedRerunsReuseWork": true,
     "legacyConsolidationCheckpointsRetained": true
   },
+  "nativeDefinitionPreparation": {
+    "protocolVersion": 1,
+    "maxPairsPerRequest": 16,
+    "maxRequestUTF8Bytes": 90000,
+    "maxAutomaticFormatCorrections": 1,
+    "allCarryingPapersCheckedBeforeAlias": true,
+    "nonKeywordEvidenceRequired": true,
+    "frozenMeaningBeforeAdditionalChecks": true,
+    "existingMeaningsAndIdentitiesPreserved": true,
+    "manualConflictsRemainQuestions": true,
+    "sourceSpecificCachedFactsOnly": true,
+    "standaloneNamesNeedManualMeaningWithoutAPI": true,
+    "unresolvedNamesExcludedFromAssignment": true,
+    "selectedProviderAndBudget": true,
+    "rawRepliesAndProvenancePersisted": true,
+    "queuedBehindActiveWork": true,
+    "resetArchivesPaidWork": true,
+    "definitionApplyHasNoNativeWrites": true,
+    "suggestionOnlyDefaults": true
+  },
   "reviewWorkflow": {
+    "shelfMergingReplacesSelectedSourcesByDefault": true,
+    "myShelfProtected": true,
+    "explicitRawMembershipsAndHistoricalRedirects": true,
+    "shelfMergingHasAtomicJournalsAndConflictAwareUndo": true,
+    "definitionReviewScrollsWithVisibleSave": true,
+    "progressOnlyActivityOrOwningPage": true,
+    "appliedIdleBuildHiddenOutsideActivity": true,
     "libraryAndAssignmentUseIdenticalShelfLabels": true,
     "totalAndReadyCountsExplicit": true,
     "sidebarUsesUniqueLibraryTotal": true,
@@ -1161,8 +1228,8 @@
   },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Schema-nine compatibility replay of retained work with locally verified PDF and simulated judgments",
-    "schemaVersion": 9,
+    "scope": "Schema-ten compatibility replay of retained work with locally verified PDF and simulated judgments",
+    "schemaVersion": 10,
     "evictedFactsRecovered": 1,
     "otherCachedFactsUnchanged": true,
     "localPDFInputVerified": true,
@@ -1182,8 +1249,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 2061,
-    "totalSimulationMS": 5039,
+    "timeToRepresentativeQueueMS": 1718,
+    "totalSimulationMS": 4708,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -1328,6 +1395,28 @@
     "workingProfileWrites": 0,
     "sourceCopyExactBytesUnchanged": true
   },
+  "privateNativeMeaningPlan": {
+    "status": "passed",
+    "sourceSchema": 9,
+    "currentSchema": 10,
+    "cachedFacts": 95,
+    "priorPaidRunPreserved": true,
+    "allEvidenceIdentitiesAndQuotesUnchanged": true,
+    "definitionsChoicesSettingsAndNativeDataUnchanged": true,
+    "sourceCopyExactBytesUnchanged": true,
+    "undefinedSelected": 44,
+    "initialDefinitionRequests": 9,
+    "maxInitialRequestUTF8Bytes": 64863,
+    "allDefinitionDispatchesZero": true,
+    "mergedSourceShelves": 5,
+    "mergedUniqueDefinitions": 154,
+    "myShelfPreserved": true,
+    "allTagCountUnchangedByMerge": true,
+    "newProviderRequests": 0,
+    "newExtractionRequests": 0,
+    "nativeWrites": 0,
+    "workingProfileWrites": 0
+  },
   "unchangedBehavior": {
     "factualExtractorVersion": true,
     "terminologyVersion": true,
@@ -1358,14 +1447,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.11.1.xpi",
-      "bytes": 607606,
-      "sha256": "c526db6386a62154f4e5d8907560cd938616ff2d063a9ec4c02423c11b00445d"
+      "file": "smart-tags-0.12.0.xpi",
+      "bytes": 650577,
+      "sha256": "c1c2ce8b30340d440599a166162a0c25c0a1225d1ae1813004a6c26ed68231a3"
     },
     "source": {
-      "file": "smart-tags-0.11.1-source.zip",
-      "bytes": 713663,
-      "sha256": "96d16deabf2978d5ab7329ef73d736481dd85a03ab489c64044bee69ddc37273"
+      "file": "smart-tags-0.12.0-source.zip",
+      "bytes": 759721,
+      "sha256": "1e3155f8aeef5a6d36ad828c5b56b992c97b92224a2565fa957362375828e776"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

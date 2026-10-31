@@ -137,8 +137,12 @@ export interface ManagerSnapshot {
   navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
   assignmentReview?: DisplayAssignmentReview;
   assignmentReviews?: DisplayAssignmentReview[];
-  tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean }[] }[];
-  tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean }[];
+  tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
+  tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[];
+  nativeDefinitionPreparation?: {
+    id: string; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied'; completed: number; total: number; canApply: boolean; error?: string; spentUSD?: number; budgetUSD?: number;
+    rows: { id: string; sourceName: string; name?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed'; question?: string; targetTagId?: string; applied?: boolean }[];
+  };
   diyComparison?: {
     id: string;
     status: 'ready' | 'queued' | 'running' | 'paused';
@@ -172,6 +176,7 @@ export interface ManagerSnapshot {
   history: DisplayHistory[];
   neighbors: Record<string, { paperId: string; score: number }[]>;
   queue: {
+    ownerPage?: 'cleanup' | 'assignment' | 'vocabulary';
     taskLabel?: string;
     canUseFasterBuild?: boolean;
     switchingToFasterBuild?: boolean;

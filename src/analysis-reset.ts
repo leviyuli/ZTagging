@@ -12,6 +12,7 @@ export interface AnalysisResetRecord {
   preparation?:AppState['tagPreparation'];
   diyComparison?:AppState['diyComparison'];
   reconciliation?:AppState['reconciliation'];
+  nativeDefinitionPreparation?:AppState['nativeDefinitionPreparation'];
 }
 type ResettableState=Omit<AppState,'schemaVersion'|'analysisResetHistory'>&{schemaVersion:number;analysisResetHistory?:AnalysisResetRecord[]};
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
@@ -21,12 +22,13 @@ function retireRun(run:NonNullable<AppState['run']>):NonNullable<AppState['run']
 }
 export function resetPaperAnalysis<T extends ResettableState>(state:T,date=new Date().toISOString()):T {
   const next=copy(state),unfinished=(next.assignmentRuns??[]).filter(review=>review.status!=='finished'),discarded=next.suggestions.filter(suggestion=>!suggestion.applied);
-  const record:AnalysisResetRecord={id:allocateOpaqueId('analysis-reset'),date,factsCount:Object.keys(next.facts).length,analysesCount:Object.keys(next.analyses).length,analyses:next.analyses,discardedSuggestions:discarded,unfinishedReviews:unfinished,...(next.run?{run:next.run}:{}),...(next.maintenanceTasks?.length?{maintenanceTasks:next.maintenanceTasks}:{}),...(next.taxonomyProposal?{proposal:next.taxonomyProposal}:{}),...(next.tagPreparation?{preparation:next.tagPreparation}:{}),...(next.diyComparison?{diyComparison:next.diyComparison}:{}),...(next.reconciliation?{reconciliation:next.reconciliation}:{})};
+  const record:AnalysisResetRecord={id:allocateOpaqueId('analysis-reset'),date,factsCount:Object.keys(next.facts).length,analysesCount:Object.keys(next.analyses).length,analyses:next.analyses,discardedSuggestions:discarded,unfinishedReviews:unfinished,...(next.run?{run:next.run}:{}),...(next.maintenanceTasks?.length?{maintenanceTasks:next.maintenanceTasks}:{}),...(next.taxonomyProposal?{proposal:next.taxonomyProposal}:{}),...(next.tagPreparation?{preparation:next.tagPreparation}:{}),...(next.diyComparison?{diyComparison:next.diyComparison}:{}),...(next.reconciliation?{reconciliation:next.reconciliation}:{}),...(next.nativeDefinitionPreparation?{nativeDefinitionPreparation:next.nativeDefinitionPreparation}:{})};
   next.analysisResetHistory=[...(next.analysisResetHistory??[]),record];
   next.facts={};next.analyses={};next.factHistory=[];next.neighbors={};next.paperInputs={};next.cleanup=[];next.deferredItemIDs=[];
   for(const paper of Object.values(next.papers)){delete paper.summary;delete paper.concepts;delete paper.pdfText;paper.fingerprint=paperFingerprint(paper);}
   next.suggestions=next.suggestions.filter(suggestion=>suggestion.applied);next.assignmentRuns=(next.assignmentRuns??[]).filter(review=>review.status==='finished');
   next.taxonomyProposal=null;delete next.tagPreparation;delete next.approvedTaxonomyInput;
+  delete next.nativeDefinitionPreparation;
   delete next.metadataPreview;delete next.paperExclusionPreview;delete next.pendingTopicExtension;delete next.reconciliation;delete next.reconciliationPreview;delete next.keepTagPlan;delete next.keepRemovalPreview;delete next.diyComparison;delete next.diyMergePreview;
   if(next.run)next.run=retireRun(next.run);
   if(next.maintenanceTasks)next.maintenanceTasks=next.maintenanceTasks.map(task=>({...task,status:'completed',retired:true,run:retireRun(task.run)}));

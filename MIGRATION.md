@@ -1,4 +1,14 @@
-# Upgrading to Smart Tags 0.11.1
+# Upgrading to Smart Tags 0.12.0
+
+## Version 0.12.0
+
+State upgrades to **schema 10**. Before writing, the extension preserves the exact original bytes in **state.json.pre-v10.json**, using numbered filenames for different earlier generations. Backup or migration-write failure stops without substituting an older valid .bak. Older schema-9 installations refuse to overwrite newer data.
+
+Migration makes no provider request or native-library write and preserves cached facts, quotations, IDs, old proof policies, completed jobs, pending reviews, settings, encrypted credential references, spending and history. It adds support for native-only shelf memberships, removed-shelf redirects, shelf-organization journals and resumable meaning preparation. Existing tag names and shelf membership are retained.
+
+Shelf Merge replaces selected sources by default. When My tags is selected, the combined shelf retains its native inventory under the new name. Historical assignment runs retain their captured tag IDs; removed shelf selections resolve to the combined shelf. Undo restores organization unless later shelf edits conflict. No semantic tag merge or native renaming is implied.
+
+New meaning preparations use native-definition protocol 1. All-paper support is required before a native name becomes an approved alias; uncertain or non-scientific meanings remain unready. New definitions start in suggestion-only mode, and neither preparation nor Apply enables incoming automation. Reset paper analysis archives pending meaning work and paid records before clearing its reusable results.
 
 ## Version 0.11.1
 

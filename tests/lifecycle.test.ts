@@ -228,7 +228,7 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
   const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, 9);
+  assert.equal(state.schemaVersion, initialState().schemaVersion);
   assert.deepEqual(state.warnings, []);
   assert.equal(state.settings.autoAssign, false);
   assert.equal(state.run, null);
@@ -254,17 +254,17 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
   delete old.evidenceCatalog;delete old.taxonomyEvidence;
   const original = `${JSON.stringify(old, null, 3)}\r\n`;
   const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v9.json`;
+  const occupiedBackup = `${statePath}.pre-v10.json`;
   native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
   native.files.set(occupiedBackup, 'An older immutable migration backup.');
   await startNative(native);
   try {
     const migrated = JSON.parse(native.files.get(statePath)!);
-    assert.equal(migrated.schemaVersion, 9);assert.equal(migrated.vocabularyVersion, 7);
+    assert.equal(migrated.schemaVersion, initialState().schemaVersion);assert.equal(migrated.vocabularyVersion, 7);
     assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
     assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v9.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v9.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v10.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v10.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
     assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
     assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
     assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
@@ -282,7 +282,7 @@ test('native backup recovery records an active warning without restoring legacy 
   await startNative(native);
   try {
     const restored = JSON.parse(native.files.get(statePath)!);
-    assert.equal(restored.schemaVersion, 9);assert.equal(restored.vocabularyVersion, 4);
+    assert.equal(restored.schemaVersion, initialState().schemaVersion);assert.equal(restored.vocabularyVersion, 4);
     assert.ok(restored.warnings.some((warning: any) => warning.status === 'active' && /restored.*previous valid state/i.test(warning.message)));
     assert.ok(restored.warnings.every((warning: unknown) => warning && typeof warning === 'object'));
     assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
