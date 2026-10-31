@@ -81,7 +81,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   const win = {
     MozXULElement: { insertFTLIfNeeded() { localizedWindows++; } },
     document: { querySelectorAll: () => [], l10n: { removeResourceIds() {} } },
-    openDialog(_url: string, _name: string, _features: string, bridge: unknown) { if (!options.manager) throw new Error('No test manager window supplied'); options.manager.arguments = [bridge]; return options.manager; },
+    openDialog(url: string, _name: string, _features: string, bridge: unknown) { assert.equal(url, `chrome://smart-tags/content/manager.xhtml?v=${startup.version}`); if (!options.manager) throw new Error('No test manager window supplied'); options.manager.arguments = [bridge]; return options.manager; },
   };
   const Zotero: any = {
     initializationPromise: Promise.resolve(),

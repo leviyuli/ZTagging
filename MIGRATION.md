@@ -1,4 +1,12 @@
-# v0.13.0 migration notes
+# v0.13.1 update notes
+
+This patch keeps state schema 11 and native-definition protocol 2. It does not clear analysis, modify native paper tags, or reinterpret an existing question when loading it. Earlier schema migrations retain their collision-safe exact-byte backup behavior.
+
+Tag library now opens your tags. Use Review meanings to reopen unfinished preparation, or change a shelf/readiness filter to return to browsing. For an older question without stored answers, Suggest a meaning explicitly requests a draft using the selected provider and budget; opening the page sends no request. A valid complete candidate can offer a Use button without generating a new definition, but its supporting papers still require the existing checks. Missing information, protected decisions and contradictions remain editable or deferrable, never silently approved.
+
+Page navigation returns to the heading while background refresh preserves inner scrolling and unsaved drafts. Short/narrow editors leave the sidebar reachable. No new account setup or cache reset is required.
+
+## v0.13.0 migration notes
 
 State schema 11 preserves cached extraction, original sources and fingerprints, quotations, meanings, stable IDs, paper tags, shelves, decisions, settings, credential references, paid replies, spending and history. Native-definition protocol 2 adds structured choices, human answers and a per-preparation Leave undefined outcome; existing protocol 1 records remain readable without rewriting their meaning or proof fingerprints.
 

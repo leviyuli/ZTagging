@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.1
+
+- Open Tag library in browsing mode even with an unfinished meaning review. Review meanings opens it explicitly; changing a shelf or readiness filter returns to tags without discarding the work.
+- Give older questions without stored options a visible Suggest a meaning action, instead of an instruction to choose a nonexistent option. Complete valid proposed meanings can provide a local Use option; missing information, protected choices and known contradictions cannot.
+- Reset document scroll when changing pages, retain list/editor positions on refresh, and keep navigation reachable beside short/narrow editor drawers.
+- Remove the unused editor placeholder and use the available width when no editor is open. Preserve meaning drafts while browsing or navigating away.
+- Retain schema 11, protocol 2, existing analysis and paid history. Navigation and opening a review perform no AI request or native write.
+
 ## 0.13.0
 
 - Draft ordinary broad meanings for broad tag names; chemistry or subtype differences alone do not require a question.

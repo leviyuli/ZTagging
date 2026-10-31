@@ -310,7 +310,7 @@ export async function openManager(options:ManagerUIOptions={}): Promise<Window |
     },
     onFailure(error: unknown) { showFailure(error); },
   };
-  initialWindow = main.openDialog(MANAGER_URL, 'zotero-smart-tags-manager', 'chrome,dialog=no,resizable,centerscreen,width=1180,height=820', bridge) as Window;
+  initialWindow = main.openDialog(`${MANAGER_URL}?v=${encodeURIComponent(startupData?.version || 'dev')}`, 'zotero-smart-tags-manager', 'chrome,dialog=no,resizable,centerscreen,width=1180,height=820', bridge) as Window;
   if (!initialWindow) { cleanupReadiness(); throw new Error('Zotero could not open the Smart Tags manager.'); }
   managerWindow = finalWindow || initialWindow;
   if (!mounted) {

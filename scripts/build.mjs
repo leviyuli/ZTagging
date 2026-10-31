@@ -11,6 +11,10 @@ if (!out.startsWith(root + path.sep) || path.relative(root,out) !== path.join('b
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 await cp(path.join(root, 'addon'), out, { recursive: true });
+const manifest=JSON.parse(await readFile(path.join(out,'manifest.json'),'utf8'));
+const managerPath=path.join(out,'content/manager.xhtml');
+const managerMarkup=(await readFile(managerPath,'utf8')).replace(/(content\/manager(?:\.css|-loader\.js))"/g,`$1?v=${encodeURIComponent(manifest.version)}"`);
+await writeFile(managerPath,managerMarkup);
 await build({ entryPoints: ['src/main.ts'], bundle: true, outfile: path.join(out, 'content/smart-tags.js'), format: 'iife', globalName: 'SmartTags', target: 'firefox140', platform: 'browser', sourcemap: 'external', legalComments: 'none' });
 await cp('LICENSE', path.join(out, 'LICENSE'));
 const entries = [];
@@ -33,7 +37,6 @@ for(const entry of entries) {
 }
 const directory=Buffer.concat(central), end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(directory.length,12);end.writeUInt32LE(offset,16);
 await mkdir('dist',{recursive:true});
-const manifest=JSON.parse(await readFile(path.join(out,'manifest.json'),'utf8'));
 const artifact=`dist/smart-tags-${manifest.version}.xpi`;
 const archive=Buffer.concat([...local,directory,end]);
 await writeFile(artifact,archive);

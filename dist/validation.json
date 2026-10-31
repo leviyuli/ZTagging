@@ -1,19 +1,31 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.13.0",
-  "verifiedAt": "2026-10-31T12:42:37.984Z",
+  "version": "0.13.1",
+  "verifiedAt": "2026-10-31T13:10:12.653Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Actionable tag meanings, persistent shelf controls and task-specific Activity with completed history",
+  "scope": "Unblocked tag browsing, reachable page navigation and explicit legacy meaning actions",
   "schemaVersion": 11,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 1013,
+    "passed": 1019,
     "failed": 0
   },
   "nativeSmoke": {
+    "browsingAndNavigation": {
+      "retainedPapers": 17,
+      "savedTags": 17,
+      "syntheticRequests": 2,
+      "pdfReads": 0,
+      "extractionRequests": 0,
+      "nativeTagWrites": 0,
+      "sidebarRoutes": 8,
+      "viewports": 2,
+      "realPointerClicks": 0,
+      "realProviderRequests": 0
+    },
     "actionableMeanings": {
       "retainedPapers": 48,
       "syntheticRequests": 3,
@@ -38,7 +50,7 @@
       "realProviderRequests": 0
     },
     "status": "passed",
-    "passed": 243,
+    "passed": 259,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -929,6 +941,70 @@
         "passed": true
       },
       {
+        "name": "v0131IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0131ManagerResourcesUseInstalledVersion",
+        "passed": true
+      },
+      {
+        "name": "v0131DefaultLibraryBrowsesDespiteLegacyQuestion",
+        "passed": true
+      },
+      {
+        "name": "v0131WideLibraryHasFullWidthListAndSeparateSidebar",
+        "passed": true
+      },
+      {
+        "name": "v0131WideSidebarRoutesAreHitTestedAndResetPageScroll",
+        "passed": true
+      },
+      {
+        "name": "v0131WideLibraryReturnsToBrowsing",
+        "passed": true
+      },
+      {
+        "name": "v0131NarrowSidebarRoutesAreHitTestedAndResetPageScroll",
+        "passed": true
+      },
+      {
+        "name": "v0131NarrowLibraryReturnsToBrowsing",
+        "passed": true
+      },
+      {
+        "name": "v0131LegacyQuestionOffersAnActionInsteadOfAnUnanswerableChoice",
+        "passed": true
+      },
+      {
+        "name": "v0131ChangingShelfReturnsToSavedTags",
+        "passed": true
+      },
+      {
+        "name": "v0131ChangingReadinessReturnsToBrowsing",
+        "passed": true
+      },
+      {
+        "name": "v0131BackgroundRefreshPreservesInnerListScroll",
+        "passed": true
+      },
+      {
+        "name": "v0131ShortDrawerKeepsDraftScrollFooterAndSidebarUsable",
+        "passed": true
+      },
+      {
+        "name": "v0131SidebarClickClosesDrawerAndShowsNewPage",
+        "passed": true
+      },
+      {
+        "name": "v0131SuggestMeaningRecoversLegacyWorkWithoutRepeatedExtraction",
+        "passed": true
+      },
+      {
+        "name": "v0131RecoveredMeaningSavesWithoutChangingLibraryPapers",
+        "passed": true
+      },
+      {
         "name": "v050IsolatedDataGuard",
         "passed": true
       },
@@ -1115,12 +1191,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.12.0",
-      "to": "0.13.0",
+      "from": "0.13.0",
+      "to": "0.13.1",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "bc6b82596c3afb39d965ea65b5fe144422c080988aa59566858d3549e589b325",
+      "packageHash": "c674211527df66f97f5fd4e883c8b6167d2c7728c574396ed08c2653b59451e3",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -1132,7 +1208,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 139,
+      "largeRenderMS": 118,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -1214,6 +1290,15 @@
     "suggestionOnlyDefaults": true
   },
   "reviewWorkflow": {
+    "tagLibraryOpensBrowseByDefault": true,
+    "meaningReviewOpensExplicitly": true,
+    "shelfAndReadinessChangesRestoreBrowse": true,
+    "legacyQuestionHasSuggestMeaningAction": true,
+    "pageNavigationResetsDocumentScroll": true,
+    "backgroundRefreshPreservesInnerScrollAndDrafts": true,
+    "narrowEditorLeavesSidebarReachable": true,
+    "noEmptyEditorPlaceholder": true,
+    "versionedManagerResources": true,
     "directPersistentShelfMergeAndRename": true,
     "meaningEditorDraftsRetained": true,
     "unsavedEditsGateSelectedBatchSave": true,
@@ -1528,14 +1613,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.13.0.xpi",
-      "bytes": 669814,
-      "sha256": "bc6b82596c3afb39d965ea65b5fe144422c080988aa59566858d3549e589b325"
+      "file": "smart-tags-0.13.1.xpi",
+      "bytes": 672047,
+      "sha256": "c674211527df66f97f5fd4e883c8b6167d2c7728c574396ed08c2653b59451e3"
     },
     "source": {
-      "file": "smart-tags-0.13.0-source.zip",
-      "bytes": 783802,
-      "sha256": "f7d358f50bb93c36f14ce92e0cbfe36d33529f67a9713bf1e6be14a9e10c2bcd"
+      "file": "smart-tags-0.13.1-source.zip",
+      "bytes": 793810,
+      "sha256": "7a238f8d88785d37f49b8ada5194bd28c7a7e7b470efe5fbe388f5fb0f3b263b"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"
