@@ -156,7 +156,7 @@ test('the store writes an exact version-aware backup before migrating or persist
 test('application migration uses the current-schema backup and structural legacy validator',async()=>{
   const mem=memoryIO(),original=JSON.stringify(legacyState(),null,2)+'\n';mem.files.set('state.json',original);
   const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  assert.equal((await store.load()).schemaVersion,initialState().schemaVersion);assert.equal(mem.files.get('state.json.pre-v10.json'),original);
+  assert.equal((await store.load()).schemaVersion,initialState().schemaVersion);assert.equal(mem.files.get('state.json.pre-v11.json'),original);
 });
 
 test('a later migration retains an earlier source backup and preserves different source bytes separately',async()=>{

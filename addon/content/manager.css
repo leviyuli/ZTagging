@@ -144,15 +144,19 @@ a { color:var(--accent); text-underline-offset:3px; }
 .tag-workspace-list .tag-row { border-width:0 0 1px; border-radius:0; }
 .tag-list-search { padding:14px; position:sticky; top:0; z-index:1; background:var(--surface); border-bottom:1px solid var(--line); }
 .tag-workspace-list > .inline { padding:12px 14px; }
-.shelf-toolbar { padding:14px; border-bottom:1px solid var(--line); }
+.shelf-toolbar { padding:14px 0; border-bottom:1px solid var(--line); }
 .shelf-controls { display:grid; grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) auto; align-items:end; gap:10px; }
 .shelf-controls .field { margin-bottom:0; }
 .shelf-controls > button { margin-bottom:3px; }
+.shelf-buttons { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-bottom:3px; }
 .shelf-merge-sources { display:flex; flex-direction:column; gap:10px; margin:18px 0; }
 .tag-meaning-selection { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--surface-2); }
 .native-meaning-review > .tag-row { margin-top:10px; }
 .native-meaning-panel { display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-height:180px; }
 .native-meaning-panel > .card-body { min-height:0; overflow:auto; overscroll-behavior:contain; }
+.completed-task-list { margin-top:12px; }
+.completed-task { padding:14px 0; border-bottom:1px solid var(--line); }
+.completed-task:last-child { border-bottom:0; }
 .tag-editor { display:grid; grid-template-rows:auto minmax(0,1fr) auto; overflow:hidden; }
 .tag-editor .card-header { padding:14px 18px; }
 .editor-scroll { min-height:0; overflow:auto; overscroll-behavior:contain; padding:18px; }

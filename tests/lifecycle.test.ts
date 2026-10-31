@@ -254,7 +254,7 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
   delete old.evidenceCatalog;delete old.taxonomyEvidence;
   const original = `${JSON.stringify(old, null, 3)}\r\n`;
   const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v10.json`;
+  const occupiedBackup = `${statePath}.pre-v11.json`;
   native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
   native.files.set(occupiedBackup, 'An older immutable migration backup.');
   await startNative(native);
@@ -263,8 +263,8 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
     assert.equal(migrated.schemaVersion, initialState().schemaVersion);assert.equal(migrated.vocabularyVersion, 7);
     assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
     assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v10.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v10.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v11.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v11.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
     assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
     assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
     assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);

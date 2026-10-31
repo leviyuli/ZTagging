@@ -1,19 +1,30 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.12.0",
-  "verifiedAt": "2026-10-31T08:38:54.476Z",
+  "version": "0.13.0",
+  "verifiedAt": "2026-10-31T12:42:37.984Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Shelf merging, grounded batch definitions for native names and task-scoped progress",
-  "schemaVersion": 10,
+  "scope": "Actionable tag meanings, persistent shelf controls and task-specific Activity with completed history",
+  "schemaVersion": 11,
   "plannerVersion": 4,
   "consolidationProtocolVersion": 2,
   "sourceValidationPolicyVersion": 3,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 987,
+    "passed": 1013,
     "failed": 0
   },
   "nativeSmoke": {
+    "actionableMeanings": {
+      "retainedPapers": 48,
+      "syntheticRequests": 3,
+      "extractionRequests": 0,
+      "nativeTagWrites": 0,
+      "scopeChoice": true,
+      "entryBoundManualEdit": true,
+      "leftUndefined": true,
+      "completedHistory": true,
+      "realProviderRequests": 0
+    },
     "nativeMeanings": {
       "cachedPapers": 2,
       "syntheticRequests": 1,
@@ -27,7 +38,7 @@
       "realProviderRequests": 0
     },
     "status": "passed",
-    "passed": 236,
+    "passed": 243,
     "checks": [
       {
         "name": "isolatedDataDirectory",
@@ -538,7 +549,7 @@
         "passed": true
       },
       {
-        "name": "v053ActivityShowsRemainingRatherThanFalseTotal",
+        "name": "v053ActivityShowsRecordedUsageRatherThanFalseTotal",
         "passed": true
       },
       {
@@ -886,7 +897,35 @@
         "passed": true
       },
       {
-        "name": "v0120CompletedBuildProgressStaysInActivity",
+        "name": "v0120CompletedBuildProgressStaysInHistory",
+        "passed": true
+      },
+      {
+        "name": "v0130IsolatedProfileGuard",
+        "passed": true
+      },
+      {
+        "name": "v0130CurrentMeaningQuestionsReplaceOldCompletedBuild",
+        "passed": true
+      },
+      {
+        "name": "v0130ShelfControlsStayOutsideMeaningReview",
+        "passed": true
+      },
+      {
+        "name": "v0130ScopeChoicesAreFocusableAndConcrete",
+        "passed": true
+      },
+      {
+        "name": "v0130MeaningEditorRetainsAIProposalAndVisibleFooter",
+        "passed": true
+      },
+      {
+        "name": "v0130ChoicesEditsAndLeavingUndefinedFinishWithoutNativeWrites",
+        "passed": true
+      },
+      {
+        "name": "v0130FinishedMeaningWorkAppearsOnlyInCollapsedHistory",
         "passed": true
       },
       {
@@ -1076,12 +1115,12 @@
       "finiteGlobalSelection": true
     },
     "nativePackageUpgrade": {
-      "from": "0.11.1",
-      "to": "0.12.0",
+      "from": "0.12.0",
+      "to": "0.13.0",
       "method": "Native AddonManager.getInstallForFile",
       "oldPackageDisabled": true,
       "uninstallEvents": 0,
-      "packageHash": "c1c2ce8b30340d440599a166162a0c25c0a1225d1ae1813004a6c26ed68231a3",
+      "packageHash": "bc6b82596c3afb39d965ea65b5fe144422c080988aa59566858d3549e589b325",
       "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
     },
     "workflow": {
@@ -1093,7 +1132,7 @@
       "extensionPreservesOldIdentity": true
     },
     "preparation": {
-      "largeRenderMS": 194,
+      "largeRenderMS": 139,
       "largePapers": 51,
       "largeSources": 428,
       "meaningfulQuestions": 1,
@@ -1145,7 +1184,17 @@
     "legacyConsolidationCheckpointsRetained": true
   },
   "nativeDefinitionPreparation": {
-    "protocolVersion": 1,
+    "protocolVersion": 2,
+    "legacyProtocolOnePreserved": true,
+    "structuredChoices": true,
+    "ordinaryBroadMeaningDefault": true,
+    "humanAnswersSeparateFromProof": true,
+    "sourceSpecificRechecksAfterMeaningChange": true,
+    "uncertainJudgmentsRecheckedAfterChoice": true,
+    "knownContradictionsCannotBeOverridden": true,
+    "leaveUndefinedIsPersistentAndNoCost": true,
+    "legacyQuestionsContinueExplicitly": true,
+    "transactionalQuestionParsing": true,
     "maxPairsPerRequest": 16,
     "maxRequestUTF8Bytes": 90000,
     "maxAutomaticFormatCorrections": 1,
@@ -1165,6 +1214,15 @@
     "suggestionOnlyDefaults": true
   },
   "reviewWorkflow": {
+    "directPersistentShelfMergeAndRename": true,
+    "meaningEditorDraftsRetained": true,
+    "unsavedEditsGateSelectedBatchSave": true,
+    "staleEditorCannotChangeAppliedMeaning": true,
+    "partialMeaningSaveAndDone": true,
+    "activityRetainsQuestionsAfterRequestsFinish": true,
+    "completedWorkInCollapsedHistory": true,
+    "noDuplicateCompletedProgress": true,
+    "unfinishedAssignmentsRemainActionable": true,
     "shelfMergingReplacesSelectedSourcesByDefault": true,
     "myShelfProtected": true,
     "explicitRawMembershipsAndHistoricalRedirects": true,
@@ -1228,8 +1286,8 @@
   },
   "privateRetainedWorkReplay": {
     "status": "passed",
-    "scope": "Schema-ten compatibility replay of retained work with locally verified PDF and simulated judgments",
-    "schemaVersion": 10,
+    "scope": "Schema-eleven compatibility replay of retained work with locally verified PDF and simulated judgments",
+    "schemaVersion": 11,
     "evictedFactsRecovered": 1,
     "otherCachedFactsUnchanged": true,
     "localPDFInputVerified": true,
@@ -1249,8 +1307,8 @@
     "newGlobalChooserRequests": 0,
     "maxConcurrent": 2,
     "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 1718,
-    "totalSimulationMS": 4708,
+    "timeToRepresentativeQueueMS": 2349,
+    "totalSimulationMS": 6651,
     "oldChooserAttempts": 4,
     "rawChooserHistoryUnchanged": true,
     "archivedOldWorkExact": true,
@@ -1398,7 +1456,7 @@
   "privateNativeMeaningPlan": {
     "status": "passed",
     "sourceSchema": 9,
-    "currentSchema": 10,
+    "currentSchema": 11,
     "cachedFacts": 95,
     "priorPaidRunPreserved": true,
     "allEvidenceIdentitiesAndQuotesUnchanged": true,
@@ -1406,7 +1464,7 @@
     "sourceCopyExactBytesUnchanged": true,
     "undefinedSelected": 44,
     "initialDefinitionRequests": 9,
-    "maxInitialRequestUTF8Bytes": 64863,
+    "maxInitialRequestUTF8Bytes": 66123,
     "allDefinitionDispatchesZero": true,
     "mergedSourceShelves": 5,
     "mergedUniqueDefinitions": 154,
@@ -1414,6 +1472,29 @@
     "allTagCountUnchangedByMerge": true,
     "newProviderRequests": 0,
     "newExtractionRequests": 0,
+    "nativeWrites": 0,
+    "workingProfileWrites": 0
+  },
+  "privateActionableMeaningReplay": {
+    "status": "passed",
+    "sourceSchema": 10,
+    "currentSchema": 11,
+    "cachedFacts": 95,
+    "completedPaperJobs": 48,
+    "legacyQuestionTags": 1,
+    "affectedPapers": 17,
+    "migrationPreservesPreparationAndProofs": true,
+    "activityRetainsActionableMeaningTask": true,
+    "explicitContinueUsesProtocolTwo": true,
+    "priorSnapshotAndRepliesArchivedExact": true,
+    "allocatedIdentitiesPreserved": true,
+    "completedPaperBuildUnchanged": true,
+    "factsQuotesIDsAndNativeDataUnchanged": true,
+    "spendingPreserved": true,
+    "budgetRejectsBeforeDispatch": true,
+    "sourceCopyExactBytesUnchanged": true,
+    "localPDFReads": 0,
+    "providerRequests": 0,
     "nativeWrites": 0,
     "workingProfileWrites": 0
   },
@@ -1447,14 +1528,14 @@
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.12.0.xpi",
-      "bytes": 650577,
-      "sha256": "c1c2ce8b30340d440599a166162a0c25c0a1225d1ae1813004a6c26ed68231a3"
+      "file": "smart-tags-0.13.0.xpi",
+      "bytes": 669814,
+      "sha256": "bc6b82596c3afb39d965ea65b5fe144422c080988aa59566858d3549e589b325"
     },
     "source": {
-      "file": "smart-tags-0.12.0-source.zip",
-      "bytes": 759721,
-      "sha256": "1e3155f8aeef5a6d36ad828c5b56b992c97b92224a2565fa957362375828e776"
+      "file": "smart-tags-0.13.0-source.zip",
+      "bytes": 783802,
+      "sha256": "f7d358f50bb93c36f14ce92e0cbfe36d33529f67a9713bf1e6be14a9e10c2bcd"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

@@ -1,4 +1,18 @@
-# Upgrading to Smart Tags 0.12.0
+# v0.13.0 migration notes
+
+State schema 11 preserves cached extraction, original sources and fingerprints, quotations, meanings, stable IDs, paper tags, shelves, decisions, settings, credential references, paid replies, spending and history. Native-definition protocol 2 adds structured choices, human answers and a per-preparation Leave undefined outcome; existing protocol 1 records remain readable without rewriting their meaning or proof fingerprints.
+
+AtomicStore writes an immutable exact-byte, collision-safe pre-v11 backup before migrating. Backup, migration or write failures stop the upgrade; an older valid generation is not substituted. Updating and opening the manager perform no AI requests or native tag writes.
+
+For an earlier plain-text question such as Batteries, open Tag library and choose Continue preparation. This explicit request uses the selected provider and budget to draft a broad meaning from the retained paper context. It does not repeat factual extraction, invent choices from the old question, or discard paid replies. Ready results can still be saved without regenerating them.
+
+Choosing or editing a meaning records human intent separately from source judgments. Changed sources and meanings require new checks; exact compatible positive or negative judgments remain reusable. Leave undefined keeps the native name visible and excludes it from AI assignment without deleting or renaming paper tags. Done closes only a fully saved or explicitly deferred review.
+
+Rename and Merge shelves now remain visible above the workspace, including during meaning review. Merge still replaces selected shelves by default, retains native names in a combined My tags shelf when selected, and supports Activity Undo. Completed work moves into collapsed Activity history; unresolved choices and unsaved meanings remain actionable.
+
+## Earlier migration notes
+
+### Upgrading to Smart Tags 0.12.0
 
 ## Version 0.12.0
 

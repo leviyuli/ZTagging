@@ -77,6 +77,6 @@ test('migration creates an exact current-version backup and never replaces a val
   const old=schemaFour(),bytes=JSON.stringify(old,null,2)+'\r\n',files=new Map([['state.json',bytes],['state.json.bak',JSON.stringify(initialState())]]);let rejectWrite=true;
   const io={exists:async(path:string)=>files.has(path),read:async(path:string)=>files.get(path)!,writeAtomic:async(path:string,value:string)=>{if(path==='state.json'&&rejectWrite)throw new Error('Atomic migration write failed');files.set(path,value);}};
   const store=new AtomicStore(io,'state.json',initialState,validState,migrateState,validLegacyState);
-  await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v10.json'),bytes);assert.equal(store.recovered,false);
-  rejectWrite=false;const next=await store.load();assert.equal(next.schemaVersion,initialState().schemaVersion);assert.deepEqual(next.facts,old.facts);assert.equal(files.has('state.json.pre-v10.1.json'),false);
+  await assert.rejects(store.load(),/Atomic migration write failed/);assert.equal(files.get('state.json'),bytes);assert.equal(files.get('state.json.pre-v11.json'),bytes);assert.equal(store.recovered,false);
+  rejectWrite=false;const next=await store.load();assert.equal(next.schemaVersion,initialState().schemaVersion);assert.deepEqual(next.facts,old.facts);assert.equal(files.has('state.json.pre-v11.1.json'),false);
 });

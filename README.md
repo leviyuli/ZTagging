@@ -5,7 +5,7 @@ A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It pre
 ## Install and start
 
 1. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** (some versions label this “Install Add-on From File…”).
-2. Select [`smart-tags-0.12.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.12.0.xpi).
+2. Select [`smart-tags-0.13.0.xpi`](https://github.com/leviyuli/ZTagging/raw/refs/heads/main/dist/smart-tags-0.13.0.xpi).
 3. Open **Tools → Smart Tags…**. Navigation lives in the left pane; the right-hand item and information panes remain unchanged.
 4. Open **Connect AI**. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; discover/select a text-capable model, then click **Test connection**.
 5. Open **Build tags**. Start with **Pilot · 50 papers**, or choose selected papers, selected collections, or the whole library, then click **Prepare tags**. This group supplies the information used to build your tag list.
@@ -29,6 +29,8 @@ Version **0.10.3** repairs conflicting generated names and aliases locally, keep
 
 Version **0.11.0** keeps the navigator's scroll position and focus, combines native names with **My tags**, and gives library shelves comparable counts. A completed extension prepared before a saved-tag edit offers **Update and apply**, reusing its papers and compatible checks while respecting deleted or edited definitions.
 
+Version **0.13.0** makes meaning reviews actionable, keeps **Rename** and **Merge shelves** visible above the workspace, and retains unsaved meanings or questions in Activity. Use **Continue preparation** for an older unanswered preparation; cached extraction and paid replies are retained. Completed work appears in collapsed history.
+
 Version **0.12.0** adds shelf merging, a **Needs meaning** filter and batch AI preparation for selected native names. Progress appears in Activity and the page for its task; saved builds no longer add a progress bar to unrelated pages.
 
 ## Keep using and extending your tag library
@@ -39,9 +41,9 @@ Use **Tag library → Add tag** or edit an existing definition. Choose a shelf t
 
 Both shelf menus show the same counts, for example **199 total · 155 ready**. Ready tags have saved meanings and can be used for AI assignment; the remaining names stay visible in the library. Generated tags already assigned to papers can also appear in My tags. In that example, 154 generated tags plus 164 My tags share 119 entries, giving **154 + 164 − 119 = 199** unique tags. A shelf with every tag ready shows just its tag count.
 
-Open **Shelf actions → Merge shelves**, select the lists, and give the combined shelf a name. The default replaces the selected shelves; **Keep originals** is available by clearing the replacement option. Shared tags appear once, definitions and paper assignments stay unchanged, and **Activity → Undo** restores the previous shelves. When My tags is selected, its native inventory is retained inside the combined shelf under the new name. Raw names copied into a shelf remain visible even if they later have no linked paper.
+Use the visible **Merge shelves** button beside the shelf selector, select the lists, and give the combined shelf a name. The default replaces the selected shelves; **Keep originals** is available by clearing the replacement option. Shared tags appear once, definitions and paper assignments stay unchanged, and **Activity → Undo** restores the previous shelves. When My tags is selected, its native inventory is retained inside the combined shelf under the new name. Raw names copied into a shelf remain visible even if they later have no linked paper.
 
-To prepare manually added Zotero tags, choose **Needs meaning**, select names across pages, and click **Prepare meanings**. The selected AI connection uses their linked papers and available cached findings to propose concise meanings and standard names or match an existing saved definition. Clear results can be saved together; names with mixed meanings or insufficient information stay unready and can be given a meaning manually. A name without linked papers needs a manual meaning and incurs no AI request.
+To prepare manually added Zotero tags, choose **Needs meaning**, select names across pages, and click **Prepare meanings**. The selected AI connection uses their linked papers and available cached findings to propose concise meanings and standard names or match an existing saved definition. Broad names keep their ordinary broad meanings: different battery chemistries can support one battery tag. Save clear results together; genuine scope questions offer meaning choices, **Edit meaning**, and **Leave undefined**. Choosing or editing a meaning checks the affected papers before Save becomes available. A name without linked papers needs a manual meaning and incurs no AI request.
 
 Saving meanings changes the Smart Tags library only. Original native names are retained as recognized other names when every affected paper supports that interpretation; existing paper tags are not renamed. New definitions start in suggestion-only mode, remembered locks and rejections remain protected, and incoming automation is not enabled. Preparation queues behind active analysis, retains paid replies and spending across restart, and uses the existing provider and budget controls.
 

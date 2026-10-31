@@ -140,9 +140,10 @@ export interface ManagerSnapshot {
   tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
   tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[];
   nativeDefinitionPreparation?: {
-    id: string; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied'; completed: number; total: number; canApply: boolean; error?: string; spentUSD?: number; budgetUSD?: number;
-    rows: { id: string; sourceName: string; name?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed'; question?: string; targetTagId?: string; applied?: boolean }[];
+    id: string; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; error?: string; spentUSD?: number; budgetUSD?: number;
+    rows: { id: string; tagId?: string; sourceName: string; name?: string; fullName?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; inclusions?: string[]; exclusions?: string[]; examples?: string[]; broaderIds?: string[]; relatedIds?: string[]; matchingMode?: 'manual' | 'suggest' | 'auto'; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed' | 'left-undefined'; question?: string; choices?: { id: string; label: string; description: string }[]; needsContinuation?: boolean; targetTagId?: string; applied?: boolean }[];
   };
+  activityTasks?: { id: string; kind: 'rebuild' | 'assignment' | 'meanings' | 'maintenance'; state: 'queued' | 'running' | 'paused' | 'needs-choice' | 'ready-to-save' | 'completed'; label: string; ownerPage: 'cleanup' | 'assignment' | 'vocabulary' | 'activity'; workId?: string; message?: string; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; completed?: number; total?: number; spentUSD?: number; createdAt?: string }[];
   diyComparison?: {
     id: string;
     status: 'ready' | 'queued' | 'running' | 'paused';

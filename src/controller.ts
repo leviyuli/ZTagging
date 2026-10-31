@@ -33,7 +33,7 @@ import {createAssignmentRun,triageAssignmentSuggestions,assignmentRunProgress,up
 import type {AssignmentRunRecord,AssignmentReviewJob,UncoveredTopicRecord} from './assignment-review.ts';
 import {migrateTagShelves,createBuildTagShelf,renameTagShelf,updateTagShelfMembers,selectTagShelfDefinitions,libraryTagShelfEntries,resolveTagShelfId,validTagShelves,previewTagShelfMerge,applyTagShelfMerge,MY_TAGS_SHELF_ID} from './tag-shelves.ts';
 import type {TagShelf} from './tag-shelves.ts';
-import {createNativeTagDefinitionWork,refreshUndispatchedNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,acceptNativeTagDefinitionResult,failNativeTagDefinitionTask,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,compileNativeTagDefinitions,validNativeTagDefinitionWork} from './native-tag-definition.ts';
+import {createNativeTagDefinitionWork,refreshUndispatchedNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,acceptNativeTagDefinitionResult,failNativeTagDefinitionTask,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,compileNativeTagDefinitions,validNativeTagDefinitionWork,resolveNativeTagDefinition,continueNativeTagDefinitionWork} from './native-tag-definition.ts';
 import type {NativeTagDefinitionWork} from './native-tag-definition.ts';
 import {resetPaperAnalysis} from './analysis-reset.ts';
 import type {AnalysisResetRecord} from './analysis-reset.ts';
@@ -94,9 +94,9 @@ type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provi
 type TaxonomyReview=Pick<TaxonomyProposal,'mappingConfirmations'|'validatedEvidenceLinks'|'evidenceMeaningFingerprints'|'evidenceScientificIdentities'|'paperFingerprints'|'paperInputFingerprints'|'machineDecisions'|'preparationPolicyVersion'|'mappingPolicyVersion'|'mappedSourceIds'|'inheritanceReviewSourceIds'|'retainedDefinitionIds'|'verificationScope'|'tagPolicyVersion'>;
 type TaxonomyEvidenceScope={evidenceSnapshot:RegistrySnapshot;support:TaxonomyProposal['support'];review?:TaxonomyReview};
 export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState;evidenceScopes?:TaxonomyEvidenceScope[]};
-interface NativeDefinitionReview {work:NativeTagDefinitionWork;taskId:string;shelfId:string;appliedEntryIds:string[]}
+interface NativeDefinitionReview {work:NativeTagDefinitionWork;taskId:string;shelfId:string;appliedEntryIds:string[];finishedAt?:string}
 export interface AppState {
-  schemaVersion:10;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
+  schemaVersion:11;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
   nativeTags:Record<string,NativeTag[]>;suggestions:StoredSuggestion[];decisions:Record<string,Decision>;
   ownership:Ownership;history:History[];pendingChange?:History;analyses:Record<string,CachedAnalysis>;
   neighbors:Record<string,Neighbor[]>;settings:ManagerSettings;run:Run|null;metadata:Record<string,string>;
@@ -212,13 +212,13 @@ function validMaintenanceTask(value:unknown):value is MaintenanceTask {
 }
 
 export function initialState():AppState {
-  return {schemaVersion:10,vocabularyVersion:0,tags:[{
+  return {schemaVersion:11,vocabularyVersion:0,tags:[{
     id:'custom-rcl',name:'RCL',description:'Catalyst-layer resistance in water electrolysis or fuel cells.',facet:'phenomenon',
     aliases:['catalyst layer resistance'],inclusions:['Substantive study of resistance within a catalyst layer, even when the acronym RCL is absent.'],
     exclusions:['Unrelated meanings of RCL.','Resistance mentioned only in a bibliography or unrelated device context.'],examples:[],custom:true,status:'draft',broaderIds:[],fullName:'Catalyst-layer resistance',relatedIds:[],matchingMode:'suggest'
   }],papers:{},nativeTags:{},suggestions:[],decisions:{},ownership:{},history:[],analyses:{},neighbors:{},settings:{...DEFAULTS},run:null,metadata:{},cleanup:[],pilotReviewed:false,pilotVersion:0,pilotIds:[],pilotExpected:0,verifiedConnections:[],models:[],warnings:[],deferredItemIDs:[],facts:{},taxonomyProposal:null,taxonomyArchives:[],taxonomyRedirects:{},taxonomyReady:false,taxonomySupport:{},evidenceCatalog:createEmptyEvidenceCatalog(),taxonomyEvidence:null,preparationHistory:[]};
 }
-function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10):boolean {
+function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10|11):boolean {
   const v=value as AppState;
   const object=(x:unknown)=>x!==null&&typeof x==='object'&&!Array.isArray(x);
   const settings=(x:any)=>object(x)&&validProvider(x.provider)&&typeof x.model==='string'&&typeof x.autoAssign==='boolean'&&['budgetUSD','inputPricePerMillion','outputPricePerMillion','maxOutputTokens'].every(k=>Number.isFinite(x[k]));
@@ -245,7 +245,7 @@ function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10):boolean {
   if(!v.taxonomyArchives.every(a=>object(a)&&typeof a.id==='string'&&Array.isArray(a.tags)&&object(a.redirects)&&Number.isInteger(a.version)))return false;
   return true;
 }
-function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10):boolean {
+function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10|11):boolean {
   if(!validStateShape(value,version))return false;
   const v=value as AppState,object=(x:unknown)=>!!x&&typeof x==='object'&&!Array.isArray(x);
   if(!v.warnings.every(validWarningRecord)||!object(v.evidenceCatalog)||!object(v.evidenceCatalog.sources)||!object(v.evidenceCatalog.entries))return false;
@@ -350,16 +350,17 @@ function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10):boolean {
     }
   }
   if(version>=10){
-    const validReview=(value:unknown)=>{if(!storedObject(value))return false;const work=value.work;return validNativeTagDefinitionWork(work)&&typeof value.taskId==='string'&&typeof value.shelfId==='string'&&stringList(value.appliedEntryIds)&&value.appliedEntryIds.every(id=>work.entries.some(entry=>entry.id===id));};
+    const validReview=(value:unknown)=>{if(!storedObject(value))return false;const work=value.work;return validNativeTagDefinitionWork(work)&&typeof value.taskId==='string'&&typeof value.shelfId==='string'&&stringList(value.appliedEntryIds)&&value.appliedEntryIds.every(id=>work.entries.some(entry=>entry.id===id))&&(value.finishedAt===undefined||typeof value.finishedAt==='string');};
     if(v.nativeDefinitionPreparation!==undefined&&!validReview(v.nativeDefinitionPreparation))return false;
     if(v.nativeDefinitionHistory!==undefined&&(!Array.isArray(v.nativeDefinitionHistory)||!v.nativeDefinitionHistory.every(validReview)))return false;
     for(const change of [...v.history,...(v.pendingChange?[v.pendingChange]:[])])if(change.beforeShelves!==undefined||change.afterShelves!==undefined){if(!validTagShelves(change.beforeShelves)||!validTagShelves(change.afterShelves)||change.patches.length||change.metadataPatches?.length)return false;}
   }
   return true;
 }
-export function validState(value:unknown):value is AppState{return validIdentifiedState(value,10);}
+export function validState(value:unknown):value is AppState{return validIdentifiedState(value,11);}
 export function validLegacyState(value:unknown):boolean {
   const old=value as any;
+  if(old?.schemaVersion===10)return validIdentifiedState(old,10);
   if(old?.schemaVersion===9)return validIdentifiedState(old,9);
   if(old?.schemaVersion===8)return validIdentifiedState(old,8);
   if(old?.schemaVersion===7)return validIdentifiedState(old,7);
@@ -379,7 +380,7 @@ export function migrateState(value:unknown,options:MigrationOptions={}):AppState
   if(!validLegacyState(value))throw new Error('Unsupported or invalid Smart Tags state.');
   const source=value as {schemaVersion:number};
   const next=(source.schemaVersion>=3?copy(value):upgradeToIdentifiedState(value)) as AppState;
-  next.schemaVersion=10;
+  next.schemaVersion=11;
   if(source.schemaVersion<4){
     next.warnings=migrateWarningEpisodes(next.warnings);
     next.userEditedTagIds=inferEditedProposalTagIds(next);
@@ -946,13 +947,59 @@ export class AppController implements ManagerAPI {
     const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId),definitions=scientificDefinitions(this.state.tags).filter(tag=>tag.status==='approved');
     const rows=review.work.entries.map(entry=>{
       const actual=definitions.filter(tag=>[tag.name,tag.fullName,...tag.aliases].includes(entry.sourceName));
-      const applied=actual.length===1&&(review.appliedEntryIds.includes(entry.id)||entry.status==='question');
+      const applied=entry.status!=='left-undefined'&&actual.length===1&&(review.appliedEntryIds.includes(entry.id)||entry.status==='question');
       const protectedChoice=entry.targetTagId&&entry.paperIds.some(paperId=>{const decision=this.state.decisions[pair(paperId,entry.targetTagId!)];return decision?.rejected||decision?.locked;});
-      return {id:entry.id,sourceName:entry.sourceName,...(entry.definition?{name:entry.definition.name,description:entry.definition.description,facet:entry.definition.facet,aliases:entry.definition.aliases}:{}),paperIds:[...entry.paperIds],status:protectedChoice&&!applied?'question' as const:entry.status==='pending'&&review.work.tasks.some(task=>task.status==='failed'&&task.entryIds.includes(entry.id))?'failed' as const:entry.status,question:protectedChoice&&!applied?'An earlier lock or rejection protects a paper using this saved tag. Keep this name separate or add its meaning manually.':entry.question,targetTagId:entry.targetTagId,applied};
+      return {id:entry.id,tagId:entry.tagId,sourceName:entry.sourceName,...(entry.definition?{name:entry.definition.name,fullName:entry.definition.fullName,description:entry.definition.description,facet:entry.definition.facet,aliases:entry.definition.aliases,inclusions:entry.definition.inclusions,exclusions:entry.definition.exclusions,examples:entry.definition.examples,broaderIds:entry.definition.broaderIds,relatedIds:entry.definition.relatedIds,matchingMode:entry.definition.matchingMode}:{}),paperIds:[...entry.paperIds],status:entry.status==='left-undefined'?entry.status:protectedChoice&&!applied?'question' as const:entry.status==='pending'&&review.work.tasks.some(task=>task.status==='failed'&&task.entryIds.includes(entry.id))?'failed' as const:entry.status,question:protectedChoice&&!applied?'An earlier lock or rejection protects a paper using this saved tag. Keep this name separate or revise that choice first.':entry.question,choices:entry.questionDetails?.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.definition.description})),needsContinuation:entry.status==='question'&&!entry.questionDetails,targetTagId:entry.targetTagId,applied};
     });
-    const status=rows.every(row=>row.applied)?'applied':task?.status==='queued'?'queued':task?.status==='running'?'running':task?.status==='paused'?'paused':'ready';
+    const status=review.finishedAt&&rows.every(row=>row.applied||row.status==='left-undefined')?'finished':rows.every(row=>row.applied)?'applied':task?.status==='queued'?'queued':task?.status==='running'?'running':task?.status==='paused'?'paused':'ready';
     const technical=review.work.status==='failed'&&!review.work.tasks.some(task=>task.status==='failed'&&task.attempts.at(-1)?.transport);
-    return {id:review.work.id,status,completed:rows.filter(row=>row.status==='ready'||row.status==='question').length,total:rows.length,rows,spentUSD:task?.run.spentUSD??0,budgetUSD:task?.run.settings.budgetUSD??this.state.settings.budgetUSD,canApply:rows.some(row=>row.status==='ready'&&!row.applied)&&status!=='queued'&&status!=='running'&&this.state.run?.status!=='running',...(task?.error?{error:technical?'Some meanings could not be checked. Retry the remaining work.':this.processingMessage(task.error)}:{})};
+    return {id:review.work.id,status,completed:rows.filter(row=>row.status==='ready'||row.status==='question'||row.status==='left-undefined').length,total:rows.length,rows,readyCount:rows.filter(row=>row.status==='ready'&&!row.applied).length,questionCount:rows.filter(row=>row.status==='question'&&!row.applied).length,savedCount:rows.filter(row=>row.applied).length,leftUndefinedCount:rows.filter(row=>row.status==='left-undefined').length,canContinue:rows.some(row=>row.needsContinuation&&!row.applied),spentUSD:task?.run.spentUSD??0,budgetUSD:task?.run.settings.budgetUSD??this.state.settings.budgetUSD,canApply:rows.some(row=>row.status==='ready'&&!row.applied)&&status!=='queued'&&status!=='running'&&status!=='finished'&&this.state.run?.status!=='running',...(task?.error?{error:technical?'Some meanings could not be checked. Retry the remaining work.':this.processingMessage(task.error)}:{})};
+  }
+  private nativeMeaningSummary(preparation:NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>) {
+    const parts=[preparation.readyCount?`${preparation.readyCount} ${preparation.readyCount===1?'meaning':'meanings'} ready to save`:'',preparation.questionCount?`${preparation.questionCount} ${preparation.questionCount===1?'tag needs':'tags need'} your choice`:'',preparation.savedCount?`${preparation.savedCount} saved`:'',preparation.leftUndefinedCount?`${preparation.leftUndefinedCount} left undefined`:''].filter(Boolean);
+    return parts.join(' · ')||'Preparing meanings for your selected tags…';
+  }
+  private activityDisplay(native:ManagerSnapshot['nativeDefinitionPreparation']):NonNullable<ManagerSnapshot['activityTasks']> {
+    const activities:NonNullable<ManagerSnapshot['activityTasks']>=[],run=this.state.run;
+    if(run){
+      const review=run.kind==='rebuild'?this.state.tagPreparation:undefined;
+      const assignment=run.kind==='tag'?this.state.assignmentRuns?.find(record=>record.id===run.id):undefined,progress=assignment?assignmentRunProgress(assignment,assignment.jobs,this.state.suggestions):undefined;
+      activities.push({id:run.id,kind:run.kind==='rebuild'?'rebuild':'assignment',state:run.status==='running'?'running':run.status==='paused'?'paused':assignment&&assignment.status!=='finished'?(progress!.canFinish?'ready-to-save':'needs-choice'):review?.status==='questions'?'needs-choice':review?.status==='ready'?'ready-to-save':'completed',label:run.kind==='rebuild'?'Build tags':'Assign tags',ownerPage:run.kind==='rebuild'?'cleanup':'assignment',message:run.status==='idle'&&assignment&&assignment.status!=='finished'?'Review and finish this assignment.':run.message,completed:run.jobs.filter(job=>job.status==='completed').length,total:run.jobs.length,spentUSD:run.spentUSD});
+    }
+    for(const task of this.state.maintenanceTasks??[]){
+      if(task.kind==='define-native'){
+        const current=this.state.nativeDefinitionPreparation?.taskId===task.id&&native;
+        const archive=this.state.nativeDefinitionHistory?.findLast(review=>review.taskId===task.id);
+        activities.push({id:task.id,kind:'meanings',state:current?(current.status==='queued'?'queued':current.status==='running'?'running':current.status==='paused'?'paused':current.status==='finished'?'completed':current.questionCount?'needs-choice':current.readyCount?'ready-to-save':'completed'):'completed',label:'Tag meanings',ownerPage:'vocabulary',workId:current?current.id:undefined,message:current?this.nativeMeaningSummary(current):'Earlier meaning preparation',readyCount:current?current.readyCount:undefined,questionCount:current?current.questionCount:undefined,savedCount:current?current.savedCount:archive?archive.appliedEntryIds.length:undefined,leftUndefinedCount:current?current.leftUndefinedCount:archive?archive.work.entries.filter(entry=>entry.status==='left-undefined').length:undefined,completed:current?current.completed:undefined,total:current?current.total:undefined,spentUSD:task.run.spentUSD,createdAt:task.createdAt});
+      }else activities.push({id:task.id,kind:'maintenance',state:task.status==='completed'?'completed':task.status,label:task.kind==='retry'?'Recheck papers':'Tag maintenance',ownerPage:'activity',message:task.error?this.processingMessage(task.error):task.run.message,completed:task.run.jobs.filter(job=>job.status==='completed').length,total:task.run.jobs.length,spentUSD:task.run.spentUSD,createdAt:task.createdAt});
+    }
+    const priority={'running':0,'paused':1,'queued':2,'needs-choice':3,'ready-to-save':4,'completed':5};
+    return activities.sort((a,b)=>priority[a.state]-priority[b.state]||(b.createdAt??'').localeCompare(a.createdAt??''));
+  }
+  private async changeNativeMeaning(id:string,change:{entryId?:string;choiceId?:string;definition?:TagDefinition;leaveUndefined?:boolean;rowIds?:string[];continue?:boolean}) {
+    const review=this.state.nativeDefinitionPreparation;if(!review||review.work.id!==id||this.nativeDefinitionDisplay()?.status==='finished')throw new Error('This meaning preparation is no longer open. Select the tag names again.');
+    const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId);if(!task)throw new Error('The saved meaning task is unavailable.');
+    if(task.status==='running'||task.status==='queued')throw new Error('Wait for this meaning preparation to finish before changing it.');
+    const display=this.nativeDefinitionDisplay()!,selected=change.continue?change.rowIds??display.rows.filter(row=>row.needsContinuation&&!row.applied).map(row=>row.id):[change.entryId??''];
+    if(selected.some(id=>display.rows.find(row=>row.id===id)?.applied))throw new Error('This meaning is already saved. Open it in the tag library to make further changes.');
+    if(task.response&&!task.response.applied){
+      const request=review.work.tasks.find(request=>request.status==='running');
+      if(request){review.work=acceptNativeTagDefinitionResult(review.work,request.id,task.response.raw,{provider:task.response.provider,model:task.response.model});task.response.applied=true;task.cursor++;await this.save();}
+    }
+    const input=await this.nativeDefinitionInput(review.work.entries.map(entry=>entry.sourceName));
+    review.work=change.continue?continueNativeTagDefinitionWork(review.work,input,selected):resolveNativeTagDefinition(review.work,input,{entryId:change.entryId!,choiceId:change.choiceId,definition:change.definition,leaveUndefined:change.leaveUndefined});
+    delete review.finishedAt;
+    let connectionError:string|undefined;if(review.work.status!=='ready')try{this.checkConnectionSettings();}catch(error){connectionError=this.message(error);}
+    task.run.settings=copy(this.state.settings);task.status=review.work.status==='ready'?'completed':connectionError?'paused':'queued';task.run.status=task.status==='completed'?'idle':task.status==='paused'?'paused':'running';
+    task.run.jobs=[...new Set(review.work.entries.flatMap(entry=>entry.paperIds))].map(paperId=>({id:uid('meaning-paper'),paperId,status:task.status==='completed'?'completed':'pending'}));
+    if(connectionError)task.error=connectionError;else delete task.error;
+    task.run.message=this.nativeMeaningSummary(this.nativeDefinitionDisplay()!);await this.save();this.launchMaintenance();
+  }
+  private async finishNativeMeanings(id:string) {
+    const review=this.state.nativeDefinitionPreparation,display=this.nativeDefinitionDisplay();
+    if(!review||review.work.id!==id||!display)throw new Error('This meaning preparation is no longer available.');
+    if(display.status==='queued'||display.status==='running'||!display.rows.every(row=>row.applied||row.status==='left-undefined'))throw new Error('Save the ready meanings or leave the remaining tags undefined before finishing.');
+    review.finishedAt??=new Date().toISOString();const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId);if(task){task.status='completed';task.run.status='idle';task.run.message=this.nativeMeaningSummary(display);}await this.save();
   }
   private async prepareNativeDefinitions(names:unknown,shelfId?:string) {
     if(!Array.isArray(names)||!names.length||names.some(name=>typeof name!=='string'||!name))throw new Error('Select tag names that need a meaning first.');
@@ -1177,7 +1224,7 @@ export class AppController implements ManagerAPI {
       task.run.message=`Preparing tag meanings: ${review.work.entries.filter(entry=>entry.status!=='pending').length} of ${review.work.entries.length}…`;await this.save();
     }
     if(review.work.status==='failed')throw new Error('Some meanings could not be checked. Retry the remaining work; completed results are saved.');
-    if(review.work.status==='ready'){for(const job of task.run.jobs)job.status='completed';task.run.message='Your tag meanings are ready to save.';}
+    if(review.work.status==='ready'){for(const job of task.run.jobs)job.status='completed';task.run.message=this.nativeMeaningSummary(this.nativeDefinitionDisplay()!);}
   }
   private async runMaintenance() {
     this.maintenanceAbort=new AbortController();
@@ -1344,7 +1391,7 @@ export class AppController implements ManagerAPI {
     const nativePreparation=this.nativeDefinitionDisplay();
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,workflow:this.workflowDisplay(nativeTags),
-      tagShelves:this.shelfDisplay(shelfNative),tagLibraryEntries:libraryTagShelfEntries(shelfNative,this.state.tags,undefined,true,this.shelves().flatMap(shelf=>shelf.nativeTagNames??[])),nativeDefinitionPreparation:nativePreparation,existingTags:this.existingTagDisplay(),diyComparison:this.diyComparisonDisplay(),assignmentReviews,assignmentReview:assignmentReviews[0],paperAttention:attention,metadataPreview:metadataDisplay,
+      tagShelves:this.shelfDisplay(shelfNative),tagLibraryEntries:libraryTagShelfEntries(shelfNative,this.state.tags,undefined,true,this.shelves().flatMap(shelf=>shelf.nativeTagNames??[])),nativeDefinitionPreparation:nativePreparation,activityTasks:this.activityDisplay(nativePreparation),existingTags:this.existingTagDisplay(),diyComparison:this.diyComparisonDisplay(),assignmentReviews,assignmentReview:assignmentReviews[0],paperAttention:attention,metadataPreview:metadataDisplay,
       paperExclusionPreview:this.state.paperExclusionPreview?{id:this.state.paperExclusionPreview.id,exclude:this.state.paperExclusionPreview.exclude,changes:this.state.paperExclusionPreview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Item',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined,
       tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
       analyzedPaperCount:Object.keys(this.state.papers).length,taxonomyReady:this.state.taxonomyReady,tagPreparation:this.preparationDisplay(),
@@ -1477,6 +1524,11 @@ export class AppController implements ManagerAPI {
       case 'rename-tag-shelf': this.state.tagShelves=renameTagShelf(this.shelves(),String(payload.id),String(payload.name??''));await this.save();break;
       case 'merge-tag-shelves': return this.mergeShelves(payload);
       case 'prepare-tag-meanings': return this.prepareNativeDefinitions(payload.names,payload.shelfId);
+      case 'answer-tag-meaning': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),choiceId:String(payload.choiceId)});break;
+      case 'edit-tag-meaning': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),definition:payload.tag});break;
+      case 'leave-tag-undefined': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),leaveUndefined:true});break;
+      case 'continue-tag-meanings': await this.changeNativeMeaning(String(payload.id),{continue:true,rowIds:payload.rowIds});break;
+      case 'finish-tag-meanings': await this.finishNativeMeanings(String(payload.id));break;
       case 'retry-tag-meanings': await this.retryNativeDefinitions(String(payload.id));break;
       case 'apply-tag-meanings': await this.applyNativeDefinitions(String(payload.id),payload.rowIds);break;
       case 'cancel-tag-meanings': await this.discardNativeDefinitions(String(payload.id));break;

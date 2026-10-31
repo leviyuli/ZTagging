@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0
+
+- Draft ordinary broad meanings for broad tag names; chemistry or subtype differences alone do not require a question.
+- Make genuine meaning questions answerable with structured choices, seeded editing and Leave undefined. Keep partial Save and Done visible, and check a chosen meaning without treating a human choice as scientific proof.
+- Continue older unanswered preparations explicitly, retaining cached analysis, identities, original replies and spending. Preserve compatible judgments and check only sources affected by a changed meaning.
+- Keep Rename and Merge shelves visible during tag browsing, meaning review and editing. Preserve the selected-shelf replacement behavior and Undo.
+- Show current meaning work and unsaved questions in Activity; move completed builds and preparations into collapsed history without duplicate progress or disabled work controls.
+- Upgrade to state schema 11 with exact-byte pre-v11 backup and native-definition protocol 2. Migration performs no provider requests or native library writes.
+
 ## 0.12.0
 
 - Add Shelf actions with Rename and Merge. A combined shelf replaces selected sources by default, retains My tags' native inventory under the combined name when selected, deduplicates memberships and historical redirects, and supports conflict-aware Undo without changing paper tags.
