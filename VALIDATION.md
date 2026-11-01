@@ -1,43 +1,40 @@
-# v0.13.1 validation
+# v1.0.0 validation
 
-Target: Zotero 10.0.6 on Windows. Artifact hashes and aggregate results are recorded in [dist/validation.json](dist/validation.json).
+Target: Zotero 10.0.6 on Windows. Release artifacts, hashes and aggregate results are recorded in [dist/validation.json](dist/validation.json).
 
-## Browsing and navigation hotfix
+## Automated verification
 
-Tag library opens the tag browser even with unfinished meaning work. Review meanings opens the saved review explicitly; changing a shelf or readiness filter restores browsing, without cancelling preparation. Older questions without a candidate use a primary Suggest a meaning action and explain the missing draft instead of asking for a nonexistent choice. A complete valid protocol 2 candidate can offer Use [name]; missing information, protected decisions and contradictions cannot.
+- **1,084 automated tests passed**, with zero failures, cancellations or skips.
+- Standard TypeScript checking and the stricter unused-local/unused-parameter check passed.
+- In-memory production bundling passed. `npm run verify` also passed, including the production XPI build.
 
-Page/sidebar navigation returns to the new heading and hides the editor while retaining its draft. Background updates retain list/editor scroll. Without an editor the tag list uses the full workspace width. Short/narrow editor drawers keep the sidebar hit-testable and provide Close editor. Manager document, stylesheet and loader URLs include the installed version so updates load the matching layout resources.
+The tests cover domain rules, public controller actions, persistence and rendered manager controls. New regressions exercise automatic definition admission, adaptive vocabulary limits, scoped assignment caching, nonblocking exceptions, exact task Undo, migration and restart recovery.
 
-This patch retains schema 11 and protocol 2. Existing state, cached analysis, original evidence and paid history are not migrated or reset.
+The production XPI contains 11 files matching the built add-on, with the 1.0.0 manifest, stable extension identity, supported Zotero range and versioned manager resources verified. The installable package excludes the native-test bootstrap. A credential-pattern scan passed for 142 allowed source files; the source archive is built and checked separately from the XPI.
 
-## Actionable meanings and shelves
+## Workflow and data protections
 
-Native-definition protocol 2 prefers an ordinary broad meaning for a broad name. Battery chemistry differences alone do not require splitting a battery tag. Genuine questions carry stable, complete choices; proposed information seeds the editor. Edit, choice and Leave undefined actions bind to a particular entry. Saving clear results does not depend on answering other questions, and Done requires every entry to be saved or explicitly left undefined.
+Clear generated definitions save while unrelated questions remain open. Required unresolved parents hold their children; protected saved names and meanings remain unchanged. Definitions, exact evidence scopes, shelves and admission history persist together. Failed persistence leaves no partial admission, and restart reuses completed work without another model request. Optional related links publish only when both meanings are available and the earlier saved definition remains unchanged.
 
-Human intent is stored separately from source judgments. Exact compatible positive judgments can be reused; uncertain judgments are archived and rechecked after a choice. Different meanings, changed inputs and scientific contradictions cannot become valid evidence through a human click. Existing saved definitions and scientific symbols remain protected. Question parsing is transactional: malformed options receive bounded format repair and cannot silently become ready tags. Checks retain request bounds, provider/model provenance, paid replies, dispatch counters and budget controls.
+New assignments apply validated high-confidence additions while uncertain matches, removals and no_tag remain explicit choices. Later preserves a deferred choice without permanent rejection. Repeated identical assignments retain the same exception identity; accepting or rejecting the latest explicit result resolves it without reopening historical pending copies. Changed inputs or meanings create a new current choice. An omitted tag is not treated as a negative judgment.
 
-The editor preserves per-entry drafts and scroll position through background updates. Save/Cancel remains visible; unsaved changes block saving the old version of the selected entry while allowing unrelated ready meanings to save. Stale editors cannot alter already-applied meanings or initiate paid checks for them.
+Assignment response reuse requires matching supplied content, definition scope, provider and model. Compatible cached facts and available local PDF evidence seed the first request. Changed definitions, source excerpts or scope invalidate reuse; unrelated vocabulary changes can retain an unchanged selected-shelf response. A reply completed after pause remains recoverable without another paid dispatch.
 
-Rename and Merge shelves remain above the scrolling workspace during browsing, meaning review and editing. Merge still replaces selected shelves by default, deduplicates membership, preserves definitions and native assignments, and supports conflict-aware Undo.
+Undo uses the latest applied change owned by that task, excluding undo journals and unrelated global changes. Tests cover later manual-edit conflicts, preserved manual native tags and suppression of identical automatic replay after Undo. Incoming tagging remains an explicit opt-in and respects per-tag matching modes, locks, rejections and exclusions.
 
-## Activity and compatibility
+## Native interface checks
 
-Activity distinguishes request execution from review completion. Current questions and unsaved meanings remain actionable after requests finish; Open meanings opens their review. Completed builds and preparations appear in collapsed history, without duplicate progress strips or disabled work controls. Unfinished assignment reviews remain actionable after analysis completes. Archived meaning tasks retain known saved/undefined counts; missing historical counts are not invented.
+The isolated automatic-workflow scenario passed **46 checks in light mode and 46 in dark mode**, with zero errors. Both runs loaded the actual **1.0.0 production build**, including its versioned stylesheet and loader. The scenario uses synthetic papers and mocked provider replies in a separate Zotero profile and data directory. Checks exercise actual pointer and keyboard controls for:
 
-Schema 11 uses the existing collision-safe exact-byte pre-v11 backup process. Migration preserves protocol 1 questions, ready proofs and fingerprints without reinterpreting them. Existing plain-text questions offer explicit Suggest a meaning; it archives the earlier snapshot and replies, retains stable allocations and spending, and schedules only affected work under protocol 2. Migration, initialization and page navigation perform no provider requests or native writes. Backup/write failures and older-version downgrade refusal remain covered.
+- Separate Build tags, Tag library and Assign tags pages; collapsed optional controls; preserved Zotero collections and item columns.
+- Automatic clear assignments, deferred/reopened choices, task Undo, cached reruns and correction of one paper without changing another.
+- Automatic native-name meaning saves, a single model control, and Save and test using the selected connection/model.
+- Enter, Control+Enter and Escape in the editor; retained drafts; reachable save/close controls and sidebar navigation.
 
-## Verification
+**20 screenshots** cover Build tags, Tag library, assignment, connection and the editor in both themes at wide **1266 × 862** and narrow **806 × 582** content sizes. Native bounds checks confirm viewport fit and reachable primary actions.
 
-`npm run verify` passed TypeScript, **1,019 automated tests**, including **102 manager-interface tests**, and the production build. Tests cross the native-definition module interface, public controller actions, AtomicStore and accessible rendered controls. Regression workflows cover broad names, structured choices, partial saving, editor checks, leaving undefined, Done, stale inputs, protected decisions, budget/authentication pauses, restart recovery, protocol 1 continuation and completed-history routing.
+## Migration and verification limits
 
-All **259 isolated native checks passed**, covering production controls and layout, including the reported earlier 48-paper build followed by an unanswered meaning preparation. New checks cover actual sidebar route clicks at wide and narrow/short sizes, heading visibility after page scrolling, computed grid/column bounds, stylesheet version, explicit browsing/review switching, legacy Suggest recovery, and drawer/nav/footer reachability. Retained checks cover the persistent shelf toolbar, focusable choices, seeded editor with visible Save, choice/edit/leave/Done, native-tag protection and collapsed completion history. The retained suite covers the navigator, native search/restoration, collections, item columns, assignment, metadata and Undo. Native AddonManager tests the exact installer upgrade from disabled **0.13.0 to 0.13.1**, with stable identity and no uninstall.
+Schema 12 migration tests preserve exact source bytes in collision-safe pre-v12 backups, retain historical backups and paid work, reject corrupt new fields, stop on backup/write failure and refuse downgrade writes. Older unfinished work does not acquire automatic-processing policies or retroactive approvals. Existing proof identities and source-validation requirements remain enforced.
 
-## Private replay and delivery
-
-A read-only replay of the saved work preserves **95 cached facts**, the **48 completed paper jobs**, and the legacy question associated with **17 papers**. It confirms that Activity retains the meaning task, Continue creates protocol 2 work with original IDs, the prior snapshot/replies remain exact, and an unaffordable request pauses before dispatch. It performs **zero provider requests, repeated extraction requests, native writes or working-profile writes**.
-
-The retained 744-paper replay also passes under schema 11: saved extraction and chooser replies are reused, three simulated representative-check requests remain bounded, 5,832 unsampled findings stay unexamined, and native data and spending remain unchanged. A separate read-only shelf replay preserves 95 facts, plans nine initial bounded requests for 44 undefined names without dispatch, and merges five generated shelves into 154 unique definitions.
-
-Focused deslop/codebase-design review keeps interpretation, question validation and proof reuse in NativeTagDefinition; persistence, requests, budgets and journals remain in the controller. Existing UI and controller harnesses are reused. Production JavaScript/CSS and embedded TypeScript must match the native-tested bundle and delivered installer. Public artifacts exclude profiles, databases, private fixtures, state and credentials; artifacts are scanned against private titles and IDs. HTTPS update metadata and downloadable installer hashes are checked after publication.
-
-Validation uses simulated model replies and rendered native controls. It does not claim live scientific accuracy, account availability, provider latency or screenshot review. Native in-place package updating is tested; remote update-feed discovery in Zotero is not asserted before publication.
+These results validate synthetic workflows and the tested Windows/Zotero target. They do not establish live provider availability or scientific classification accuracy. Current native runs make zero real provider requests and do not access a working library. Earlier private replays and the historical 259-check native suite are not reported as fresh v1.0.0 runs; remote update-feed discovery and an in-place installer upgrade require separate verification.

@@ -41,6 +41,7 @@ export interface DisplayPaper {
 }
 export interface DisplaySuggestion {
   id: string;
+  reviewId?: string;
   runId?: string;
   decisionOrigin?: 'automatic' | 'researcher';
   paperId: string;
@@ -77,6 +78,7 @@ export interface DisplayJob {
 }
 export interface DisplayTagQuestion {
   id: string;
+  reviewId?: string;
   title: string;
   description: string;
   paperIds: string[];
@@ -85,6 +87,10 @@ export interface DisplayTagQuestion {
 /** Human decisions and prepared tags; source identities stay in the preparation module. */
 export interface DisplayTagPreparation {
   id: string;
+  lastChangeId?: string;
+  processingPolicy?: 'auto-clear';
+  savedCount?: number;
+  shelfId?: string;
   verificationScope?: 'representative' | 'exhaustive';
   status: 'checking' | 'questions' | 'ready' | 'failed';
   tags: DisplayTag[];
@@ -108,6 +114,9 @@ export interface ManagerSettings {
 }
 export interface DisplayAssignmentReview {
   id: string;
+  lastChangeId?: string;
+  processingPolicy?: 'auto-clear';
+  appliedCount?: number;
   label?: string;
   status: 'running' | 'paused' | 'ready' | 'finished';
   scopeCount: number;
@@ -122,7 +131,23 @@ export interface DisplayAssignmentReview {
   needsChoiceCount?: number;
   report?: { topics: { id: string; name: string; paperIds: string[]; reason?: string; resolved?: boolean }[]; paperIds: string[] };
 }
+export interface DisplayReviewItem {
+  id: string;
+  kind: 'definition' | 'assignment';
+  state: 'open' | 'deferred' | 'resolved';
+  taskId: string;
+  paperId?: string;
+  tagId?: string;
+  questionId?: string;
+  sourceName?: string;
+  label: string;
+  message?: string;
+  suggestionId?: string;
+  ownerPage: 'cleanup' | 'assignment' | 'vocabulary';
+  workId?: string;
+}
 export interface ManagerSnapshot {
+  reviewItems?: DisplayReviewItem[];
   pluginVersion?: string;
   workflow?: {
     buildMode: BuildMode;
@@ -140,8 +165,8 @@ export interface ManagerSnapshot {
   tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
   tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[];
   nativeDefinitionPreparation?: {
-    id: string; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; error?: string; spentUSD?: number; budgetUSD?: number;
-    rows: { id: string; tagId?: string; sourceName: string; name?: string; fullName?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; inclusions?: string[]; exclusions?: string[]; examples?: string[]; broaderIds?: string[]; relatedIds?: string[]; matchingMode?: 'manual' | 'suggest' | 'auto'; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed' | 'left-undefined'; question?: string; questionKind?: 'meaning' | 'information' | 'protection'; canSuggestMeaning?: boolean; choices?: { id: string; label: string; description: string }[]; needsContinuation?: boolean; targetTagId?: string; applied?: boolean }[];
+    id: string; lastChangeId?: string; processingPolicy?: 'auto-clear'; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; error?: string; spentUSD?: number; budgetUSD?: number;
+    rows: { id: string; reviewId?: string; tagId?: string; sourceName: string; name?: string; fullName?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; inclusions?: string[]; exclusions?: string[]; examples?: string[]; broaderIds?: string[]; relatedIds?: string[]; matchingMode?: 'manual' | 'suggest' | 'auto'; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed' | 'left-undefined'; question?: string; questionKind?: 'meaning' | 'information' | 'protection'; canSuggestMeaning?: boolean; choices?: { id: string; label: string; description: string }[]; needsContinuation?: boolean; targetTagId?: string; applied?: boolean }[];
   };
   activityTasks?: { id: string; kind: 'rebuild' | 'assignment' | 'meanings' | 'maintenance'; state: 'queued' | 'running' | 'paused' | 'needs-choice' | 'ready-to-save' | 'completed'; label: string; ownerPage: 'cleanup' | 'assignment' | 'vocabulary' | 'activity'; workId?: string; message?: string; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; completed?: number; total?: number; spentUSD?: number; createdAt?: string }[];
   diyComparison?: {

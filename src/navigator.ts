@@ -1,4 +1,4 @@
-import { canonicalTagKey, type TagDefinition } from './core.ts';
+import { canonicalTagKey } from './core.ts';
 import { compileConceptFilter, matchCompiledConceptFilter, type ConceptFilter } from './concept-filter.ts';
 import { createNativeFilterAdapter, waitForNativeLibrary } from './native-filter.ts';
 import type { DisplayTag, ManagerAPI, ManagerSnapshot } from './ui-contract.ts';
@@ -9,6 +9,7 @@ const STYLE_URL = 'chrome://smart-tags/content/navigator.css';
 type Mode = 'tags' | 'collections';
 export interface NavigatorOptions {
   openManager?: () => void;
+  onPreviewMatches?: (runId?: string) => void;
   onCreateDetail?: (contextId?: string) => void;
   onEditTag?: (tagId: string) => void;
 }
@@ -133,13 +134,12 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   }
   function reportError(cause: any) { error = cause?.message || String(cause); render(); }
   const definitions = () => (snapshot?.tags || []).filter(tag => tag.status === 'approved');
-  const currentDefinitions = () => definitions() as TagDefinition[];
   const selectionKey = (conceptId: string, contextId?: string) => `${contextId || ''}\u0000${conceptId}`;
   function count(selection: ConceptFilter['selections'][number]) {
     const key = selectionKey(selection.conceptId, selection.contextId);
     if (counts.has(key)) return counts.get(key)!;
     const single: ConceptFilter = { mode: 'all', selections: [selection] };
-    const compiled = compileConceptFilter(currentDefinitions(), single);
+    const compiled = compileConceptFilter(definitions(), single);
     const value = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled)).length;
     counts.set(key, value);
     return value;
@@ -156,7 +156,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
   async function applyFilter() {
     if (mode !== 'tags' || destroyed) return;
     const alternatives = nativeAlternatives();
-    try { await adapter.apply(currentDefinitions(), filter); installedNativeAlternatives = alternatives; }
+    try { await adapter.apply(definitions(), filter); installedNativeAlternatives = alternatives; }
     catch (cause) {
       error = `${(cause as any)?.message || cause} Switched back to Collections.`;
       mode = 'collections';
@@ -166,7 +166,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     }
   }
   function nativeAlternatives() {
-    const groups = compileConceptFilter(currentDefinitions(), filter).clauses.flatMap(clause => clause.groups);
+    const groups = compileConceptFilter(definitions(), filter).clauses.flatMap(clause => clause.groups);
     const literalNames = new Set(groups.flat());
     const keys = new Set([...literalNames].map(canonicalTagKey));
     return new Set(libraryItems.flatMap(item => item.names).filter(name => !literalNames.has(name) && keys.has(canonicalTagKey(name))));
@@ -261,7 +261,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
       node.classList.toggle('is-active', filter.mode === value); node.setAttribute('aria-pressed', String(filter.mode === value));
     }
     tools.append(el('span', 'smart-tags-combine-label', 'Match'), all, any);
-    const compiled = compileConceptFilter(currentDefinitions(), filter);
+    const compiled = compileConceptFilter(definitions(), filter);
     const total = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled)).length;
     tools.append(el('span', 'smart-tags-result-count', `${total} papers`));
     content.append(search, tools);
@@ -320,7 +320,8 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
         await refresh();
       }, '', 'assign'));
       actions.append(button('Preview matches', async () => {
-        await api.invoke('preview-detail', { tagId: selectedDetail.id, scope: 'library' }); options.openManager?.();
+        const result = await api.invoke('preview-detail', { tagId: selectedDetail.id, scope: 'library', processingPolicy: 'auto-clear' });
+        if (options.onPreviewMatches) options.onPreviewMatches(result?.runId);else options.openManager?.();
       }, '', 'preview'));
       if (options.onEditTag) actions.append(button('Edit definition', () => options.onEditTag!(selectedDetail.id), '', 'edit'));
     }

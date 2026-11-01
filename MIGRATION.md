@@ -1,4 +1,26 @@
-# v0.13.1 update notes
+# Migration notes
+
+## Version 1.0.0: schema 12 and a simpler workflow
+
+Install the [v1.0.0 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0.xpi) through Zotero’s **Tools → Plugins → Install Plugin From File…** without uninstalling your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.0) includes the installer and source archive.
+
+Before writing schema 12, AtomicStore preserves the original state bytes in **state.json.pre-v12.json**. An occupied filename with different bytes is retained and a numbered suffix is used. Historical backups, including pre-v11, remain intact. A backup or migration-write failure stops without substituting an older valid .bak; applications that only understand earlier schemas refuse to overwrite schema-12 state.
+
+Migration preserves source identities, factual extraction, quotations, definitions, shelves, manual locks and rejections, native snapshots, pending tasks, selected providers/models, encrypted credential references, raw replies, spending and undo history. It performs no provider request, native-library write or retroactive approval. Existing unfinished work keeps its original selection targets, matching/review policy and paid request history. Use its existing review controls or explicitly start a new task to use the simpler workflow.
+
+New **Build tags** requests and **Tag library → Suggest meanings** requests save clear definitions automatically. A question affects only its tag and dependent children; unrelated ready meanings can save. New additions preserve every saved definition. Full-list replacement stays an explicit operation under More options and retains review before applying. For each automatic admission, definitions, exact proof scopes, shelf membership and admission history are persisted together. Reopening completed new work can finish this local step without another AI request, and previously admitted IDs are not recreated after undo, deletion or a researcher edit. Interrupted running work still pauses for Resume.
+
+New builds select a compact useful set from evidence. The existing initial value of **60** and extension value of **30** become maximum counts under More options, rather than desired counts; no settings reset is required. Required new parent concepts count within the maximum, saved definitions are exempt from the additions maximum, and a scientifically useful singleton remains eligible. Earlier checkpoints keep their historical target and evidence policy.
+
+New **Assign tags** requests apply validated high-confidence additions as papers finish. Other matches and destructive or exclusion choices remain in **Needs your choice**. **Later** defers an exception across restart without rejecting it permanently, blocking successful work or writing no_tag. **Reject and remember** remains an explicit persistent decision. Once analysis completes, the outside-topic report is available even with deferred choices. Historical reviews retain their accepted-but-unapplied results and final Apply controls.
+
+Incoming assignment now uses the explicit **Tag new papers automatically** setting without a pilot review. Upgrading does not enable it. Only definitions eligible for automatic matching are used; saved manual choices, no_tag exclusions, source checks, provider selection and spending limits remain in force. A researcher-authored or newly defined native meaning still defaults to suggestion-only matching.
+
+Assignment response reuse requires matching paper content, definition content and scope, provider and model. Compatible facts and local PDF evidence are included in the first fresh request; changing the tag scope can require new matching while retaining factual extraction. A top-five reply does not establish negative judgments for omitted tags. Compatible completed paid results and spending survive restart.
+
+**Activity → Undo** remains available for automatic definition and paper-tag batches. It checks for conflicting later edits and preserves unrelated changes. An undone automatic addition is suppressed for the same unchanged work; reopening a completed definition task does not recreate an undone definition. Questions and deferred choices remain available in their task page and Activity without enabling incoming automation.
+
+## v0.13.1 update notes
 
 This patch keeps state schema 11 and native-definition protocol 2. It does not clear analysis, modify native paper tags, or reinterpret an existing question when loading it. Earlier schema migrations retain their collision-safe exact-byte backup behavior.
 

@@ -1,4 +1,4 @@
-import type { BuildMode, DisplayAssignmentReview, DisplayPaper, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
+import type { BuildMode, DisplayAssignmentReview, DisplayPaper, DisplayReviewItem, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
 import { createDropdown, cleanupDropdowns } from './dropdown';
 import { compileConceptFilter, descendantIds } from './concept-filter';
 import type { ConceptFilter } from './concept-filter';
@@ -13,9 +13,9 @@ const facetNames: Record<string, string> = { system: 'Systems', component: 'Comp
 const pageTitles: Record<ManagerPage, [string, string]> = {
   overview: ['Your library, clearly tagged', 'Prepare a useful tag list, then review its paper suggestions.'],
   connection: ['Connect AI', 'Choose the connection and model used for your papers.'],
-  build: ['Build tags', 'Choose papers to learn from, then review the suggested tag list.'],
-  cleanup: ['Build tags', 'Choose papers, then review and save the resulting tag list here.'],
-  assignment: ['Assign & automate', 'Choose the papers to tag, review their suggestions, and set up routine assignment.'],
+  build: ['Build tags', 'Learn a compact tag vocabulary from your papers.'],
+  cleanup: ['Build tags', 'Learn a compact tag vocabulary from your papers.'],
+  assignment: ['Assign tags', 'Add supported tags to your papers and handle remaining choices when convenient.'],
   vocabulary: ['Tag library', 'Edit saved tags and add topics you want to follow.'],
   'existing-tags': ['Existing tags', 'Bring useful library tags into Smart Tags and review any paper changes.'],
   review: ['Review suggestions', 'Check the evidence, keep useful tags, and teach Smart Tags your preferences.'],
@@ -23,7 +23,7 @@ const pageTitles: Record<ManagerPage, [string, string]> = {
   activity: ['Queue & history', 'Follow analysis progress and review changes that have been applied.'],
   settings: ['Settings', 'Manage tag preferences, library navigation, imports, and updates.'],
 };
-const pageNames: Record<ManagerPage, string> = { overview: 'Overview', connection: 'Connect AI', build: 'Build tags', cleanup: 'Build tags', assignment: 'Assign & automate', vocabulary: 'Tag library', 'existing-tags': 'Earlier tag tools', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
+const pageNames: Record<ManagerPage, string> = { overview: 'Overview', connection: 'Connect AI', build: 'Build tags', cleanup: 'Build tags', assignment: 'Assign tags', vocabulary: 'Tag library', 'existing-tags': 'Earlier tag tools', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
 const iconPaths = {
   overview: ['M3 10.5 12 3l9 7.5', 'M5 9v12h14V9', 'M9 21v-7h6v7'],
   connection: ['M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0V8Z', 'M12 18v4'],
@@ -37,7 +37,7 @@ const iconPaths = {
   activity: ['M21 12a9 9 0 1 1-3-6.7', 'M21 3v6h-6', 'M12 7v5l3 2'],
   settings: ['M4 4v16M12 4v16M20 4v16', 'M1 8h6M9 16h6M17 10h6'],
 } as const;
-export interface ManagerUIOptions { page?: ManagerPage; createDetail?: boolean; detailContextId?: string; tagId?: string }
+export interface ManagerUIOptions { page?: ManagerPage; createDetail?: boolean; detailContextId?: string; tagId?: string; assignmentRunId?: string }
 
 /** Mount a credential-free manager. All data access and writes go through the host. */
 export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOptions = {}): { refresh: () => Promise<void>; destroy: () => void; navigate: (options: ManagerUIOptions) => void } {
@@ -67,15 +67,18 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let legacyToolsOpen = false;
   let buildMode: BuildMode = 'replace';
   let buildSetupOpen = false;
+  let buildAdvancedOpen = false;
+  let initialTagTarget: number | null = null;
   let additionalTagTarget: number | null = null;
   let topicAdditionalTarget: number | null = null;
   let workflowInitialized = false;
   let assignmentView: 'setup' | 'suggestions' = 'setup';
-  let routineDraft: boolean | null = null;
-  let routineSettingsOpen = false;
+  let assignmentViewInitialized = false;
+  let incomingSettingsOpen = false;
   let dataDetailsOpen = false;
   let queueDetailsOpen = false;
   let completedActivityOpen = false;
+  let deferredReviewOpen = false;
   let busy = false;
   let signingIn = false;
   let disposed = false;
@@ -141,6 +144,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   const editorScrollPositions = new Map<string, number>();
   const editorDrafts = new Map<string, DisplayTag>();
   let editorAdvancedOpen = false;
+  let editorReturnFocus = '';
+  let pendingEditorFocus = '';
   let detailScope: Scope = 'selected';
   const relationQueries = new Map<string, string>();
   const openRelationshipPickers = new Set<string>();
@@ -148,6 +153,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let conceptQuery = '';
   let settingsDraft: ManagerSettings | null = null;
   let settingsDirty = false;
+  let customModelInput: boolean | null = null;
   const apiKeyDrafts: Record<'api' | 'deepseek', string> = { api: '', deepseek: '' };
   let searchName = '';
   let modal: ModalState = null;
@@ -264,6 +270,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return trigger;
   }
   function hideEditor() { rememberEditorDraft();editorTag = null;editorPreparationId = '';editorNativeEntry = null; }
+  function closeEditor() { hideEditor();pendingEditorFocus = editorReturnFocus;render(); }
+  function rememberEditorOrigin(fallback: string) {
+    const active = doc.activeElement as HTMLElement | null;
+    editorReturnFocus = active?.id && !doc.getElementById('tag-editor-form')?.contains(active) ? active.id : fallback;
+  }
   function browseTags() { nativeMeaningReviewHidden = true;if (editorNativeEntry) hideEditor(); }
   function nav(target: ManagerPage, showMeanings = false) { hideEditor();page = target; if (target === 'review') assignmentView = 'suggestions';if (target === 'vocabulary') nativeMeaningReviewHidden = !showMeanings;modal = null;win.scrollTo(0,0);render(); }
   function empty(title: string, message: string, action?: Node) {
@@ -383,7 +394,13 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         for (const id of searchCache.keys()) if (!paperMap.has(id)) searchCache.delete(id);
         if (!settingsDirty) settingsDraft = { ...state.settings };
         if (assignmentRunSelection === null) assignmentRunSelection = state.assignmentReview?.id || state.assignmentReviews?.[0]?.id || null;
+        if (!assignmentViewInitialized) {
+          const active = (state.assignmentReviews || (state.assignmentReview ? [state.assignmentReview] : [])).find(review => review.status !== 'finished');
+          if (active) { assignmentRunSelection = active.id;assignmentView = 'suggestions'; }
+          if (active || page === 'assignment' || page === 'review') assignmentViewInitialized = true;
+        }
         if (!workflowInitialized) {
+          if (!options.page && !options.createDetail && !options.tagId) page = state.taxonomyReady ? 'vocabulary' : 'cleanup';
           buildScope = state.workflow?.buildScope || (state.taxonomyReady ? 'selected' : 'pilot');
           assignmentScope = state.workflow?.assignmentScope || 'library';
           assignmentTagShelfId = state.workflow?.assignmentTagShelfId || 'all';
@@ -449,6 +466,60 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     return card('Warning history', 'Resolved, dismissed, and imported historical notices remain available for review.', body);
   }
+  async function openReviewItem(item: DisplayReviewItem) {
+    const destination = await run('open-review-item', { id: item.id });
+    if (item.kind === 'assignment') { assignmentRunSelection = destination?.runId || item.taskId;assignmentView = 'suggestions';nav('assignment');return; }
+    if (item.ownerPage === 'vocabulary') openNativeMeanings();
+    else { tagView = 'questions';nav(destination?.page || 'cleanup'); }
+  }
+  function reviewItemBody(item: DisplayReviewItem): Node {
+    const s = currentState();
+    const later = () => run('defer-review-item', { id: item.id }, 'Left for later. Other work can continue.');
+    if (item.state === 'deferred') return h('div', 'inline between', h('span', '', item.label),button('Reopen', () => run('reopen-review-item', { id: item.id }), 'small'));
+    if (item.kind === 'assignment') {
+      const suggestion = s.suggestions.find(value => value.id === item.suggestionId);
+      if (!suggestion) return h('div', '', h('p', '', item.message || item.label),button('Open assignment', () => openReviewItem(item), 'small'));
+      const tag = tagById(suggestion.tagId), verb = tag?.builtin === 'no_tag' ? 'Exclude from future tagging' : suggestion.operation === 'remove' ? `Remove ${tagName(suggestion.tagId)}` : `Add ${tagName(suggestion.tagId)}`;
+      const evidence = h('details', 'section-gap',h('summary', '', 'Evidence'),...suggestion.evidence.map(value => h('blockquote', 'evidence',h('cite', '', value.source),value.text)));
+      return h('div', 'review-choice',h('strong', '', tagName(suggestion.tagId)),h('p', '', suggestion.reason),evidence,h('div', 'actions',
+        button(verb, () => run('resolve-review-item', { id: item.id, action: 'accept' }, 'Choice applied.'), 'primary small'),
+        button('Reject and remember', () => run('resolve-review-item', { id: item.id, action: 'reject' }, 'Rejection remembered.'), 'small'),button('Later', later, 'quiet small')));
+    }
+    const work = s.nativeDefinitionPreparation;
+    const native = work && (work.id === item.taskId || work.id === item.workId) ? work.rows.find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
+    const preparation = s.tagPreparation;
+    const question = preparation && (preparation.id === item.taskId || preparation.id === item.workId) ? preparation.questions.find(question => question.reviewId === item.id || question.id === item.questionId) : undefined;
+    const choices = native?.choices || question?.choices || [];
+    const unsaved = !!native && !!work && nativeMeaningChanged(work.id,native);
+    const actions = h('div', 'actions',...choices.map(choice => {
+      const answer = button(choice.label, () => run('resolve-review-item', { id: item.id, choiceId: choice.id }, 'Meaning selected. Supported definitions are saved automatically.'), 'small primary',unsaved);
+      answer.setAttribute('aria-label', choice.label);
+      if (native) answer.id = `answer-native-meaning-${native.id}-${choice.id}`;
+      if (choice.description) answer.append(h('small', '', choice.description));return answer;
+    }));
+    if (native && work) { const edit = button('Edit meaning', () => { nav('vocabulary', true);editNativeMeaning(work.id,native); }, 'small');edit.id = `edit-native-meaning-${native.id}`;actions.append(edit); }
+    else if (item.tagId && preparation?.tags.some(tag => tag.id === item.tagId)) actions.append(button('Edit meaning', () => { nav('cleanup');editTag(preparation.tags.find(tag => tag.id === item.tagId)!,preparation.id); }, 'small'));
+    if (native) { const leave = button('Leave undefined', () => run('resolve-review-item', { id: item.id, action: 'leave' }, 'Name left undefined.'), 'small',unsaved);leave.id = `leave-native-meaning-${native.id}`;actions.append(leave); }
+    if (!choices.length && !native) actions.append(button('Open meaning', () => openReviewItem(item), 'small'));
+    actions.append(button('Later', later, 'quiet small'));
+    return h('article', 'review-choice',h('strong', '', item.sourceName || item.label),h('p', '', item.message || native?.question || question?.description || ''),actions);
+  }
+  function reviewInbox(items: DisplayReviewItem[], title = 'Needs your choice'): Node | null {
+    const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
+    if (!open.length && !deferred.length) return null;
+    const definitions = open.filter(item => item.kind === 'definition'), papers = new Map<string, DisplayReviewItem[]>();
+    for (const item of open.filter(item => item.kind === 'assignment')) { const key = item.paperId || item.id;const group = papers.get(key) || [];group.push(item);papers.set(key,group); }
+    const body = h('div', 'stack');
+    if (definitions.length) body.append(h('section', 'review-group',h('h3', '', 'Tag meanings'),...definitions.map(reviewItemBody)));
+    if (papers.size) body.append(h('section', '',h('h3', '', 'Paper tags'),...[...papers].map(([paperId, group]) => h('article', 'review-group',paperMap.has(paperId) ? paperButton(paperId) : h('strong', '', group[0].label),...group.map(reviewItemBody)))));
+    if (deferred.length) body.append(details(`Later (${deferred.length})`, deferredReviewOpen, value => { deferredReviewOpen = value; }, () => h('div', 'stack',...deferred.map(reviewItemBody))));
+    const count = [definitions.length ? `${definitions.length} ${definitions.length === 1 ? 'meaning' : 'meanings'}` : '',papers.size ? `${papers.size} ${papers.size === 1 ? 'paper' : 'papers'}` : ''].filter(Boolean).join(' · ');
+    return h('section', 'review-inbox',h('h2', '', title),h('p', 'card-description',count || 'Other work can continue.'),body);
+  }
+  function taskUndo(changeId: string | undefined, id: string) {
+    if (!changeId || currentState().history.find(change => change.id === changeId)?.canUndo === false) return null;
+    const undo = button('Undo last change', () => run('undo', { id: changeId }, 'Change undone.'), 'quiet small');undo.id = id;return undo;
+  }
   function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved' && !tag.builtin); }
   function pagination(total: number, pageIndex: number, change: (next: number) => void, pageSize = PAGE_SIZE, noun = '') {
     const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -477,14 +548,28 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return snapshot.connection.chatgptSignedIn;
   }
   function renderBuild() {
-    const s = currentState();
-    const mode = s.taxonomyReady ? buildMode : 'replace';
-    const target = additionalTagTarget ?? s.settings.extensionTagTarget ?? 30;
-    const targetInput = input('additional-tag-target', String(target), value => { additionalTagTarget = Number(value);render(); }, '', 'number');targetInput.min = '1';targetInput.max = '500';targetInput.step = '1';
-    const modeField = s.taxonomyReady ? field('Tag list', select<BuildMode>('build-mode', mode, [['extend', 'Extend my saved tag list'], ['replace', 'Replace the full tag list']], value => { buildMode = value;render(); })) : null;
-    const explanation = !s.taxonomyReady ? 'Create your first tag list from this group of papers. Review it before saving, then choose which papers to tag.' : mode === 'extend' ? 'Keep your saved tags and use this group of papers to suggest additions and useful updates.' : 'Build a replacement for the full saved tag list. Review the result before replacing it. Existing paper tags change only through a separate reviewed action.';
-    const body = h('div', 'stack', field('Papers for building tags', scopeSelect('build-scope', buildScope, value => { buildScope = value;render(); }), 'Select papers or collections in Zotero when using those groups.'), modeField, mode === 'extend' ? field('New tags to suggest', targetInput, `${approvedTags().length} saved tags are kept. The combined library may grow beyond 60.`) : null, h('div', 'notice', explanation), s.tagPreparation ? h('p', 'card-description', 'Your current suggestions stay here until you choose Prepare tags. Starting another build replaces the unsaved list.') : null, h('div', 'actions', button('Prepare tags', async () => { await run('prepare-tags', { scope: buildScope, mode, ...(mode === 'extend' ? { additionalTargetCount: target } : {}) }, 'Preparing your tag list.');buildSetupOpen = false;render(); }, 'primary', !canAnalyze() || s.queue.status === 'running' || mode === 'extend' && (!Number.isInteger(target) || target < 1 || target > 500))));
-    return h('div', 'stack', !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Choose an AI connection and model before building tags.'), button('Connect AI', () => nav('connection'), 'small')) : null, card(s.taxonomyReady ? 'Extend your tag library' : 'Start with a small group', s.taxonomyReady ? 'Selected papers can add new topics while your saved list remains available.' : 'A 50-paper pilot gives you a manageable first list to review.', body), h('p', 'card-description', 'This group builds the tag list. You will choose which papers receive tags in Assign & automate.'));
+    const s = currentState(), mode = s.taxonomyReady ? buildMode : 'replace';
+    const manualReplacement = !!s.taxonomyReady && mode === 'replace';
+    const limit = mode === 'extend' ? additionalTagTarget ?? s.settings.extensionTagTarget ?? 30 : initialTagTarget ?? s.settings.coreConceptLimit ?? 60;
+    const limitInput = input('additional-tag-target', String(limit), value => { if (mode === 'extend') additionalTagTarget = Number(value);else initialTagTarget = Number(value);render(); }, '', 'number');
+    limitInput.min = '1';limitInput.max = '500';limitInput.step = '1';
+    const advanced = details('More options', buildAdvancedOpen, value => { buildAdvancedOpen = value; }, () => h('div', 'stack',
+      s.taxonomyReady ? field('Tag list', select<BuildMode>('build-mode', mode, [['extend', 'Extend my saved tag list'], ['replace', 'Replace the full tag list']], value => { buildMode = value;render(); })) : null,
+      field(mode === 'extend' ? 'Maximum new tags' : 'Maximum tags', limitInput, 'An upper limit, not a quota. Unsupported or redundant topics are left out.')));
+    const explanation = !s.taxonomyReady ? 'Create your first tag list from this group of papers.' : mode === 'extend' ? 'Keep your saved tags and add useful topics from these papers.' : 'Build a replacement for the full saved tag list. Existing paper tags stay unchanged.';
+    const start = async () => {
+      const explicitLimit = mode === 'extend' ? additionalTagTarget : initialTagTarget;
+      await run('prepare-tags', { scope: buildScope, mode, processingPolicy: 'auto-clear', ...(explicitLimit !== null ? mode === 'extend' ? { additionalTargetCount: explicitLimit } : { targetCount: explicitLimit } : {}) }, manualReplacement ? 'Building a replacement. Review it before applying.' : 'Building tags. Supported meanings are saved automatically.');
+      buildSetupOpen = false;render();
+    };
+    const startButton = button(mode === 'extend' ? 'Extend tags' : 'Build tags', start, 'primary', !canAnalyze() || s.queue.status === 'running' || !Number.isInteger(limit) || limit < 1 || limit > 500);
+    startButton.id = 'start-build';startButton.setAttribute('aria-label', 'Build tags from these papers');
+    const body = h('section', 'task-setup', field('Papers', scopeSelect('build-scope', buildScope, value => { buildScope = value;render(); }), buildScope === 'selected' || buildScope === 'collections' ? 'Use your current Zotero selection.' : undefined),
+      h('p', 'card-description', `${explanation} ${manualReplacement ? 'Review it before saving.' : 'Supported meanings are saved automatically.'}`),h('p', 'muted', `Up to ${limit} ${mode === 'extend' ? 'new ' : ''}tags · upper limit, not a quota`),advanced,
+      s.tagPreparation?.processingPolicy !== 'auto-clear' && s.tagPreparation ? h('p', 'card-description', 'Your current suggestions stay here until you choose Build tags. Starting another build replaces the unsaved list.') : null,
+      h('div', 'task-actions', startButton));
+    return h('div', 'stack', !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Choose an AI connection and model before building tags.'), button('Connect AI', () => nav('connection'), 'small')) : null,
+      body);
   }
   function queueStrip() {
     const q = currentState().queue;
@@ -540,9 +625,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       stats.append(h('div', 'stat', h('strong', '', count.toLocaleString()), h('span', '', label)));
     }
     const steps: [ManagerPage, string, string][] = [
-      ['connection', 'Connect AI', 'Choose a connection and model.'],
-      ['cleanup', 'Build tags', 'Prepare and review a tag list from your chosen papers.'],
-      ['assignment', 'Assign & automate', 'Choose papers to tag, then review their suggestions.'],
+      ['cleanup', 'Build tags', 'Learn useful meanings from your papers.'],
+      ['vocabulary', 'Tag library', 'Browse saved meanings and add your own.'],
+      ['assignment', 'Assign tags', 'Apply supported matches; other choices can wait.'],
     ];
     const workflow = h('ol', 'step-list');
     steps.forEach(([target, title, description], index) => workflow.append(h('li', 'step', h('span', 'step-number', String(index + 1)), h('div', '', button(title, () => nav(target), 'workflow-link'), h('p', '', description)))));
@@ -552,6 +637,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
 
   function newTag(custom = false, contextId?: string, shouldRender = true) {
+    rememberEditorOrigin('add-tag');
     rememberEditorDraft();
     editorPreparationId = '';
     editorNativeEntry = null;
@@ -560,13 +646,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     relationQueries.clear();
     openRelationshipPickers.clear();
     editorTag = copyTag(editorDrafts.get(':new') || { id: '', name: '', description: '', facet: 'phenomenon', aliases: [], inclusions: [], exclusions: [], examples: [], custom, status: 'draft', broaderIds: [], relatedIds: contextId ? [contextId] : [], matchingMode: custom ? 'suggest' : 'auto' });
-    if (shouldRender) render();
+    if (shouldRender) { render();doc.getElementById('tag-name')?.focus(); }
   }
   function copyTag(tag: DisplayTag): DisplayTag { return { ...tag, aliases: [...tag.aliases], inclusions: [...tag.inclusions], exclusions: [...tag.exclusions], examples: [...tag.examples], broaderIds: [...tag.broaderIds], relatedIds: [...(tag.relatedIds || [])] }; }
   function editorDraftKey(tag: DisplayTag, preparationId = editorPreparationId, nativeEntry = editorNativeEntry) { return nativeEntry ? `native:${nativeEntry.workId}:${nativeEntry.entryId}` : `${preparationId}:${tag.id || 'new'}`; }
   function rememberEditorDraft() { if (editorTag) editorDrafts.set(editorDraftKey(editorTag), copyTag(editorTag)); }
   function editTag(tag: DisplayTag, preparationId = '', shouldRender = true) {
     if (tag.builtin) return;
+    rememberEditorOrigin(`edit-tag-${encodeURIComponent(tag.id)}`);
     rememberEditorDraft();
     editorPreparationId = preparationId;
     editorNativeEntry = null;
@@ -580,6 +667,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (!state) { pendingNavigation = next; return; }
     if (next.page) { hideEditor();page = next.page;if (next.page === 'vocabulary') browseTags();win.scrollTo(0,0); }
     if (next.page === 'review') assignmentView = 'suggestions';
+    if (next.assignmentRunId) { assignmentRunSelection = next.assignmentRunId;assignmentView = 'suggestions'; }
     modal = null;
     if (next.createDetail) { page = 'vocabulary';browseTags();win.scrollTo(0,0);newTag(true, next.detailContextId, false); }
     else if (next.tagId) { const tag = tagById(next.tagId); if (tag) { page = 'vocabulary';browseTags();win.scrollTo(0,0);editTag(tag, '', false); } }
@@ -606,6 +694,18 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function definitionKey(tag: DisplayTag) {
     return JSON.stringify([tag.name, tag.fullName || '', tag.description, tag.facet, tag.aliases, tag.inclusions, tag.exclusions, tag.examples, tag.broaderIds, tag.relatedIds || [], tag.matchingMode || (tag.custom ? 'suggest' : 'auto')]);
   }
+  function editorDirty() {
+    if (!editorTag) return false;
+    const native = editorNativeEntry && currentState().nativeDefinitionPreparation?.rows.find(row => row.id === editorNativeEntry!.entryId);
+    const baseline = native ? nativeMeaningTag(native) : editorPreparationId ? currentState().tagPreparation?.tags.find(tag => tag.id === editorTag!.id) : tagById(editorTag.id);
+    if (baseline) return definitionKey(editorTag) !== definitionKey(baseline);
+    return !!(editorTag.name || editorTag.description || editorTag.fullName || editorTag.aliases.length || editorTag.inclusions.length || editorTag.exclusions.length || editorTag.examples.length || editorTag.broaderIds.length || editorTag.relatedIds?.length);
+  }
+  function updateEditorState() {
+    const status = doc.getElementById('tag-editor-status');
+    if (status) { status.hidden = !editorDirty();status.textContent = 'Unsaved changes'; }
+    for (const [id,value] of [['tag-name',editorTag?.name],['tag-description',editorTag?.description]] as const) if (value?.trim()) doc.getElementById(id)?.removeAttribute('aria-invalid');
+  }
   function requireSavedDetail(tag: DisplayTag) {
     const saved = tagById(tag.id);
     if (!saved || definitionKey(tag) !== definitionKey(saved)) throw new Error('Save your changes before finding matches or assigning this tag.');
@@ -620,33 +720,37 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const orphaned = !!preparationId && state?.tagPreparation?.id === preparationId && !state.tagPreparation.tags.some(saved => saved.id === tag.id);
     const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
     const advanced = h('details', 'editor-advanced', h('summary', '', 'More options'),
+      field('Full name', input('tag-full-name', tag.fullName || '', value => { tag.fullName = value; }, 'Expand an abbreviation when helpful')),
+      field('Group', select('tag-facet', tag.facet, facets.map(value => [value, facetNames[value]]), value => { tag.facet = value; })),
       lineField('aliases', 'Other names', 'Alternative names and abbreviations, one per line.'),
       lineField('inclusions', 'Use when', 'Optional guidance about papers that belong here.'),
       lineField('exclusions', 'Do not use when', 'Optional guidance about papers that do not belong here.'),
       lineField('examples', 'Examples', 'Helpful paper titles or passages, one per line.'),
       relationshipPicker(tag, 'broaderIds', 'Type of', 'Choose a broader topic only when this tag is a type of it.'),
       relationshipPicker(tag, 'relatedIds', 'Related topics', 'Connect topics that overlap without meaning the same thing.'),
-      field('Paper matching', select('tag-matching-mode', tag.matchingMode || (tag.custom ? 'suggest' : 'auto'), [['manual', 'Only when I choose'], ['suggest', 'Suggest paper matches'], ['auto', 'Match automatically']], value => { tag.matchingMode = value; }), 'Automatic matching also needs your completed pilot review and the setting for new papers.'),
+      field('Paper matching', select('tag-matching-mode', tag.matchingMode || (tag.custom ? 'suggest' : 'auto'), [['manual', 'Only when I choose'], ['suggest', 'Suggest paper matches'], ['auto', 'Match automatically']], value => { tag.matchingMode = value; }), 'Matching new papers automatically also needs your explicit switch on Assign tags.'),
       tag.custom && !tag.id ? button('Use RCL example', () => { tag.name = 'RCL';tag.fullName = 'Catalyst-layer resistance';tag.description = 'Catalyst-layer resistance in water electrolysis or fuel cells.';render(); }, 'quiet small') : null);
     advanced.open = editorAdvancedOpen;
     advanced.addEventListener('toggle', () => { if (advanced.isConnected) editorAdvancedOpen = advanced.open; });
     const form = h('form', 'editor-scroll',
       orphaned ? h('p', 'notice warning', 'This tag left the suggested list. Copy your changes, save them to your tag library, or cancel this draft. Matching will start with suggestions; suggested-list relationships are not copied.') : null,
       field('Tag name', input('tag-name', tag.name, value => { tag.name = value; }, 'A short name you recognize')),
-      field('Full name', input('tag-full-name', tag.fullName || '', value => { tag.fullName = value; }, 'Expand an abbreviation when helpful')),
       field('Meaning', textarea('tag-description', tag.description, value => { tag.description = value; }, 'What should papers with this tag discuss?')),
-      field('Group', select('tag-facet', tag.facet, facets.map(value => [value, facetNames[value]]), value => { tag.facet = value; })), advanced);
+      advanced);
     form.id = 'tag-editor-form';
     form.setAttribute('data-view-key',draftKey);
     if (tag.id && !preparationId && !nativeEntry) {
       const saved = tagById(tag.id);
       const unsaved = !saved || definitionKey(tag) !== definitionKey(saved);
-      form.append(h('details', 'section-gap', h('summary', '', 'More actions'), field('Find matches in', select<Scope>('detail-preview-scope', detailScope, [['selected', 'Selected papers in Zotero'], ['collections', 'Selected collections'], ['library', 'Whole personal library'], ['pilot', 'Pilot · 50 papers']], value => { detailScope = value; })), h('div', 'actions', button('Preview matches', () => { requireSavedDetail(tag);return run('preview-detail', { tagId: tag.id, scope: detailScope }, 'Preparing paper suggestions.'); }, '', !canAnalyze() || unsaved || tag.matchingMode === 'manual'), button('Assign to selected papers', () => { requireSavedDetail(tag);return run('assign-detail', { tagId: tag.id, scope: 'selected' }, 'Tag assigned to the selected papers.'); }, '', unsaved)), h('p', 'card-description', 'Save your changes before matching or assigning papers.')));
+      form.append(h('details', 'section-gap', h('summary', '', 'More actions'), field('Find matches in', select<Scope>('detail-preview-scope', detailScope, [['selected', 'Selected papers in Zotero'], ['collections', 'Selected collections'], ['library', 'Whole personal library'], ['pilot', 'Pilot · 50 papers']], value => { detailScope = value; })), h('div', 'actions', button('Preview matches', async () => { requireSavedDetail(tag);const result = await run('preview-detail', { tagId: tag.id, scope: detailScope, processingPolicy: 'auto-clear' });navigate({page:'assignment',assignmentRunId:result?.runId});assignmentView = 'suggestions';render(); }, '', !canAnalyze() || unsaved || tag.matchingMode === 'manual'), button('Assign to selected papers', () => { requireSavedDetail(tag);return run('assign-detail', { tagId: tag.id, scope: 'selected' }, 'Tag assigned to the selected papers.'); }, '', unsaved)), h('p', 'card-description', 'Save your changes before matching or assigning papers.')));
     }
     const save = async () => {
       if (busy) return;
       if (orphaned) throw new Error('This tag left the suggested list. Save it to your tag library or cancel the draft.');
-      if (!tag.name.trim() || !tag.description.trim()) throw new Error('Add a tag name and meaning before saving.');
+      if (!tag.name.trim() || !tag.description.trim()) {
+        const missing = doc.getElementById(!tag.name.trim() ? 'tag-name' : 'tag-description');missing?.setAttribute('aria-invalid', 'true');missing?.focus();
+        throw new Error('Add a tag name and meaning before saving.');
+      }
       const submitted = copyTag(tag);
       if (nativeEntry) {
         const work = currentState().nativeDefinitionPreparation;
@@ -657,7 +761,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         await run('edit-prepared-tag', { id: preparationId, tag: submitted }, 'Tag saved.');
       } else await run(!tag.id ? 'create-detail' : 'save-tag', { tag: submitted, ...(!tag.id && newTagShelfId ? { tagShelfId: newTagShelfId } : {}) }, 'Tag saved.');
       editorDrafts.delete(draftKey);
-      if (editorTag === tag) { editorTag = null;editorPreparationId = '';editorNativeEntry = null;render(); }
+      if (editorTag === tag) { editorTag = null;editorPreparationId = '';editorNativeEntry = null;pendingEditorFocus = editorReturnFocus;render(); }
     };
     const saveAsDetail = async () => {
       if (busy) return;
@@ -667,11 +771,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (editorTag === tag) { editorTag = null;editorPreparationId = '';render(); }
     };
     form.addEventListener('submit', event => { event.preventDefault();void save().catch(showError); });
-    const cancel = () => { editorDrafts.delete(draftKey);editorTag = null;editorPreparationId = '';editorNativeEntry = null;render(); };
-    return h('section', 'card editor tag-editor', h('div', 'card-header inline between', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag'),button('Close editor',() => { hideEditor();render(); },'quiet small')), form, h('div', 'card-footer editor-footer', button('Save', save, orphaned ? '' : 'primary', orphaned), orphaned ? button('Save to tag library', saveAsDetail, 'primary') : null, button('Cancel', cancel, 'quiet')));
+    const cancel = () => { editorDrafts.delete(draftKey);editorTag = null;editorPreparationId = '';editorNativeEntry = null;pendingEditorFocus = editorReturnFocus;render(); };
+    const saveButton = h('button', orphaned ? '' : 'primary', 'Save');saveButton.id = 'save-tag';saveButton.type = 'submit';saveButton.setAttribute('form',form.id);saveButton.disabled = orphaned || busy;
+    const close = button('Close editor',closeEditor,'quiet small');close.id = 'close-tag-editor';
+    const discard = button('Discard changes',cancel,'quiet');discard.id = 'discard-tag-draft';
+    const status = h('span', 'editor-status','Unsaved changes');status.id = 'tag-editor-status';status.hidden = !editorDirty();status.setAttribute('aria-live','polite');
+    const editor = h('section', 'card editor tag-editor', h('div', 'card-header inline between', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag'),close), form, h('div', 'card-footer editor-footer',status,saveButton,orphaned ? button('Save to tag library', saveAsDetail, 'primary') : null,discard));
+    editor.addEventListener('keydown', event => {
+      if (busy || event.defaultPrevented || event.isComposing) return;
+      if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();closeEditor(); }
+      else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault();event.stopPropagation();void save().catch(showError); }
+    });
+    return editor;
   }
   function workingTags(preparation?: ManagerSnapshot['tagPreparation']) { return (preparation?.tags || approvedTags()).filter(tag => !tag.builtin); }
-  const shelfCountHelp = 'Ready tags have a saved meaning. Shelves can share tags, so their counts are not added.';
   function tagShelfOptions(): [string,string][] {
     const s = currentState();
     const label = (name: string, total: number, ready: number) => `${name} · ${total}${total === ready ? ' tags' : ` total · ${ready} ready`}`;
@@ -686,7 +799,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     };
     const controls = h('div', 'shelf-controls', field('Shelf', select('tag-library-shelf', libraryTagShelfId, tagShelfOptions(), value => { browseTags();libraryTagShelfId = value;vocabularyPage = 0;renamingShelf = '';render(); }, 'Tag library shelf')), field('Show', select('tag-library-status', libraryTagStatus, [['all','All tags'],['ready','Ready'],['undefined','Needs meaning']], value => { browseTags();libraryTagStatus = value;vocabularyPage = 0;render(); }, 'Tag readiness')), h('div','shelf-buttons',button('Merge shelves…',merge,'small',(currentState().tagShelves?.length || 0) < 2),shelf ? button('Rename shelf…',() => { renamingShelf = shelf.id;shelfNameDrafts.set(shelf.id,shelf.name);render(); },'quiet small') : null));
     if (shelf && renamingShelf === shelf.id) controls.append(field('Shelf name', input('tag-shelf-name', shelfNameDrafts.get(shelf.id) ?? shelf.name, value => { shelfNameDrafts.set(shelf.id, value); })), button('Save shelf name', async () => { await run('rename-tag-shelf', { id: shelf.id, name: (shelfNameDrafts.get(shelf.id) || '').trim() }, 'Shelf renamed.');renamingShelf = '';render(); }, 'small'), button('Cancel rename', () => { renamingShelf = '';render(); }, 'small quiet'));
-    return h('div','shelf-toolbar',controls,h('p','card-description',shelfCountHelp));
+    return h('div','shelf-toolbar',controls);
   }
   function currentDrafts() {
     const drafts = new Map(editorDrafts);
@@ -711,6 +824,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return false;
   }
   function updateTagApplyState() {
+    updateEditorState();
     updateNativeMeaningState();
     const apply = doc.getElementById('apply-tag-list') as HTMLButtonElement | null;
     if (!apply || !state?.tagPreparation) return;
@@ -753,6 +867,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (note) { note.hidden = !unsaved.size;note.textContent = unsaved.size ? 'Save or cancel your edits before saving or answering those meanings.' : ''; }
   }
   function editNativeMeaning(workId: string, row: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number]) {
+    rememberEditorOrigin(`edit-native-meaning-${row.id}`);
     rememberEditorDraft();editorPreparationId = '';editorNativeEntry = {workId,entryId:row.id};
     const proposed = nativeMeaningTag(row);
     editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();doc.getElementById('tag-description')?.focus();
@@ -760,7 +875,24 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function openNativeMeanings() { nav('vocabulary',true); }
   function nativeMeaningsReview() {
     const work = currentState().nativeDefinitionPreparation;
-    if (!work || work.status === 'finished') return null;
+    if (!work || work.status === 'finished' && !(work.processingPolicy === 'auto-clear' && work.lastChangeId)) return null;
+    if (work.processingPolicy === 'auto-clear') {
+      const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id));
+      const questions = work.rows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
+      const deferredCount = items.filter(item => item.state === 'deferred').length;
+      const savedCount = work.savedCount ?? 0;
+      const summary = h('div', '',h('p', '', `${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${questions.length ? ` · ${questions.length} need your choice` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
+        work.status === 'running' || work.status === 'queued' ? h('p', 'card-description',`${work.completed} of ${work.total} names checked. You can keep browsing.`) : null,
+        work.error ? h('p', 'notice warning',humanMessage(work.error)) : null);
+      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(questions.length ? 'Choose meanings' : 'Open deferred meanings',openNativeMeanings,'small') : null,
+        !nativeMeaningReviewHidden ? button('Back to tags',() => { browseTags();render(); },'quiet small') : null,
+        work.status === 'paused' ? button('Retry meanings',() => run('retry-tag-meanings',{id:work.id}),'small') : null,taskUndo(work.lastChangeId,'undo-native-meaning-change'));
+      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => h('article', 'tag-row',h('strong', '', row.sourceName),h('p', '', row.question || ''),
+        h('div', 'actions',...(row.choices || []).map(choice => button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id}),'small')),
+          button('Edit meaning',() => editNativeMeaning(work.id,row),'small'),button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id}),'quiet small'))))) : null;
+      return h('div', 'stack',h('section','task-summary',h('h2','',work.status === 'running' || work.status === 'queued' ? 'Defining tag meanings' : 'Tag meanings'),summary,actions),
+        !nativeMeaningReviewHidden ? reviewInbox(items) : null,fallback);
+    }
     if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
     if (nativeMeaningReviewHidden) return null;
     const rows = work.rows.filter(row => !row.applied && row.status !== 'left-undefined'), ready = rows.filter(row => row.status === 'ready' && !excludedNativeMeaningRows.has(row.id));
@@ -790,7 +922,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         }
         article.append(choices);
       }
-      const edit = button(row.status === 'ready' ? 'Edit meaning' : 'Write my own meaning',() => editNativeMeaning(work.id,row),'quiet small',running);edit.setAttribute('aria-label',`Edit meaning for ${row.sourceName}`);
+      const edit = button(row.status === 'ready' ? 'Edit meaning' : 'Write my own meaning',() => editNativeMeaning(work.id,row),'quiet small',running);edit.id = `edit-native-meaning-${row.id}`;edit.setAttribute('aria-label',`Edit meaning for ${row.sourceName}`);
       const suggest = suggestible ? button('Suggest a meaning',() => run('continue-tag-meanings',{id:work.id,rowIds:[row.id]},'Preparing a meaning from the linked papers.'),'primary small',running || unsaved.has(row.id)) : null;
       if (suggest) { suggest.id = `suggest-native-meaning-${row.id}`;suggest.setAttribute('aria-label',`Suggest a meaning for ${row.sourceName}`); }
       const leave = button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id},'This name will stay visible without automatic matching.'),'quiet small',running || unsaved.has(row.id));leave.id = `leave-native-meaning-${row.id}`;leave.setAttribute('aria-label',`Leave ${row.sourceName} undefined`);
@@ -834,7 +966,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil((nativeNames?.length ?? tags.length) / 20) - 1));
     tagQuestionPage = Math.min(tagQuestionPage, Math.max(0, Math.ceil(questions.length / 10) - 1));
     const status = preparation?.status === 'checking' ? 'Checking your tags…' : preparation?.status === 'questions' ? `${questions.length} ${questions.length === 1 ? 'question needs' : 'questions need'} your choice` : preparation?.status === 'failed' ? 'Your tag list needs another try' : preparation ? 'Your tag list is ready' : shelf?.name || 'Your tags';
-    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : nativeNames ? `${nativeNames.length} tags · ${nativeNames.filter(entry => entry.tagId).length} with a saved meaning` : `${tags.length} saved tags`), extending ? h('p', 'card-description', preparation?.needsRefresh ? 'Your saved tags changed. Compare these additions with the current list and apply.' : 'Your saved tags are kept.') : null), h('div', 'inline', button('Add tag', () => newTag(true), preparation ? 'quiet' : 'primary'), preparation ? button(preparation.needsRefresh ? 'Update and apply' : 'Apply tag list', () => applyTagList(preparation), 'primary', !preparation.canApply || preparation.status === 'checking') : null));
+    const add = button('Add tag', () => newTag(true), preparation ? 'quiet' : 'primary');add.id = 'add-tag';
+    const header = h('div', 'tag-workspace-header', h('div', '', h('h2', '', status), h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : nativeNames ? `${nativeNames.length} tags · ${nativeNames.filter(entry => entry.tagId).length} with a saved meaning` : `${tags.length} saved tags`), extending ? h('p', 'card-description', preparation?.needsRefresh ? 'Your saved tags changed. Compare these additions with the current list and apply.' : 'Your saved tags are kept.') : null), h('div', 'inline', add, preparation ? button(preparation.needsRefresh ? 'Update and apply' : 'Apply tag list', () => applyTagList(preparation), 'primary', !preparation.canApply || preparation.status === 'checking') : null));
     if (preparation) header.querySelector<HTMLButtonElement>('.primary')!.id = 'apply-tag-list';
     const tabs = h('div', 'tag-workspace-tabs');
     tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Tags and questions');
@@ -865,7 +998,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const selectable = (nativeNames || []).filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag');
       if (!preparation && (selectable.length || selectedNativeNames.size)) {
         const selection = h('div','tag-meaning-selection',selectable.length ? button('Select all names',() => { for(const entry of selectable)selectedNativeNames.add(entry.name);render(); },'quiet small') : null);
-        if (selectedNativeNames.size) selection.append(h('span','muted',`${selectedNativeNames.size} selected`),button('Prepare meanings',async () => { await run('prepare-tag-meanings',{names:[...selectedNativeNames],shelfId:libraryTagShelfId},'Preparing meanings from the selected tags and their papers.');selectedNativeNames.clear();nativeMeaningReviewHidden = false;render(); },'primary small',!canAnalyze() || s.nativeDefinitionPreparation?.status === 'queued' || s.nativeDefinitionPreparation?.status === 'running'),button('Clear selection',() => { selectedNativeNames.clear();render(); },'quiet small'));
+        if (selectedNativeNames.size) selection.append(h('span','muted',`${selectedNativeNames.size} selected`),button('Suggest meanings',async () => { await run('prepare-tag-meanings',{names:[...selectedNativeNames],shelfId:libraryTagShelfId,processingPolicy:'auto-clear'},'Defining meanings from the selected tags and their papers.');selectedNativeNames.clear();render(); },'primary small',!canAnalyze() || s.nativeDefinitionPreparation?.status === 'queued' || s.nativeDefinitionPreparation?.status === 'running'),button('Clear selection',() => { selectedNativeNames.clear();render(); },'quiet small'));
         content.append(selection);
       }
       if (!(nativeNames?.length ?? tags.length)) content.append(empty('No tags here yet', 'Build tags from a few papers, or add a tag of your own.'));
@@ -875,7 +1008,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         if (tag && !protectedName) { content.append(savedTagRow(tag, entry.paperCount));continue; }
         const edit = !protectedName ? button('Add meaning', () => addNativeMeaning(entry.name), 'quiet small') : null;
         edit?.setAttribute('aria-label', `Add meaning for ${entry.name}`);
-        content.append(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} papers · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? h('div','warning-papers',...entry.paperIds.slice(0,3).map(id => paperButton(id))) : null));
+        content.append(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? h('div','warning-papers',...entry.paperIds.slice(0,3).map(id => paperButton(id))) : null));
       }
       for (const tag of (nativeNames ? [] : tags).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
         content.append(savedTagRow(tag));
@@ -885,6 +1018,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     function savedTagRow(tag: DisplayTag, paperCount?: number) {
       const retained = !!preparation && tag.retained === true;
       const edit = button(retained ? 'Edit in tag library' : 'Edit', () => retained ? navigate({ page: 'vocabulary', tagId: tag.id }) : editTag(tag, preparation?.id || ''), 'small quiet');edit.setAttribute('aria-label', retained ? `Edit saved tag ${tag.name} in tag library` : `Edit tag ${tag.name}`);
+      edit.id = `edit-tag-${encodeURIComponent(tag.id)}`;
       const actions = h('div', 'inline', edit);
       if (!retained) {
         const remove = button('Remove', async () => {
@@ -895,10 +1029,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
           if (editorTag?.id === tag.id && editorPreparationId === (preparation?.id || '')) { editorTag = null;editorPreparationId = '';render(); }
         }, 'small quiet');remove.setAttribute('aria-label', `Remove tag ${tag.name}`);actions.append(remove);
       }
-      const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${paperCount ?? tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0} papers tagged`;
+      const taggedCount = paperCount ?? tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0;
+      const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${taggedCount} ${taggedCount === 1 ? 'paper' : 'papers'} tagged`;
       return h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null));
     }
-    const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : 'Each tag appears once in All tags.');
+    const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : '');note.hidden = !preparation;
     note.id = 'tag-apply-note';
     const orphans = preparation ? orphanedPreparedDrafts() : [], draft = orphans[0];
     const reviewDraft = draft ? button('Review draft', () => editTag(draft, preparation!.id), 'small') : null;
@@ -912,33 +1047,58 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const recovery = draft ? h('div', 'notice warning inline between', h('span', '', `${draft.name} left the suggested list. Your unsaved edits are kept.${orphans.length > 1 ? ` ${orphans.length} drafts need a choice.` : ''}`), h('div', 'inline', reviewDraft, discardDraft)) : null;
     const meanings = !preparation ? nativeMeaningsReview() : null;
     const nativeWork = s.nativeDefinitionPreparation;
-    const reopenMeanings = !preparation && nativeWork && nativeWork.status !== 'finished' && nativeMeaningReviewHidden ? h('div','notice info inline between',h('span','',nativeWork.status === 'running' || nativeWork.status === 'queued' ? 'Your tag meanings are being prepared. You can keep browsing.' : 'Prepared tag meanings are available. Your tag library is ready to browse.'),button('Review meanings',openNativeMeanings,'small')) : null;
-    const workspace = h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, !prepared && s.tagShelves?.length ? libraryShelfControls() : null, preparation && questions.length ? tabs : null, note, recovery, reopenMeanings, h('div', 'tag-workspace-columns', meanings || content, tagEditor(editorVisible)));
+    const automaticMeanings = nativeWork?.processingPolicy === 'auto-clear';
+    const reopenMeanings = !preparation && nativeWork && !automaticMeanings && nativeWork.status !== 'finished' && nativeMeaningReviewHidden ? h('div','notice info inline between',h('span','',nativeWork.status === 'running' || nativeWork.status === 'queued' ? 'Your tag meanings are being prepared. You can keep browsing.' : 'Prepared tag meanings are available. Your tag library is ready to browse.'),button('Review meanings',openNativeMeanings,'small')) : null;
+    const workspace = h('div', `tag-workspace ${editorVisible ? 'has-editor' : ''}`, header, !prepared && s.tagShelves?.length ? libraryShelfControls() : null, preparation && questions.length ? tabs : null, note, recovery, reopenMeanings,automaticMeanings ? meanings : null, h('div', 'tag-workspace-columns', automaticMeanings ? content : meanings || content, tagEditor(editorVisible)));
     return workspace;
   }
 
   function renderCleanup() {
     const s = currentState();
+    if (s.tagPreparation?.processingPolicy === 'auto-clear') {
+      const preparation = s.tagPreparation, items = (s.reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === preparation.id || item.workId === preparation.id));
+      const choices = s.reviewItems ? items.filter(item => item.state === 'open').length : preparation.questions.length;
+      const deferredCount = items.filter(item => item.state === 'deferred').length;
+      const openLibrary = () => { if (preparation.shelfId) libraryTagShelfId = preparation.shelfId;nav('vocabulary'); };
+      const body = h('div', 'stack',h('p', '', `${preparation.savedCount ?? 0} tags saved${choices ? ` · ${choices} meanings need your choice` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
+        h('p', 'card-description', preparation.status === 'checking' ? 'Supported meanings are saved as their checks finish. Other choices can wait.' : 'Saved definitions are ready to use. Remaining choices do not block them.'),
+        preparation.error ? h('p', 'notice warning',humanMessage(preparation.error)) : null,
+        h('div', 'task-actions',button('Open tag library',openLibrary,'small'),button('Assign tags',() => { if (preparation.shelfId) assignmentTagShelfId = preparation.shelfId;assignmentView = 'setup';nav('assignment'); },'primary',!approvedTags().length),taskUndo(preparation.lastChangeId,'undo-build-change'),
+          preparation.status === 'failed' ? button('Retry build',() => run('retry-tag-preparation',{id:preparation.id}),'small') : null));
+      const fallback = !s.reviewItems && preparation.questions.length ? h('div', 'stack',...preparation.questions.map(question => h('article', 'tag-question',h('h3', '', question.title),h('p', '', question.description),
+        ...question.choices.map(choice => button(choice.label,() => run('answer-tag-question',{id:preparation.id,questionId:question.id,choiceId:choice.id},'Meaning selected.'),'small'))))) : null;
+      return h('div','stack',h('div','actions',button(buildSetupOpen ? 'Hide build setup' : 'Change build group',() => { buildSetupOpen = !buildSetupOpen;render(); },'quiet small')),buildSetupOpen ? renderBuild() : null,
+        h('section','task-summary',h('h2','',preparation.status === 'checking' ? 'Building tags' : preparation.status === 'failed' ? 'Build needs attention' : 'Your tags are saved'),body),reviewInbox(items),fallback,editorPreparationId === preparation.id ? tagEditor() : null);
+    }
     return s.tagPreparation ? h('div', 'stack', h('div', 'actions', button(buildSetupOpen ? 'Hide build setup' : 'Change build group', () => { buildSetupOpen = !buildSetupOpen;render(); }, 'quiet small')), buildSetupOpen ? renderBuild() : null, renderVocabulary(true)) : renderBuild();
   }
 
   function renderAssignment() {
     const s = currentState();
     const tabs = h('div', 'tag-workspace-tabs');tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Assignment views');
-    const pending = s.suggestions.filter(item => item.status === 'pending' && !item.applied).length;
-    for (const [value, label] of [['setup', 'Assignment setup'], ['suggestions', `Paper suggestions (${pending})`]] as const) {
-      const tab = button(label, () => { assignmentView = value;render(); }, assignmentView === value ? 'selected' : 'quiet');tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(assignmentView === value));tabs.append(tab);
+    const pending = s.reviewItems ? new Set(s.reviewItems.filter(item => item.kind === 'assignment' && item.state === 'open').map(item => item.paperId)).size : s.suggestions.filter(item => item.status === 'pending' && !item.applied).length;
+    for (const [value, label] of [['setup', 'New assignment'], ['suggestions', `Results (${pending})`]] as const) {
+      const tab = button(label, () => { assignmentView = value;render(); }, assignmentView === value ? 'selected' : 'quiet');tab.setAttribute('role', 'tab');tab.setAttribute('aria-selected', String(assignmentView === value));
+      if (value === 'setup') { tab.id = 'assignment-setup-toggle';tab.setAttribute('aria-label','Assignment setup'); }tabs.append(tab);
     }
     if (assignmentView === 'suggestions') return h('div', 'stack', tabs, renderReview());
     const shelf = s.tagShelves?.find(shelf => shelf.id === assignmentTagShelfId);
     const shelfTags = approvedTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id));
     const unavailable = !canAnalyze() || !shelfTags.length || s.queue.status === 'running';
-    const suggest = async (scope: Scope) => { assignmentRunSelection = null;selectedSuggestions.clear();await run('tag', { scope, tagShelfId: assignmentTagShelfId }, 'Paper suggestions queued.');assignmentView = 'suggestions';render(); };
-    const group = h('div', 'stack', field('Tags to use', select('assignment-tag-shelf', assignmentTagShelfId, tagShelfOptions(), value => { assignmentTagShelfId = value;render(); }, 'Assignment tag shelf'), shelfCountHelp), field('Papers to assign tags', scopeSelect('assignment-scope', assignmentScope, value => { assignmentScope = value;render(); }), 'This group is independent of the papers used to build your tag list.'), shelf && !shelfTags.length ? h('p', 'notice info', 'This shelf has no tags with meanings yet. Add a meaning or choose another shelf.') : null, s.workflow?.assignmentScope === assignmentScope ? h('p', 'card-description', `${s.workflow.assignmentPaperCount} papers in the last chosen group · ${s.workflow.assignedPaperCount} with Smart Tags assignments`) : null, h('div', 'actions', button('Suggest paper tags', () => suggest(assignmentScope), 'primary', unavailable)), h('p', 'card-description', 'Existing paper tags stay unchanged until you apply reviewed suggestions.'));
-    const pilot = h('div', '', h('p', '', s.pilotReviewed ? 'Your assignment pilot is reviewed. You can enable routine assignment below.' : 'Complete and review a 50-paper assignment pilot before enabling routine assignment. You can still tag another chosen group manually.'), h('div', 'actions', button('Run assignment pilot', () => suggest('pilot'), '', unavailable), button(s.pilotReviewed ? 'Pilot reviewed' : 'Mark pilot reviewed', () => run('mark-pilot-reviewed', undefined, 'Pilot review recorded.'), '', s.pilotReviewed || !s.workflow?.assignmentPilotReady || s.queue.status === 'running')));
-    const routineValue = routineDraft ?? s.settings.autoAssign;
-    const routine = h('div', '', checkbox('assignment-auto-assign', routineValue, 'Automatically assign supported tags when a new paper is added', value => { routineDraft = value;render(); }, !s.pilotReviewed), h('p', 'card-description', 'Unclear matches remain suggestions. Manual removals, rejected matches, and locked assignments are remembered.'), h('div', 'actions', button('Save routine assignment', async () => { await run('save-settings', { settings: { ...currentState().settings, autoAssign: routineValue } }, 'Routine assignment saved.');routineDraft = null;render(); }, 'primary', routineValue === s.settings.autoAssign || !s.pilotReviewed)), routineValue !== s.settings.autoAssign ? h('p', 'card-description', 'Unsaved routine-assignment change') : null);
-    return h('div', 'stack', tabs, !approvedTags().length ? h('div', 'notice info inline between', h('span', '', 'Save a tag list before assigning paper tags.'), button('Build tags', () => nav('cleanup'), 'small')) : !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Connect an AI model before requesting suggestions.'), button('Connect AI', () => nav('connection'), 'small')) : null, card('Choose the papers to tag', 'Saving tags does not start paper assignment.', group), details('Routine assignment settings', routineSettingsOpen, value => { routineSettingsOpen = value; }, () => h('div', 'stack', card('Assignment pilot', 'The pilot checks paper matching before routine assignment.', pilot), card('Routine assignment', 'Enable this only when you are ready to use the saved list for incoming papers.', routine))));
+    const suggest = async () => { assignmentRunSelection = null;selectedSuggestions.clear();const result = await run('tag', { scope: assignmentScope, tagShelfId: assignmentTagShelfId, processingPolicy: 'auto-clear' }, 'Assigning supported tags. Other choices can wait.');if (result?.runId) assignmentRunSelection = result.runId;assignmentView = 'suggestions';render(); };
+    const assignButton = button('Assign tags', suggest, 'primary', unavailable);assignButton.id = 'start-assignment';assignButton.setAttribute('aria-label', 'Assign tags to these papers');
+    const group = h('section', 'task-setup', field('Tags to use', select('assignment-tag-shelf', assignmentTagShelfId, tagShelfOptions(), value => { assignmentTagShelfId = value;render(); }, 'Assignment tag shelf')),
+      field('Papers', scopeSelect('assignment-scope', assignmentScope, value => { assignmentScope = value;render(); })),
+      shelf && !shelfTags.length ? h('p', 'notice info', 'This shelf has no tags with meanings yet. Add a meaning or choose another shelf.') : null,
+      s.workflow?.assignmentScope === assignmentScope ? h('p', 'card-description', `${s.workflow.assignmentPaperCount} papers in the last chosen group · ${s.workflow.assignedPaperCount} with Smart Tags assignments`) : null,
+      h('p', 'card-description', 'High-confidence additions apply automatically; other changes wait for your choice.'),h('div', 'task-actions', assignButton));
+    const incoming = checkbox('assignment-auto-assign', s.settings.autoAssign, 'Tag new papers automatically', value => {
+      void run('save-settings', { settings: { ...currentState().settings, autoAssign: value } }, value ? 'Automatic tagging enabled for new papers.' : 'Automatic tagging disabled.').catch(showError);
+    }, !shelfTags.length || !canAnalyze());
+    const routine = h('details','incoming-settings',h('summary','',`For new papers · ${s.settings.autoAssign ? 'On' : 'Off'}`),incoming,h('p','card-description','Uses saved tags eligible for automatic matching, within your connection and spending limit.'));
+    routine.open = incomingSettingsOpen;routine.addEventListener('toggle',() => { if (routine.isConnected) incomingSettingsOpen = routine.open; });
+    return h('div', 'stack', tabs, !approvedTags().length ? h('div', 'notice info inline between', h('span', '', 'Save a tag list before assigning paper tags.'), button('Build tags', () => nav('cleanup'), 'small')) : !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Connect an AI model before assigning tags.'), button('Connect AI', () => nav('connection'), 'small')) : null,
+      group,routine);
   }
 
   function nativeChanges(changes: { paperId: string; title: string; before: string[]; after: string[] }[], pageIndex: number, changed: (page: number) => void, noun: string) {
@@ -1166,7 +1326,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return h('article', 'paper-card suggestion', check, body);
   }
   function assignmentTopicReport(review: DisplayAssignmentReview) {
-    if (review.status !== 'finished' || !review.report) return null;
+    if ((review.processingPolicy === 'auto-clear' ? !review.analysisComplete : review.status !== 'finished') || !review.report) return null;
     const topics = review.report.topics.filter(topic => !topic.resolved);
     topicPage = Math.min(topicPage, Math.max(0, Math.ceil(topics.length / 20) - 1));
     const selected = topics.filter(topic => selectedTopicIds.has(topic.id));
@@ -1177,7 +1337,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     for (const topic of topics.slice(topicPage * 20, (topicPage + 1) * 20)) body.append(h('article', 'tag-row', checkbox(`assignment-topic-${topic.id}`, selectedTopicIds.has(topic.id), topic.name, checked => { checked ? selectedTopicIds.add(topic.id) : selectedTopicIds.delete(topic.id);render(); }), h('p', 'card-description', `${topic.paperIds.length} ${topic.paperIds.length === 1 ? 'paper' : 'papers'}`), h('div', 'warning-papers', ...topic.paperIds.slice(0, 3).map(id => paperButton(id)))));
     if (!topics.length) body.append(h('p', '', 'No uncovered topics are waiting.'));
     if (topics.length > 20) body.append(pagination(topics.length, topicPage, next => { topicPage = next; }, 20, 'topics'));
-    if (topics.length) body.append(field('New tags to suggest', targetInput, 'Saved tags are kept. Your combined tag library can grow beyond 60.'), h('div', 'actions', button('Extend from selected topics', async () => { await run('extend-assignment-topics', { runId: review.id, paperIds, additionalTargetCount: target }, 'Preparing additions from the selected topic papers.');if (!currentState().paperExclusionPreview) nav('cleanup'); }, 'primary', !paperIds.length || !Number.isInteger(target) || target < 1 || target > 500 || currentState().queue.status === 'running')));
+    if (topics.length) body.append(field('Maximum new tags', targetInput, 'Saved tags are kept. The limit is not a quota.'), h('div', 'actions', button('Extend from selected topics', async () => { await run('extend-assignment-topics', { runId: review.id, paperIds, additionalTargetCount: target, processingPolicy: 'auto-clear' }, 'Building additions from the selected topic papers.');if (!currentState().paperExclusionPreview) nav('cleanup'); }, 'primary', !paperIds.length || !Number.isInteger(target) || target < 1 || target > 500 || currentState().queue.status === 'running')));
     return card('Topics outside your saved list', `${topics.length} topics · ${review.report.paperIds.length} papers`, body);
   }
   function renderReview() {
@@ -1191,6 +1351,19 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const older = s.suggestions.some(item => !item.runId || !reviews.some(review => review.id === item.runId));
     const runOptions: [string,string][] = reviews.map((review, index) => [review.id, review.label || `Assignment ${index + 1} · ${review.scopeCount} papers`]);if (older) runOptions.push(['legacy', 'Earlier suggestions']);
     const runSelector = reviews.length ? select('assignment-result', assignmentRunSelection || reviews[0].id, runOptions, value => { assignmentRunSelection = value;selectedSuggestions.clear();selectedTopicIds.clear();reviewPage = 0;topicPage = 0;render(); }, 'Assignment result') : null;
+    if (review?.processingPolicy === 'auto-clear') {
+      const items = (s.reviewItems || []).filter(item => item.kind === 'assignment' && item.taskId === review.id);
+      const waiting = new Set(items.filter(item => item.state === 'open').map(item => item.paperId)).size;
+      const outcomes = scope.filter(item => item.applied || item.status === 'rejected');
+      const appliedCount = review.appliedCount ?? scope.filter(item => item.applied && item.operation !== 'remove').length;
+      const summary = h('div', '',h('p', '', `${appliedCount} ${appliedCount === 1 ? 'tag change' : 'tag changes'} applied${waiting ? ` · ${waiting} ${waiting === 1 ? 'paper needs' : 'papers need'} your choice` : ''}.`),
+        h('p', 'card-description',review.analysisComplete ? 'Supported additions are saved. Other choices can wait.' : 'Validated high-confidence additions are being written as matching finishes.'));
+      const fallback = !s.reviewItems ? h('div', 'stack',...scope.filter(item => !item.applied && item.status === 'pending').map(item => h('article', 'paper-card',paperButton(item.paperId),h('p', '', item.reason),
+        button(item.operation === 'remove' ? `Remove ${tagName(item.tagId)}` : `Add ${tagName(item.tagId)}`,() => run('accept-suggestion',{id:item.id},'Choice applied.'),'small'),button('Reject and remember',() => run('reject-suggestion',{id:item.id}),'small')))) : null;
+      return h('div', 'stack',runSelector,h('section','task-summary',summary,taskUndo(review.lastChangeId,'undo-assignment-change')),reviewInbox(items),fallback,
+        outcomes.length ? details('Applied and declined',reviewDetailsOpen,value => { reviewDetailsOpen = value; },() => h('div', 'stack',...outcomes.map(item => h('article', 'tag-row',paperButton(item.paperId),h('strong', '', tagName(item.tagId)),badge(item.applied ? 'Applied' : 'Declined'),h('p', '', item.reason))))) : null,
+        assignmentTopicReport(review),paperExclusionReview());
+    }
     const toolbar = h('div', 'toolbar', select('review-filter', reviewFilter, [['pending', 'Pending review'], ['accepted', 'Accepted, not applied'], ['rejected', 'Rejected'], ['applied', 'Applied'], ['all', 'All suggestions']], value => { reviewFilter = value; reviewPage = 0; render(); }, 'Suggestion status'),
       button('Select this page', () => { for (const item of visible) if (!item.applied && item.status !== 'rejected') selectedSuggestions.add(item.id); render(); }),
       button('Clear selection', () => { selectedSuggestions.clear(); render(); }, 'quiet'),
@@ -1366,7 +1539,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const notices = active.length ? card('Needs attention', '', h('div', '', ...active.map(warning => warningEntry(warning, true)))) : null;
     const tasks = s.activityTasks;
     const paperWork = !tasks || (q.status === 'running' || q.status === 'paused') && q.ownerPage !== 'vocabulary' ? card(q.taskLabel || 'Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress) : null;
-    const currentTasks = tasks?.filter(task => task.state !== 'completed' && (task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
+    const currentTasks = tasks?.filter(task => task.state !== 'completed' && !(task.state === 'needs-choice' && s.reviewItems?.some(item => item.taskId === task.workId && item.state !== 'resolved')) && (task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
     const current = currentTasks.map(task => {
       const meaning = task.kind === 'meanings';
       const title = meaning ? task.state === 'needs-choice' ? `${task.questionCount ?? 1} ${(task.questionCount ?? 1) === 1 ? 'tag meaning needs' : 'tag meanings need'} your choice` : task.state === 'ready-to-save' ? `${task.readyCount ?? 0} ${(task.readyCount ?? 0) === 1 ? 'meaning ready' : 'meanings ready'} to save` : task.state === 'queued' ? 'Meanings queued' : task.state === 'paused' ? 'Meaning preparation paused' : 'Preparing meanings…' : task.label;
@@ -1379,7 +1552,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const meaningCounts = [task.savedCount === undefined ? '' : `${task.savedCount} meanings saved`,task.leftUndefinedCount === undefined ? '' : `${task.leftUndefinedCount} left undefined`].filter(Boolean).join(' · ');
       return h('article','completed-task',h('strong','',task.label),task.kind === 'meanings' ? meaningCounts ? h('p','card-description',meaningCounts) : null : task.total !== undefined ? h('p','card-description',`${task.completed ?? task.total} of ${task.total} papers`) : null,task.message ? h('p','card-description',humanMessage(task.message)) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
     }))) : null;
-    return h('div', 'stack',paperWork,...current,tasks && !paperWork && !current.length ? empty('No work waiting','Start a build, prepare tag meanings, or choose papers to assign tags.') : null,completedWork,notices, card('Papers that need attention', s.paperAttention?.queued ? `${s.paperAttention.queued} papers queued` : '', paperAttention()), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    const inbox = reviewInbox(s.reviewItems || []);
+    return h('div', 'stack',inbox,paperWork,...current,tasks && !paperWork && !current.length && !inbox ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,completedWork,notices, card('Papers that need attention', s.paperAttention?.queued ? `${s.paperAttention.queued} papers queued` : '', paperAttention()), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
   }
 
   function renderSettings(connectionOnly = false) {
@@ -1396,6 +1570,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         mark('model', '');
         mark('inputPricePerMillion', 0);
         mark('outputPricePerMillion', 0);
+        customModelInput = null;
         render();
       }), 'Connection changes take effect when you save settings. There is no automatic paid fallback.'));
     connection.append(h('p', 'card-description', `Analysis sends selected paper metadata and, when needed, PDF text to ${providerName}.`));
@@ -1424,14 +1599,17 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         render();
       }, 'primary'), button(`Remove ${providerName} key`, () => run('remove-api-key', { provider: keyProvider }, `Saved ${providerName} API key removed.`), 'danger', !hasKey)));
     }
-    const modelInput = input('settings-model', draft.model, value => { mark('model', value); render(); }, `Enter a model ID available through ${providerName}`);
-    connection.append(h('div', 'divider'), field('Model', modelInput, 'Enter a model ID or choose from discovered models below.'));
-    if (availableModels.length) connection.append(field('Discovered models', select('settings-discovered-model', availableModels.includes(draft.model) ? draft.model : '', [
-      ...(!availableModels.includes(draft.model) ? [['', 'Choose a discovered model'] as [string, string]] : []),
-      ...availableModels.map(model => [model, model] as [string, string]),
-    ], value => { if (value) { mark('model', value); render(); } })));
+    connection.append(h('div', 'divider'));
+    const customModel = customModelInput ?? (!!draft.model && !availableModels.includes(draft.model));
+    if (!availableModels.length || customModel) {
+      const modelInput = input('settings-model', draft.model, value => { mark('model', value);render(); }, `Enter a model ID available through ${providerName}`);
+      connection.append(field('Model',modelInput));if (availableModels.length) connection.append(button('Choose discovered model',() => { customModelInput = false;render(); },'quiet small'));
+    } else connection.append(field('Model', select('settings-discovered-model', availableModels.includes(draft.model) ? draft.model : '', [
+      ...(!availableModels.includes(draft.model) ? [['', 'Choose a model'] as [string, string]] : []),
+      ...availableModels.map(model => [model, model] as [string, string]),['__custom-model__','Enter model ID…'],
+    ], value => { if (value === '__custom-model__') { customModelInput = true;render();doc.getElementById('settings-model')?.focus(); }else if (value) { mark('model', value);customModelInput = false;render(); } })));
     connection.append(
-      h('div', 'actions', button('Discover models', async () => { await saveSettings(); await run('discover-models', undefined, `${providerName} model list updated.`); }), button('Test connection', async () => { await saveSettings(); await run('test-connection', undefined, `${providerName} connection test succeeded.`); }, 'primary', !draft.model.trim())),
+      h('div', 'task-actions', button('Discover models', async () => { if (settingsDirty) await saveSettings();await run('discover-models', undefined, `${providerName} model list updated.`); }), button(settingsDirty ? 'Save and test' : 'Test connection', async () => { if (settingsDirty) await saveSettings();await run('test-connection', undefined, `${providerName} connection test succeeded.`); }, 'primary', !draft.model.trim())),
       h('p', 'card-description', 'Testing sends a small AI request through the selected connection.'));
     if (s.connection.credentialStorage) connection.append(h('p', 'card-description', `Credential storage: ${s.connection.credentialStorage}`));
     const numberField = (key: 'budgetUSD' | 'inputPricePerMillion' | 'outputPricePerMillion' | 'maxOutputTokens' | 'coreConceptLimit' | 'extensionTagTarget', label: string, note: string, step: string) => {
@@ -1445,19 +1623,19 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('div', 'section-gap', numberField('budgetUSD', 'Per-run API budget · USD', 'The queue pauses before dispatching requests that would exceed its remaining estimate.', '0.01')),
       h('div', 'field-grid', numberField('inputPricePerMillion', 'Input · USD / million tokens', 'Use the standard input rate.', '0.001'), numberField('outputPricePerMillion', 'Output · USD / million tokens', 'Use the standard output rate.', '0.001')),
       h('div', 'section-gap', numberField('maxOutputTokens', 'API output-token limit', 'This request limit is used for API-key requests.', '1')));
-    const vocabulary = h('div', '', numberField('coreConceptLimit', 'Preferred number of tags', '60 is a starting point for a new list. Later additions can grow the library beyond it.', '1'), numberField('extensionTagTarget', 'Default new tags per extension', 'Each extension keeps saved definitions and suggests this many additions.', '1'));
+    const vocabulary = h('div', '', numberField('coreConceptLimit', 'Maximum tags for an initial build', 'An upper limit, not a quota. Compact vocabularies keep supported, distinct topics.', '1'), numberField('extensionTagTarget', 'Maximum new tags per build', 'Extensions keep saved definitions and add up to this many supported topics.', '1'));
     const transfers = h('details', 'section-gap', h('summary', '', 'Import, export, and previous tag lists'), h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null);
     for (const archive of s.taxonomyArchives || []) transfers.append(h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')));
     const navigationLabels = { starting: 'Starting', ready: 'Available', hidden: 'Sidebar hidden', unavailable: 'Unavailable in this window' };
     const navigation = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('p', '', `Library navigation: ${s.navigation ? navigationLabels[s.navigation.status] : 'Open Zotero to check'}`), s.navigation?.message ? h('p', 'card-description', humanMessage(s.navigation.message)) : null, h('div', 'actions', button('Show tag navigation', () => run('show-tag-navigation')), button('Restore navigation', () => run('show-tag-navigation', { restore: true })), button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
-    const save = h('div', 'inline', button('Save settings', () => saveSettings(), 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved'));
-    if (connectionOnly) return h('div', 'stack', h('div', 'grid', card('AI connection', 'Select the account and model used for analysis.', connection), card(draft.provider === 'chatgpt' ? 'API budget' : `${providerName} API budget`, 'Model rates are configurable rather than assumed.', budgets)), save, canAnalyze() ? h('div', 'actions', button('Continue to Build tags', () => nav('build'))) : null);
+    const save = h('div', 'inline', button('Save settings', () => saveSettings(), connectionOnly ? 'quiet' : 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved'));
+    if (connectionOnly) return h('div', 'connection-form',h('section','task-setup',connection),draft.provider !== 'chatgpt' ? h('section','task-setup',h('h2','',`${providerName} API budget`),budgets) : null,settingsDirty ? save : null,canAnalyze() && !settingsDirty ? h('div', 'task-actions', button('Continue to Build tags', () => nav('build'))) : null);
     return h('div', 'stack', card('Smart Tags in Zotero', 'Use Smart Tags or Collections in Zotero’s left library pane.', navigation), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), save, h('div', 'workflow-section-links', button('AI connection and budget', () => nav('connection')), button('Routine assignment', () => { assignmentView = 'setup';nav('assignment'); })), transfers, details('Data', dataDetailsOpen, value => { dataDetailsOpen = value; }, () => h('div', 'section-gap', button('Reset paper analysis…', () => { modal = { kind: 'reset-analysis' };render(); }, 'quiet'))));
   }
   async function saveSettings() {
     if (!settingsDraft) return;
-    if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) throw new Error('Set the preferred number of tags to a whole number from 1 to 500.');
-    if (!Number.isInteger(settingsDraft.extensionTagTarget ?? 30) || (settingsDraft.extensionTagTarget ?? 30) < 1 || (settingsDraft.extensionTagTarget ?? 30) > 500) throw new Error('Set new tags per extension to a whole number from 1 to 500.');
+    if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) throw new Error('Set the initial tag limit to a whole number from 1 to 500.');
+    if (!Number.isInteger(settingsDraft.extensionTagTarget ?? 30) || (settingsDraft.extensionTagTarget ?? 30) < 1 || (settingsDraft.extensionTagTarget ?? 30) > 500) throw new Error('Set the new-tag limit to a whole number from 1 to 500.');
     if (settingsDraft.provider !== 'chatgpt' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
     const result = await run('save-settings', { settings: { ...settingsDraft, autoAssign: currentState().settings.autoAssign } }, 'Settings saved.');
     settingsDirty = false;
@@ -1564,7 +1742,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const workflow = h('nav', 'nav workflow-nav');workflow.setAttribute('aria-label', 'Workflow steps');
     const utilities = h('nav', 'nav');
     utilities.setAttribute('aria-label', 'Library tools');
-    const activePage = page === 'existing-tags' ? 'vocabulary' : page === 'review' ? 'assignment' : page === 'build' ? 'cleanup' : page;
+    const activePage = page === 'existing-tags' ? 'vocabulary' : page === 'review' ? 'assignment' : page === 'build' ? 'cleanup' : page === 'connection' ? 'settings' : page;
     const addNavigation = (container: HTMLElement, target: ManagerPage, count?: number, step?: number) => {
       const navButton = button('', () => nav(target), `nav-button ${activePage === target ? 'active' : ''}`);
       navButton.id = `nav-${target}`;
@@ -1574,13 +1752,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (count !== undefined && count > 0) navButton.append(h('span', 'nav-count', count.toLocaleString()));
       if (activePage === target) navButton.setAttribute('aria-current', 'page');container.append(navButton);
     };
-    const homeNavigation = h('nav', 'nav');homeNavigation.setAttribute('aria-label', 'Workspace overview');addNavigation(homeNavigation, 'overview');
-    (['connection', 'cleanup', 'assignment'] as const).forEach((target, index) => addNavigation(workflow, target, undefined, index + 1));
-    addNavigation(navigation, 'vocabulary', s.tagLibraryEntries?.length ?? approvedTags().length);addNavigation(navigation, 'library');
-    addNavigation(utilities, 'activity');addNavigation(utilities, 'settings');
+    (['cleanup', 'vocabulary', 'assignment'] as const).forEach(target => addNavigation(workflow, target, target === 'vocabulary' ? s.tagLibraryEntries?.length ?? approvedTags().length : undefined));
+    addNavigation(navigation, 'library');
+    addNavigation(utilities, 'activity',s.reviewItems?.filter(item => item.state === 'open').length);addNavigation(utilities, 'settings');
     const connected = connectionReady(s);
     const connectionLabel = s.settings.provider === 'deepseek' ? 'DeepSeek API connected' : s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected';
-    sidebar.append(homeNavigation, h('div', '', h('div', 'sidebar-section-label', 'Workflow'), workflow), h('div', '', h('div', 'sidebar-section-label', 'Library'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', 'Stored on this computer')));
+    sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workflow'), workflow), h('div', '', h('div', 'sidebar-section-label', 'Library'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', 'Stored on this computer')));
     const home = button('Personal library', () => nav('overview'), 'breadcrumb-home');
     home.id = 'workspace-home';
     home.disabled = false;
@@ -1588,8 +1765,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     breadcrumbs.setAttribute('aria-label', 'Breadcrumb');
     const currentCrumb = breadcrumbs.lastElementChild;
     currentCrumb?.setAttribute('aria-current', 'page');
-    const topbar = h('div', 'workspace-topbar', breadcrumbs, h('div', 'header-status', busy ? h('span', 'busy-indicator', 'Working…') : s.settings.autoAssign ? 'Automatic assignment on' : 'Review before applying'));
-    const workspace = h('main', `workspace ${page === 'vocabulary' || page === 'cleanup' ? 'tag-workspace-page' : ''}`, h('header', 'page-header', h('div', '', h('div', 'workspace-page-icon', icon(page)), h('h1', '', pageTitles[page][0]), h('p', 'subtitle', pageTitles[page][1]))));
+    const topbar = h('div', 'workspace-topbar', breadcrumbs, h('div', 'header-status', busy ? h('span', 'busy-indicator', 'Working…') : s.settings.autoAssign ? 'New papers: automatic tagging on' : 'New papers: automatic tagging off'));
+    const workspace = h('main', `workspace ${page === 'vocabulary' || page === 'cleanup' ? 'tag-workspace-page' : ''}`, h('header', 'page-header',h('h1', '', pageTitles[page][0]),h('p', 'subtitle', pageTitles[page][1])));
     const strip = queueStrip();
     if (strip) workspace.append(strip);
     if (signingIn) {
@@ -1634,6 +1811,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
           try { restored.setSelectionRange(selectionStart, selectionEnd); } catch { /* Not all input types support selection. */ }
         }
       }
+    }
+    if (pendingEditorFocus) {
+      const target = doc.getElementById(pendingEditorFocus) || doc.getElementById('add-tag');pendingEditorFocus = '';target?.focus({preventScroll:true});
     }
     if (modalElement && !modalElement.contains(doc.activeElement)) {
       const first = modalElement.querySelector<HTMLElement>(modal?.kind === 'search' ? '#saved-search-name' : 'button:not(:disabled)');

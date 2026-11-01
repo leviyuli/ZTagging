@@ -147,7 +147,7 @@ test('selection expands independently, contextual details stay compound, and cle
   h.text('Assign to selected papers')!.fire('click'); await h.flush();
   assert.deepEqual(h.invocations[0], ['assign-detail', { tagId: 'rcl', scope: 'selected', itemIDs: [2] }]);
   h.text('Preview matches')!.fire('click'); await h.flush();
-  assert.deepEqual(h.invocations[1], ['preview-detail', { tagId: 'rcl', scope: 'library' }]);
+  assert.deepEqual(h.invocations[1], ['preview-detail', { tagId: 'rcl', scope: 'library', processingPolicy: 'auto-clear' }]);
   await navigator.destroy();
 });
 
@@ -160,6 +160,14 @@ test('Collections remains the default before approval; the first approved taxono
   h.setSnapshot({ vocabularyVersion: 3 }); await h.runTimers(); await navigator.refresh();
   assert.equal(navigator.mode, 'collections', 'background updates respect the user switching back');
   await navigator.destroy();
+});
+
+test('Preview matches opens the exact assignment returned by the controller',async()=>{
+  const h=harness(),destinations:(string|undefined)[]=[];let openedBrowser=0;
+  h.api.invoke=async(...args:any[])=>{h.invocations.push(args);return {runId:'new-assignment',page:'assignment'};};
+  const navigator=mountNavigator(h.win,h.api,{openManager(){openedBrowser++;},onPreviewMatches(runId){destinations.push(runId);}});
+  await navigator.refresh();h.label('FC')!.fire('click');await h.flush();h.text('Preview matches')!.fire('click');await h.flush();
+  assert.deepEqual(h.invocations,[['preview-detail',{tagId:'fc',scope:'library',processingPolicy:'auto-clear'}]]);assert.deepEqual(destinations,['new-assignment']);assert.equal(openedBrowser,0);await navigator.destroy();
 });
 
 test('Smart Tags remains discoverable with no approved list and readiness covers all required native nodes',async()=>{

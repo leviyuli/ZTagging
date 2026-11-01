@@ -65,8 +65,8 @@ export function createDropdown(win: Window, options: DropdownOptions): HTMLButto
     resetSearch();
     trigger.setAttribute('aria-expanded', 'false');
     trigger.removeAttribute('aria-activedescendant');
-    doc.removeEventListener('pointerdown', onOutsidePointer, true);
-    doc.removeEventListener('focusin', onOutsideFocus);
+    doc.removeEventListener('pointerdown', onOutside, true);
+    doc.removeEventListener('focusin', onOutside);
     doc.removeEventListener('scroll', onScroll, true);
     win.removeEventListener('resize', onViewportChange);
     win.removeEventListener('unload', onViewportChange);
@@ -74,11 +74,7 @@ export function createDropdown(win: Window, options: DropdownOptions): HTMLButto
     if (restoreFocus && trigger.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
   }
 
-  function onOutsidePointer(event: Event): void {
-    if (!contains(trigger, event.target) && (!popup || !contains(popup, event.target))) close();
-  }
-
-  function onOutsideFocus(event: Event): void {
+  function onOutside(event: Event): void {
     if (!contains(trigger, event.target) && (!popup || !contains(popup, event.target))) close();
   }
 
@@ -171,8 +167,8 @@ export function createDropdown(win: Window, options: DropdownOptions): HTMLButto
     positionPopup();
     trigger.setAttribute('aria-expanded', 'true');
     openDropdowns.set(doc, close);
-    doc.addEventListener('pointerdown', onOutsidePointer, true);
-    doc.addEventListener('focusin', onOutsideFocus);
+    doc.addEventListener('pointerdown', onOutside, true);
+    doc.addEventListener('focusin', onOutside);
     doc.addEventListener('scroll', onScroll, true);
     win.addEventListener('resize', onViewportChange);
     win.addEventListener('unload', onViewportChange);

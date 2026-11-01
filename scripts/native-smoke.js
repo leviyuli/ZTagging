@@ -20,6 +20,7 @@ import { runNativeV0110 } from './native-v0110.js';
 import { runNativeV0120 } from './native-v0120.js';
 import { runNativeV0130 } from './native-v0130.js';
 import { runNativeV0131 } from './native-v0131.js';
+import { runNativeAutomaticWorkflow } from './native-automatic-workflow.js';
 
 void (async () => {
   const config = typeof __SMART_TAGS_SMOKE_CONFIG === 'object' ? __SMART_TAGS_SMOKE_CONFIG : null;
@@ -62,6 +63,11 @@ void (async () => {
       && startupWindow.ZoteroPane.itemsView.collectionTreeRows.some(row => row.id.startsWith('smart-tags-view-')));
     await startupNavigator.setMode('collections');
     check('fixtureSetupUsesCollections', startupNavigator.mode === 'collections');
+    if(config.scenario==='automatic-workflow'){
+      report.automaticWorkflow=await runNativeAutomaticWorkflow(app,check,config);
+      report.status='passed';report.completedAt=new Date().toISOString();report.note='Synthetic automatic-workflow checks only; no external AI request or normal Zotero profile was used.';
+      return;
+    }
     // Exercise the DeepSeek adapter in Gecko with synthetic credentials and HTTP replies.
     // This transport never makes an external request or persists a credential.
     const testCredentials = new Map();

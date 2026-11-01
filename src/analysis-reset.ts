@@ -13,6 +13,7 @@ export interface AnalysisResetRecord {
   diyComparison?:AppState['diyComparison'];
   reconciliation?:AppState['reconciliation'];
   nativeDefinitionPreparation?:AppState['nativeDefinitionPreparation'];
+  reviewItems?:AppState['reviewItems'];
 }
 type ResettableState=Omit<AppState,'schemaVersion'|'analysisResetHistory'>&{schemaVersion:number;analysisResetHistory?:AnalysisResetRecord[]};
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
@@ -24,6 +25,7 @@ export function resetPaperAnalysis<T extends ResettableState>(state:T,date=new D
   const next=copy(state),unfinished=(next.assignmentRuns??[]).filter(review=>review.status!=='finished'),discarded=next.suggestions.filter(suggestion=>!suggestion.applied);
   const record:AnalysisResetRecord={id:allocateOpaqueId('analysis-reset'),date,factsCount:Object.keys(next.facts).length,analysesCount:Object.keys(next.analyses).length,analyses:next.analyses,discardedSuggestions:discarded,unfinishedReviews:unfinished,...(next.run?{run:next.run}:{}),...(next.maintenanceTasks?.length?{maintenanceTasks:next.maintenanceTasks}:{}),...(next.taxonomyProposal?{proposal:next.taxonomyProposal}:{}),...(next.tagPreparation?{preparation:next.tagPreparation}:{}),...(next.diyComparison?{diyComparison:next.diyComparison}:{}),...(next.reconciliation?{reconciliation:next.reconciliation}:{}),...(next.nativeDefinitionPreparation?{nativeDefinitionPreparation:next.nativeDefinitionPreparation}:{})};
   next.analysisResetHistory=[...(next.analysisResetHistory??[]),record];
+  if(next.reviewItems){record.reviewItems=copy(next.reviewItems);next.reviewItems=next.reviewItems.map(item=>({...item,state:'resolved'}));}
   next.facts={};next.analyses={};next.factHistory=[];next.neighbors={};next.paperInputs={};next.cleanup=[];next.deferredItemIDs=[];
   for(const paper of Object.values(next.papers)){delete paper.summary;delete paper.concepts;delete paper.pdfText;paper.fingerprint=paperFingerprint(paper);}
   next.suggestions=next.suggestions.filter(suggestion=>suggestion.applied);next.assignmentRuns=(next.assignmentRuns??[]).filter(review=>review.status==='finished');

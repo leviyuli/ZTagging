@@ -81,26 +81,26 @@ test('schema-ten migration preserves protocol-one questions and ready paper proo
   assert.deepEqual(new Set(Object.values(next.taxonomyEvidence!.sources).map(source=>source.paperId)),permitted);
 });
 
-test('schema-eleven load backs up exact original bytes without replacing occupied or historical backup generations, then restarts without migration',async()=>{
+test('current load backs up exact original bytes without replacing occupied or historical backup generations, then restarts without migration',async()=>{
   const old=schemaTen(),original=bytes(old),mem=memory(original),occupied=bytes({historical:'Another pre-eleven source'}),earlier=bytes({historical:'A preserved pre-ten source'});
-  mem.files.set('state.json.pre-v11.json',occupied);mem.files.set('state.json.pre-v10.json',earlier);
+  mem.files.set('state.json.pre-v12.json',occupied);mem.files.set('state.json.pre-v10.json',earlier);
   let migrations=0;
-  const store=new AtomicStore(mem.io,'state.json',initialState,validState,value=>{migrations++;assert.deepEqual(mem.files.get('state.json.pre-v11.1.json'),original);return migrateState(value);},validLegacyState),next=await store.load();
-  assert.equal(migrations,1);assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(next,{...old,schemaVersion:initialState().schemaVersion});assert.deepEqual(mem.files.get('state.json.pre-v11.json'),occupied);assert.deepEqual(mem.files.get('state.json.pre-v10.json'),earlier);assert.deepEqual(mem.copies,['state.json.pre-v11.1.json']);assert.deepEqual(mem.writes,['state.json']);
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,value=>{migrations++;assert.deepEqual(mem.files.get('state.json.pre-v12.1.json'),original);return migrateState(value);},validLegacyState),next=await store.load();
+  assert.equal(migrations,1);assert.equal(store.migrated,true);assert.equal(store.recovered,false);assert.deepEqual(next,{...old,schemaVersion:initialState().schemaVersion});assert.deepEqual(mem.files.get('state.json.pre-v12.json'),occupied);assert.deepEqual(mem.files.get('state.json.pre-v10.json'),earlier);assert.deepEqual(mem.copies,['state.json.pre-v12.1.json']);assert.deepEqual(mem.writes,['state.json']);
   const restarted=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  assert.deepEqual(await restarted.load(),next);assert.equal(restarted.migrated,false);assert.equal(restarted.recovered,false);assert.equal(mem.copies.length,1);assert.equal(mem.writes.length,1);assert.deepEqual(mem.files.get('state.json.pre-v11.1.json'),original);
+  assert.deepEqual(await restarted.load(),next);assert.equal(restarted.migrated,false);assert.equal(restarted.recovered,false);assert.equal(mem.copies.length,1);assert.equal(mem.writes.length,1);assert.deepEqual(mem.files.get('state.json.pre-v12.1.json'),original);
 });
 
-test('schema-eleven backup and write failures stop without using older valid bak work, and restart reuses the immutable source',async()=>{
+test('current backup and write failures stop without using older valid bak work, and restart reuses the immutable source',async()=>{
   const old=schemaTen(),original=bytes(old),mem=memory(original),bak=bytes({...initialState(),vocabularyVersion:99}),occupied=bytes({historical:'A distinct exact source'});
-  mem.files.set('state.json.bak',bak);mem.files.set('state.json.pre-v11.json',occupied);mem.failCopy(true);
+  mem.files.set('state.json.bak',bak);mem.files.set('state.json.pre-v12.json',occupied);mem.failCopy(true);
   let store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  await assert.rejects(store.load(),/Exact backup failed/);assert.equal(store.recovered,false);assert.deepEqual(mem.files.get('state.json'),original);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.deepEqual(mem.files.get('state.json.pre-v11.json'),occupied);assert.equal(mem.writes.length,0);
+  await assert.rejects(store.load(),/Exact backup failed/);assert.equal(store.recovered,false);assert.deepEqual(mem.files.get('state.json'),original);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.deepEqual(mem.files.get('state.json.pre-v12.json'),occupied);assert.equal(mem.writes.length,0);
   mem.failCopy(false);mem.failWrite(true);store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);
-  await assert.rejects(store.load(),/Migration write failed/);assert.equal(store.recovered,false);assert.deepEqual(mem.files.get('state.json'),original);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.deepEqual(mem.files.get('state.json.pre-v11.1.json'),original);
+  await assert.rejects(store.load(),/Migration write failed/);assert.equal(store.recovered,false);assert.deepEqual(mem.files.get('state.json'),original);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.deepEqual(mem.files.get('state.json.pre-v12.1.json'),original);
   mem.failWrite(false);
   const restarted=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState),next=await restarted.load();
-  assert.deepEqual(next,{...old,schemaVersion:initialState().schemaVersion});assert.deepEqual(mem.copies,['state.json.pre-v11.1.json']);assert.equal(mem.files.has('state.json.pre-v11.2.json'),false);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.equal(restarted.recovered,false);
+  assert.deepEqual(next,{...old,schemaVersion:initialState().schemaVersion});assert.deepEqual(mem.copies,['state.json.pre-v12.1.json']);assert.equal(mem.files.has('state.json.pre-v12.2.json'),false);assert.deepEqual(mem.files.get('state.json.bak'),bak);assert.equal(restarted.recovered,false);
 });
 
 test('a literal schema-ten application cannot open or overwrite schema-eleven data through an older backup',async()=>{

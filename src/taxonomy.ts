@@ -312,7 +312,7 @@ function issue(code:ProposalValidationIssue['code'],message:string,tagId?:string
 export function createTaxonomyProposal(raw:unknown,facts:readonly PaperFacts[],existing:readonly TagDefinition[],options:ProposalOptions={}):TaxonomyProposal {
   // Compatibility for version-2 import callers. Production consolidation always supplies its persisted snapshot.
   if(!options.snapshot)return createLegacyTaxonomyProposal(raw,facts,existing,options);
-  const snapshot=options.snapshot,candidateIds=options.candidateIds??{},limit=options.limit??60;
+  const snapshot=options.snapshot,candidateIds=options.candidateIds??{};
   let input:Record<string,unknown>|null=null,diagnostic='';
   try{input=object(decoded(raw));}catch(error){diagnostic=`Malformed consolidation JSON: ${error instanceof Error?error.message:String(error)}`;}
   if(!input||!Array.isArray(input.tags)||input.tags.length>1000)diagnostic||='Global consolidation must return a tags array containing at most 1000 candidates.';

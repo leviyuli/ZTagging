@@ -254,7 +254,7 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
   delete old.evidenceCatalog;delete old.taxonomyEvidence;
   const original = `${JSON.stringify(old, null, 3)}\r\n`;
   const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v11.json`;
+  const occupiedBackup = `${statePath}.pre-v12.json`;
   native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
   native.files.set(occupiedBackup, 'An older immutable migration backup.');
   await startNative(native);
@@ -263,8 +263,8 @@ test('native startup migrates schema 2 with an exact immutable versioned backup 
     assert.equal(migrated.schemaVersion, initialState().schemaVersion);assert.equal(migrated.vocabularyVersion, 7);
     assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
     assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v11.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v11.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
+    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v12.1.json` }]);
+    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v12.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
     assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
     assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
     assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
@@ -414,7 +414,7 @@ test('the real manager renders in an XML chrome document using explicit HTML nam
   await native.app.openManager();
   for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready', dialog.app!.textContent);
-  assert.match(dialog.app!.textContent, /Your library, clearly tagged/);
+  assert.match(dialog.app!.textContent, /Create your first tag list/);
   assert.match(dialog.app!.textContent, /Build tags/);
   assert.doesNotMatch(dialog.app!.textContent, /Opening Smart Tags/);
   assert.equal(native.errors.length, 0);
@@ -439,7 +439,7 @@ test('a failed first snapshot shows a retryable error instead of keeping the ope
   await controller.save();
   for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
   assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready');
-  assert.match(dialog.app!.textContent, /Your library, clearly tagged/);
+  assert.match(dialog.app!.textContent, /Create your first tag list/);
   await native.app.shutdown();
 });
 

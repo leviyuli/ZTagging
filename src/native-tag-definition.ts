@@ -1,5 +1,5 @@
 import {allocateOpaqueId,canonicalTagKey,FACETS,fingerprint,paperFingerprint,parseModelJSON,validateEvidence} from './core.ts';
-import type {Evidence,PaperRecord,TagDefinition} from './core.ts';
+import type {Evidence,TagDefinition} from './core.ts';
 import {preferredCoreNaming,terminologyFor} from './naming.ts';
 import {isNoTagDefinition,NO_TAG_NAME} from './tag-policy.ts';
 import {validateTaxonomy} from './taxonomy.ts';

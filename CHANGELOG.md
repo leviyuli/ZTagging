@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0 — 2026-11-01
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0-source.zip)
+
+- Keep Build tags, Tag library and Assign tags as separate pages with one primary action each. Put optional limits, relationships and matching controls under More options; place genuine exceptions in Questions and Activity.
+- Compact task forms and flat question lists replace repeated panels. Editors support Enter and Ctrl/Cmd+Enter to save, Escape to keep a draft, explicit Discard changes, and focus returning to the edited tag.
+- Reopen active assignments on Results, choose a discovered model or enter its ID through one control, and save and test a connection together. Put exact task-owned Undo beside the results it corrects.
+- Save checked new definitions and native-name meanings automatically while unrelated questions remain open. Preserve required parent dependencies, saved names and meanings, exact evidence identities, and conflict-aware Undo.
+- Choose a compact vocabulary from evidence rather than filling a target. Treat the existing 60 initial and 30 additional values as maxima, count required new parents, preserve significant singleton topics, and keep older checkpoint policies unchanged.
+- Apply validated high-confidence paper-tag additions as matching finishes. Keep medium or uncertain matches, removals, no_tag and protected choices available; Later defers them without a permanent rejection or blocking other work. Show the topic report once analysis completes.
+- Make incoming tagging a one-time explicit opt-in without a pilot gate. Respect per-tag automatic matching eligibility, manual locks and rejections, source validation, selected connections, budgets and undo suppressions.
+- Reuse complete assignment responses only for the same source content and definition scope. Include compatible cached facts and available local PDF evidence in the first fresh request, retain paid progress across restart, and avoid inferred negative results from omitted tags.
+- Upgrade state to schema 12 with a collision-safe exact-byte pre-v12 backup. Preserve old pending work without opting it into automatic changes; restore completed new admissions locally and keep definitions, evidence and admission journals in one atomic state generation.
+
 ## 0.13.1
 
 - Open Tag library in browsing mode even with an unfinished meaning review. Review meanings opens it explicitly; changing a shelf or readiness filter returns to tags without discarding the work.

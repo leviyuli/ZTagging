@@ -377,6 +377,7 @@ function mountWindowNavigator(win: any, attempt = 0) {
   try {
     const navigator = mountNavigator(win, controller, {
       openManager: () => { void openManager({ page: 'library' }).catch(actionError); },
+      onPreviewMatches: assignmentRunId => { void openManager({ page: 'assignment', assignmentRunId }).catch(actionError); },
       onCreateDetail: contextId => { void openManager({ page: 'vocabulary', createDetail: true, detailContextId: contextId }).catch(actionError); },
       onEditTag: tagId => { void openManager({ page: 'vocabulary', tagId }).catch(actionError); },
     });

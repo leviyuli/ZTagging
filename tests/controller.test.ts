@@ -390,12 +390,11 @@ test('API budget blocks dispatch before spending and retains a failed request re
   assert.ok(failed.ai.calls.every(call=>call.settings.mode==='api'));
 });
 
-test('automatic assignment requires a reviewed pilot and is disabled when vocabulary changes',async()=>{
+test('incoming assignment can be enabled explicitly without a pilot and is disabled when meanings change',async()=>{
   const h=harness();
-  await assert.rejects(h.controller.invoke('save-settings',{settings:{...h.state.settings,autoAssign:true}}),/review the pilot/);
   await assert.rejects(h.controller.invoke('mark-pilot-reviewed'),/Finish the pilot/);
-  await pilot(h);
   await h.controller.invoke('save-settings',{settings:{...h.state.settings,autoAssign:true}});
+  assert.equal(h.state.pilotReviewed,false);
   const incoming=fixturePaper(2);h.host.add(incoming);
   await h.controller.onItemChanged(2);await h.controller.waitForIdle();
   assert.ok((await h.host.readTags(2)).some(t=>t.tag==='RCL'));

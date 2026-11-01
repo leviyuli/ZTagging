@@ -98,11 +98,11 @@ test('rejecting a no_tag suggestion prevents cached reruns and manual removals f
   assert.equal(second.state.decisions[`1:POLICY1|${NO_TAG_ID}`].rejected,true);assert.equal(second.state.suggestions.some(value=>value.runId===second.state.run!.id&&value.tagId===NO_TAG_ID&&!value.applied),false);assert.equal((await second.host.readTags(1)).some(tag=>tag.tag==='no_tag'),false);assert.equal(second.ai.calls.length,1);
 });
 
-test('no_tag alone cannot satisfy the approved-vocabulary gate or the scientific pilot requirement',async()=>{
+test('no_tag alone cannot satisfy the approved-vocabulary gate while incoming tagging needs no pilot',async()=>{
   const empty=fixture();empty.state.tags=[getNoTagDefinition()];await assert.rejects(empty.app.invoke('tag',{scope:'library'}),/Save a tag list|add a tag/i);assert.equal(empty.ai.calls.length,0);
   const h=fixture();await analyze(h,'pilot');const suggestion=h.state.suggestions.find(value=>value.tagId===NO_TAG_ID)!;await h.app.invoke('accept-suggestion',{id:suggestion.id});
   await assert.rejects(h.app.invoke('mark-pilot-reviewed'),/scientific tag suggestion/i);assert.equal(h.state.pilotReviewed,false);
-  await assert.rejects(h.app.invoke('save-settings',{settings:{...h.state.settings,autoAssign:true}}),/pilot/i);assert.equal(h.state.settings.autoAssign,false);assert.equal(h.host.writes.length,0);
+  await h.app.invoke('save-settings',{settings:{...h.state.settings,autoAssign:true}});assert.equal(h.state.settings.autoAssign,true);assert.equal(h.host.writes.length,0);
 });
 
 test('stale exclusion previews reject later native changes and stale preview identities without modifying library data',async()=>{

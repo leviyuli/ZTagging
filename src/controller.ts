@@ -1,10 +1,11 @@
-import { buildAnalysisPrompt, buildSimilarityNetwork, canonicalTagKey, findCleanupCandidates, fingerprint, isAutoAssignable, normalizeAnalysis, normalizeTagDefinitions, paperFingerprint, selectPDFPassages, validateEvidence, validateSuggestions } from './core.ts';
+import { ASSIGNMENT_ANALYSIS_POLICY_VERSION, assignmentAnalysisFingerprint, buildAnalysisPrompt, buildSimilarityNetwork, canonicalTagKey, fingerprint, isAutoAssignable, normalizeAnalysis, normalizeTagDefinitions, paperFingerprint, selectPDFPassages, validateEvidence, validateSuggestions } from './core.ts';
 import type { PaperRecord, Suggestion, TagDefinition, Neighbor } from './core.ts';
 import type { ApiKeyProvider, CompletionResult, ProviderClient, ProviderError, ProviderMode, ProviderSettings } from './providers.ts';
 import type { LibraryHost, NativeTag, TagPatch } from './platform.ts';
 import { sameTags } from './platform.ts';
-import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup, BuildMode, Scope } from './ui-contract.ts';
-import { buildFactExtractionPrompt, normalizeFacts, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, confirmProposalMappings, removeProposalEvidenceLinks, isProposalIssueBlocking } from './taxonomy.ts';
+import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup, DisplayReviewItem, BuildMode, Scope } from './ui-contract.ts';
+import { compileReadyPreparedDefinitions } from './definition-admission.ts';
+import { buildFactExtractionPrompt, normalizeFacts, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, confirmProposalMappings, removeProposalEvidenceLinks, isProposalIssueBlocking, conceptMappingFingerprint } from './taxonomy.ts';
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
 import { equivalentTagNames, descendantIds, compileConceptFilter } from './concept-filter.ts';
 import type { ConceptFilter } from './concept-filter.ts';
@@ -24,7 +25,7 @@ import {createReconciliationPlan,buildReconciliationPrompt,applyReconciliationAn
 import type {ReconciliationInput,ReconciliationPlan,ReconciliationSelection,DIYDefinitionChoice,ReviewedReconciliationChanges,KeepTagPlan,ReviewedKeepRemovals,DIYComparisonWork,DIYComparisonSelection,ReviewedDIYComparisonChanges} from './tag-reconciliation.ts';
 import {validConsolidationWork} from './library-consolidation.ts';
 import type {ConsolidationWork} from './library-consolidation.ts';
-import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
+import {getNoTagDefinition,isNoTagDefinition,isExcludedByNativeTag,hasAdequateNoTagEvidence,NO_TAG_ID,scientificDefinitions} from './tag-policy.ts';
 import {captureVocabularyBaseline,validVocabularyBaseline,reconcileExtensionProposal,composeExtendedVocabulary,refreshExtensionProposal} from './vocabulary-extension.ts';
 import type {VocabularyBaseline} from './vocabulary-extension.ts';
 import {createTagSelection,nextSelectionRequests,noteSelectionDispatch,acceptSelectionResult,failSelectionTask,finishedSelectionProposal,selectionProgress,validTagSelectionWork,resumeTagSelection,retryTagSelection,reviseTagSelection,SELECTION_MAX_REQUESTS} from './tag-selection.ts';
@@ -39,6 +40,7 @@ import {resetPaperAnalysis} from './analysis-reset.ts';
 import type {AnalysisResetRecord} from './analysis-reset.ts';
 
 export type StoredSuggestion = Suggestion & { operation?:'add'|'remove'; applied?:boolean;definitionFingerprint?:string;runId?:string;decisionOrigin?:'automatic'|'researcher' };
+type StoredReviewItem=DisplayReviewItem&{conditionFingerprint:string};
 type AssignmentReviewRun=AssignmentRunRecord&{jobs:AssignmentReviewJob[];scope:string;automatic:boolean;tagShelfId?:string;tagIds?:string[]};
 type ProviderFailure = Partial<Pick<ProviderError,'category'|'rawText'|'completion'>>;
 type Decision = { rejected?:boolean; locked?:boolean };
@@ -51,6 +53,7 @@ export interface PreparationCheckpoint {
 }
 type Run = {
   id:string;kind:'rebuild'|'tag';scope:string;automatic:boolean;status:'idle'|'running'|'paused';
+  processingPolicy?:'auto-clear';
   jobs:Job[];vocabCursor:number;vocabFinished:boolean;message:string;spentUSD:number;
   settings:ManagerSettings;vocabularyVersion:number;detailId?:string;proposalFingerprint?:string;
   preparationOnly?:boolean;
@@ -70,6 +73,7 @@ type Run = {
 };
 type History = {
   id:string;date:string;label:string;patches:TagPatch[];beforeOwnership:Ownership;afterOwnership:Ownership;
+  taskId?:string;
   suggestionIds:string[];status:'prepared'|'applied'|'undone'|'conflict';
   beforeDecisions?:Record<string,Decision|null>;afterDecisions?:Record<string,Decision|null>;
   metadataPatches?:MetadataPatch[];
@@ -90,13 +94,15 @@ export interface MaintenanceTask {
 }
 type ReconciliationPreview=ReviewedReconciliationChanges&{id:string;planId:string;selections:ReconciliationSelection[]};
 type PaperExclusionPreview={id:string;exclude:boolean;paperIds:string[];patches:TagPatch[]};
-type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string;validatedCount?:number;tagScopeFingerprint?:string};
+type CachedAnalysis = {metadataFingerprint:string;vocabularyVersion:number;provider:string;model:string;raw:unknown;detailFingerprint?:string;pdfFingerprint?:string;validatedCount?:number;tagScopeFingerprint?:string;assignmentPolicyVersion?:2;assignmentInputFingerprint?:string;sourceInputFingerprint?:string;includedPDF?:boolean;pdfSourceFingerprint?:string};
 type TaxonomyReview=Pick<TaxonomyProposal,'mappingConfirmations'|'validatedEvidenceLinks'|'evidenceMeaningFingerprints'|'evidenceScientificIdentities'|'paperFingerprints'|'paperInputFingerprints'|'machineDecisions'|'preparationPolicyVersion'|'mappingPolicyVersion'|'mappedSourceIds'|'inheritanceReviewSourceIds'|'retainedDefinitionIds'|'verificationScope'|'tagPolicyVersion'>;
 type TaxonomyEvidenceScope={evidenceSnapshot:RegistrySnapshot;support:TaxonomyProposal['support'];review?:TaxonomyReview};
 export type TaxonomyArchive = {id:string;date:string;version:number;tags:TagDefinition[];redirects:Record<string,string>;reason:string;evidenceSnapshot?:RegistrySnapshot;support?:TaxonomyProposal['support'];review?:TaxonomyReview;preparation?:TagPreparationState;evidenceScopes?:TaxonomyEvidenceScope[]};
-interface NativeDefinitionReview {work:NativeTagDefinitionWork;taskId:string;shelfId:string;appliedEntryIds:string[];finishedAt?:string}
+interface NativeDefinitionReview {work:NativeTagDefinitionWork;taskId:string;shelfId:string;appliedEntryIds:string[];finishedAt?:string;processingPolicy?:'auto-clear'}
 export interface AppState {
-  schemaVersion:11;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
+  schemaVersion:12;vocabularyVersion:number;tags:TagDefinition[];papers:Record<string,PaperRecord>;
+  reviewItems?:StoredReviewItem[];
+  automaticSuppressions?:string[];
   nativeTags:Record<string,NativeTag[]>;suggestions:StoredSuggestion[];decisions:Record<string,Decision>;
   ownership:Ownership;history:History[];pendingChange?:History;analyses:Record<string,CachedAnalysis>;
   neighbors:Record<string,Neighbor[]>;settings:ManagerSettings;run:Run|null;metadata:Record<string,string>;
@@ -138,7 +144,7 @@ export interface AppState {
   legacyConsolidationHistory?:{runId:string;checkpoint:NonNullable<Run['consolidation']>}[];
   assignmentRuns?:AssignmentReviewRun[];
   uncoveredTopics?:UncoveredTopicRecord[];
-  pendingTopicExtension?:{runId:string;paperIds:string[];additionalTargetCount:number;inclusionPreviewId:string};
+  pendingTopicExtension?:{runId:string;paperIds:string[];additionalTargetCount:number;inclusionPreviewId:string;processingPolicy?:'auto-clear'};
 }
 export interface ControllerEnvironment {
   host:LibraryHost; ai:Pick<ProviderClient,'hasApiKey'|'getSession'|'completeJson'|'testConnection'|'listModels'|'setApiKey'|'removeApiKey'|'signIn'|'cancelSignIn'|'signOut'|'selectAccount'>;
@@ -212,20 +218,20 @@ function validMaintenanceTask(value:unknown):value is MaintenanceTask {
 }
 
 export function initialState():AppState {
-  return {schemaVersion:11,vocabularyVersion:0,tags:[{
+  return {schemaVersion:12,vocabularyVersion:0,tags:[{
     id:'custom-rcl',name:'RCL',description:'Catalyst-layer resistance in water electrolysis or fuel cells.',facet:'phenomenon',
     aliases:['catalyst layer resistance'],inclusions:['Substantive study of resistance within a catalyst layer, even when the acronym RCL is absent.'],
     exclusions:['Unrelated meanings of RCL.','Resistance mentioned only in a bibliography or unrelated device context.'],examples:[],custom:true,status:'draft',broaderIds:[],fullName:'Catalyst-layer resistance',relatedIds:[],matchingMode:'suggest'
   }],papers:{},nativeTags:{},suggestions:[],decisions:{},ownership:{},history:[],analyses:{},neighbors:{},settings:{...DEFAULTS},run:null,metadata:{},cleanup:[],pilotReviewed:false,pilotVersion:0,pilotIds:[],pilotExpected:0,verifiedConnections:[],models:[],warnings:[],deferredItemIDs:[],facts:{},taxonomyProposal:null,taxonomyArchives:[],taxonomyRedirects:{},taxonomyReady:false,taxonomySupport:{},evidenceCatalog:createEmptyEvidenceCatalog(),taxonomyEvidence:null,preparationHistory:[]};
 }
-function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10|11):boolean {
+function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10|11|12):boolean {
   const v=value as AppState;
   const object=(x:unknown)=>x!==null&&typeof x==='object'&&!Array.isArray(x);
   const settings=(x:any)=>object(x)&&validProvider(x.provider)&&typeof x.model==='string'&&typeof x.autoAssign==='boolean'&&['budgetUSD','inputPricePerMillion','outputPricePerMillion','maxOutputTokens'].every(k=>Number.isFinite(x[k]));
   if(!v||v.schemaVersion!==version||!Number.isInteger(v.vocabularyVersion)||v.vocabularyVersion<0)return false;
-  if(!['papers','nativeTags','decisions','ownership','metadata','analyses','neighbors'].every(k=>object((v as any)[k])))return false;
-  if(!['tags','suggestions','history','cleanup','pilotIds','verifiedConnections','models','warnings'].every(k=>Array.isArray((v as any)[k])))return false;
-  if(!v.tags.every(t=>object(t)&&typeof t.id==='string'&&typeof t.name==='string'&&typeof t.description==='string'&&['system','component','phenomenon','method'].includes(t.facet)&&['draft','approved'].includes(t.status)&&['aliases','inclusions','exclusions','examples','broaderIds'].every(k=>Array.isArray((t as any)[k]))))return false;
+  if(!(['papers','nativeTags','decisions','ownership','metadata','analyses','neighbors'] as const).every(k=>object(v[k])))return false;
+  if(!(['tags','suggestions','history','cleanup','pilotIds','verifiedConnections','models','warnings'] as const).every(k=>Array.isArray(v[k])))return false;
+  if(!v.tags.every(t=>object(t)&&typeof t.id==='string'&&typeof t.name==='string'&&typeof t.description==='string'&&['system','component','phenomenon','method'].includes(t.facet)&&['draft','approved'].includes(t.status)&&(['aliases','inclusions','exclusions','examples','broaderIds'] as const).every(k=>Array.isArray(t[k]))))return false;
   if(!Object.values(v.papers).every(p=>object(p)&&typeof p.id==='string'&&typeof p.title==='string'&&typeof p.abstract==='string'&&Array.isArray(p.keywords)&&Number.isInteger(p.itemID)))return false;
   if(!Object.values(v.nativeTags).every(tags=>Array.isArray(tags)&&tags.every(t=>object(t)&&typeof t.tag==='string'&&(t.type===0||t.type===1))))return false;
   if(!settings(v.settings))return false;
@@ -233,7 +239,7 @@ function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10|11):boolean {
   if(v.deferredItemIDs!==undefined&&(!Array.isArray(v.deferredItemIDs)||!v.deferredItemIDs.every(Number.isSafeInteger)))return false;
   if(v.run!==null&&(!object(v.run)||!['idle','running','paused'].includes(v.run.status)||!['tag','rebuild'].includes(v.run.kind)||!Array.isArray(v.run.jobs)||!v.run.jobs.every(j=>object(j)&&typeof j.id==='string'&&typeof j.paperId==='string'&&['pending','running','completed'].includes(j.status))||!settings(v.run.settings)||!Number.isFinite(v.run.spentUSD)||!Number.isInteger(v.run.vocabCursor)))return false;
   const nativeTags=(tags:unknown)=>Array.isArray(tags)&&tags.every(t=>object(t)&&typeof t.tag==='string'&&(t.type===0||t.type===1));
-  const validHistory=(h:any)=>object(h)&&typeof h.id==='string'&&typeof h.date==='string'&&typeof h.label==='string'&&['prepared','applied','undone','conflict'].includes(h.status)&&Array.isArray(h.suggestionIds)&&object(h.beforeOwnership)&&object(h.afterOwnership)&&Array.isArray(h.patches)&&h.patches.every((p:any)=>object(p)&&typeof p.paperId==='string'&&Number.isInteger(p.itemID)&&nativeTags(p.before)&&nativeTags(p.after));
+  const validHistory=(h:any)=>object(h)&&(h.taskId===undefined||typeof h.taskId==='string'&&!!h.taskId)&&typeof h.id==='string'&&typeof h.date==='string'&&typeof h.label==='string'&&['prepared','applied','undone','conflict'].includes(h.status)&&Array.isArray(h.suggestionIds)&&object(h.beforeOwnership)&&object(h.afterOwnership)&&Array.isArray(h.patches)&&h.patches.every((p:any)=>object(p)&&typeof p.paperId==='string'&&Number.isInteger(p.itemID)&&nativeTags(p.before)&&nativeTags(p.after));
   if(!v.history.every(validHistory)||(v.pendingChange!==undefined&&!validHistory(v.pendingChange)))return false;
   if(!Object.values(v.ownership).every(assignments=>object(assignments)&&Object.values(assignments).every(a=>object(a)&&typeof a.name==='string'&&typeof a.changeId==='string')))return false;
   if(!Object.values(v.decisions).every(d=>object(d)&&(d.rejected===undefined||typeof d.rejected==='boolean')&&(d.locked===undefined||typeof d.locked==='boolean')))return false;
@@ -245,7 +251,7 @@ function validStateShape(value:unknown,version:2|3|4|5|6|7|8|9|10|11):boolean {
   if(!v.taxonomyArchives.every(a=>object(a)&&typeof a.id==='string'&&Array.isArray(a.tags)&&object(a.redirects)&&Number.isInteger(a.version)))return false;
   return true;
 }
-function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10|11):boolean {
+function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10|11|12):boolean {
   if(!validStateShape(value,version))return false;
   const v=value as AppState,object=(x:unknown)=>!!x&&typeof x==='object'&&!Array.isArray(x);
   if(!v.warnings.every(validWarningRecord)||!object(v.evidenceCatalog)||!object(v.evidenceCatalog.sources)||!object(v.evidenceCatalog.entries))return false;
@@ -355,11 +361,18 @@ function validIdentifiedState(value:unknown,version:3|4|5|6|7|8|9|10|11):boolean
     if(v.nativeDefinitionHistory!==undefined&&(!Array.isArray(v.nativeDefinitionHistory)||!v.nativeDefinitionHistory.every(validReview)))return false;
     for(const change of [...v.history,...(v.pendingChange?[v.pendingChange]:[])])if(change.beforeShelves!==undefined||change.afterShelves!==undefined){if(!validTagShelves(change.beforeShelves)||!validTagShelves(change.afterShelves)||change.patches.length||change.metadataPatches?.length)return false;}
   }
+  if(version>=12){
+    if(v.reviewItems!==undefined&&(!Array.isArray(v.reviewItems)||!v.reviewItems.every(item=>storedObject(item)&&typeof item.id==='string'&&typeof item.conditionFingerprint==='string'&&typeof item.taskId==='string'&&typeof item.label==='string'&&['definition','assignment'].includes(item.kind)&&['open','deferred','resolved'].includes(item.state)&&['cleanup','assignment','vocabulary'].includes(item.ownerPage)&&['paperId','tagId','questionId','sourceName','message','suggestionId','workId'].every(field=>item[field as keyof StoredReviewItem]===undefined||typeof item[field as keyof StoredReviewItem]==='string'))||new Set(v.reviewItems.map(item=>item.id)).size!==v.reviewItems.length))return false;
+    if(v.automaticSuppressions!==undefined&&!stringList(v.automaticSuppressions))return false;
+    for(const run of [v.run,...(v.assignmentRuns??[]),...(v.maintenanceTasks??[]).map(task=>task.run)])if(run?.processingPolicy!==undefined&&run.processingPolicy!=='auto-clear')return false;
+    for(const review of [v.nativeDefinitionPreparation,...(v.nativeDefinitionHistory??[])])if(review?.processingPolicy!==undefined&&review.processingPolicy!=='auto-clear')return false;
+  }
   return true;
 }
-export function validState(value:unknown):value is AppState{return validIdentifiedState(value,11);}
+export function validState(value:unknown):value is AppState{return validIdentifiedState(value,12);}
 export function validLegacyState(value:unknown):boolean {
   const old=value as any;
+  if(old?.schemaVersion===11)return validIdentifiedState(old,11);
   if(old?.schemaVersion===10)return validIdentifiedState(old,10);
   if(old?.schemaVersion===9)return validIdentifiedState(old,9);
   if(old?.schemaVersion===8)return validIdentifiedState(old,8);
@@ -380,7 +393,10 @@ export function migrateState(value:unknown,options:MigrationOptions={}):AppState
   if(!validLegacyState(value))throw new Error('Unsupported or invalid Smart Tags state.');
   const source=value as {schemaVersion:number};
   const next=(source.schemaVersion>=3?copy(value):upgradeToIdentifiedState(value)) as AppState;
-  next.schemaVersion=11;
+  next.schemaVersion=12;
+  for(const run of [next.run,...(next.assignmentRuns??[]),...(next.maintenanceTasks??[]).map(task=>task.run)])if(run)delete run.processingPolicy;
+  for(const preparation of [next.tagPreparation,next.activeTagPreparation,...(next.preparationHistory??[]).map(record=>record.preparation)])if(preparation)delete preparation.processingPolicy;
+  for(const review of [next.nativeDefinitionPreparation,...(next.nativeDefinitionHistory??[])])if(review)delete review.processingPolicy;
   if(source.schemaVersion<4){
     next.warnings=migrateWarningEpisodes(next.warnings);
     next.userEditedTagIds=inferEditedProposalTagIds(next);
@@ -477,7 +493,7 @@ function upgradeToIdentifiedState(value:unknown):unknown {
   return next;
 }
 function upgradeV1(old:any):any {
-  const next=copy(old) as any;
+  const next=copy(old);
   next.schemaVersion=2;next.settings.coreConceptLimit=60;
   next.tags=next.tags.map((tag:any)=>({...tag,fullName:tag.fullName||tag.name,broaderIds:tag.custom?[]:tag.broaderIds,relatedIds:[...new Set([...(Array.isArray(tag.relatedIds)?tag.relatedIds:[]),...(tag.custom&&Array.isArray(tag.broaderIds)?tag.broaderIds:[])])],matchingMode:tag.custom?'suggest':'auto'}));
   next.facts={};next.taxonomyProposal=null;next.taxonomyArchives=[];next.taxonomyRedirects={};next.taxonomySupport={};
@@ -504,12 +520,120 @@ export class AppController implements ManagerAPI {
   private env:ControllerEnvironment;
   constructor(state:AppState, env:ControllerEnvironment) {this.state=state;this.env=env;this.deferredItems=new Set(state.deferredItemIDs??[]);}
   subscribe(listener:()=>void) {this.listeners.add(listener);return()=>this.listeners.delete(listener);}
+  private lastTaskChangeId(taskId:string):string|undefined {
+    const assignment=this.state.assignmentRuns?.some(run=>run.id===taskId),suggestions=new Map(this.state.suggestions.map(suggestion=>[suggestion.id,suggestion]));
+    return this.state.history.find(change=>change.status==='applied'&&!change.undoOfId&&(change.taskId===taskId||change.taskId===undefined&&assignment&&change.suggestionIds.length>0&&change.suggestionIds.every(id=>suggestions.get(id)?.runId===taskId)))?.id;
+  }
   private emit() {for(const listener of this.listeners)try{listener();}catch{/* A closed manager must not stop a job. */}}
   async save() {
     this.state.deferredItemIDs=[...this.deferredItems];
     const run=this.state.run,index=this.state.assignmentRuns?.findIndex(review=>review.id===run?.id)??-1;
     if(run&&index>=0){const review=this.state.assignmentRuns![index],jobs=this.assignmentJobs(run);this.state.assignmentRuns![index]={...review,...updateAssignmentRun(review,jobs,this.state.suggestions),jobs};}
+    this.syncReviewItems();
     await this.env.persist(this.state);this.emit();
+  }
+  private syncReviewItems() {
+    const records=this.state.reviewItems??[],active=new Set<string>();
+    const put=(item:Omit<StoredReviewItem,'id'|'state'>)=>{
+      const id=`review-${fingerprint([item.kind,item.paperId??item.sourceName??item.label,item.kind==='assignment'?item.tagId:'',item.conditionFingerprint])}`;
+      const previous=records.find(record=>record.id===id);active.add(id);
+      if(previous)Object.assign(previous,item,{state:previous.state==='deferred'?'deferred':'open'});
+      else records.push({...item,id,state:'open'});
+    };
+    const assignmentRuns=new Map((this.state.assignmentRuns??[]).filter(run=>run.processingPolicy==='auto-clear').map(run=>[run.id,run])),tags=new Map(this.state.tags.map(tag=>[tag.id,tag]));
+    const latest=new Map<string,{run:AssignmentReviewRun;suggestion:StoredSuggestion;conditionFingerprint:string}>();
+    for(const suggestion of this.state.suggestions){
+      const run=suggestion.runId?assignmentRuns.get(suggestion.runId):undefined;if(!run)continue;
+      const conditionFingerprint=fingerprint({input:suggestion.inputFingerprint,definition:suggestion.definitionFingerprint??tags.get(suggestion.tagId),operation:suggestion.operation??'add',...(suggestion.tagId===NO_TAG_ID?{vocabularyVersion:run.vocabularyVersion}:{})});
+      latest.set(fingerprint([suggestion.paperId,suggestion.tagId,conditionFingerprint]),{run,suggestion,conditionFingerprint});
+    }
+    for(const {run,suggestion,conditionFingerprint} of latest.values()){
+      if(suggestion.applied||suggestion.status!=='pending'&&!(suggestion.status==='accepted'&&suggestion.decisionOrigin==='researcher'))continue;
+      const tag=tags.get(suggestion.tagId),paper=this.state.papers[suggestion.paperId],decision=this.state.decisions[pair(suggestion.paperId,suggestion.tagId)];
+      if(!tag||!paper||decision?.locked||decision?.rejected||suggestion.inputFingerprint!==paperFingerprint(paper)||suggestion.definitionFingerprint&&suggestion.definitionFingerprint!==this.definitionFingerprint(tag))continue;
+      if(suggestion.operation!=='remove'&&(this.state.nativeTags[suggestion.paperId]??[]).some(native=>equivalentTagNames(tag).some(name=>canonicalTagKey(name)===canonicalTagKey(native.tag))))continue;
+      put({kind:'assignment',taskId:run.id,paperId:suggestion.paperId,tagId:suggestion.tagId,suggestionId:suggestion.id,ownerPage:'assignment',label:paper.title,message:suggestion.reason,conditionFingerprint});
+    }
+    const preparation=this.state.tagPreparation,proposal=this.state.taxonomyProposal;
+    if(preparation?.processingPolicy==='auto-clear'&&proposal)for(const question of preparation.questions){
+      const tag=proposal.tags.find(tag=>tag.id===question.tagId);
+      put({kind:'definition',taskId:proposal.id,workId:preparation.id,tagId:question.tagId,questionId:question.id,ownerPage:'cleanup',label:tag?.name??question.title,message:question.description,conditionFingerprint:fingerprint({meaning:this.reviewMeaning(tag,proposal.tags),kind:question.kind,choices:question.choices.map(({id,...choice})=>choice),sources:question.sourceIds.map(id=>{const source=proposal.evidenceSnapshot?.sources[id];return source&&{paperId:source.paperId,name:source.name,inputFingerprint:source.inputFingerprint,evidence:source.evidence};})})});
+    }
+    const native=this.state.nativeDefinitionPreparation;
+    if(native?.processingPolicy==='auto-clear')for(const entry of native.work.entries)if(entry.status==='question'&&!native.appliedEntryIds.includes(entry.id)){
+      put({kind:'definition',taskId:native.taskId,workId:native.work.id,questionId:entry.id,tagId:entry.tagId,sourceName:entry.sourceName,ownerPage:'vocabulary',label:entry.sourceName,message:entry.question,conditionFingerprint:fingerprint({name:entry.sourceName,meaning:this.reviewMeaning(entry.definition),question:entry.question,choices:entry.questionDetails?.choices.map(choice=>({label:choice.label,meaning:this.reviewMeaning(choice.definition)})),papers:entry.paperIds.map(id=>[id,native.work.snapshot.papers.find(paper=>paper.id===id)?.fingerprint])})});
+    }
+    for(const item of records)if(!active.has(item.id)&&item.state!=='resolved'){
+      const current=item.kind==='assignment'?this.state.suggestions.find(s=>s.id===item.suggestionId):undefined;
+      const stillArchived=item.kind==='definition'&&(this.state.nativeDefinitionHistory?.some(review=>review.work.id===item.workId&&!review.finishedAt)||this.state.preparationHistory?.some(review=>review.preparation?.id===item.workId&&review.preparation?.questions.some(question=>question.id===item.questionId)));
+      const ownsActive=item.ownerPage==='vocabulary'?native?.work.id===item.workId:item.ownerPage==='cleanup'?preparation?.id===item.workId:false;
+      if(ownsActive||!stillArchived||current?.applied||current?.status==='rejected')item.state='resolved';
+    }
+    if(records.length)this.state.reviewItems=records;
+  }
+  private reviewMeaning(tag:TagDefinition|undefined,definitions=this.state.tags) {
+    if(!tag)return;
+    return {name:tag.name,fullName:tag.fullName,description:tag.description,facet:tag.facet,aliases:tag.aliases,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples,parents:tag.broaderIds.map(id=>definitions.find(parent=>parent.id===id)?.name??id)};
+  }
+  private automaticDecisionKey(suggestion:StoredSuggestion) {return fingerprint([suggestion.paperId,suggestion.tagId,suggestion.inputFingerprint,suggestion.definitionFingerprint]);}
+  private async applyClearAssignments(run:Run,paperId:string) {
+    if(run.processingPolicy!=='auto-clear'||run.automatic&&!this.state.settings.autoAssign)return;
+    const paper=this.state.papers[paperId];if(!paper)return;
+    const candidates=this.state.suggestions.filter(s=>s.runId===run.id&&s.paperId===paperId&&!s.applied&&s.status!=='rejected'&&s.decisionOrigin!=='researcher'&&s.operation!=='remove'&&s.tagId!==NO_TAG_ID&&s.confidence==='high'&&s.match==='substantive');
+    const ids:string[]=[];
+    for(const suggestion of candidates){
+      if(this.state.automaticSuppressions?.includes(this.automaticDecisionKey(suggestion))){suggestion.status='rejected';continue;}
+      const tag=this.state.tags.find(tag=>tag.id===suggestion.tagId),decision=this.state.decisions[pair(paperId,suggestion.tagId)];
+      if(!tag||tag.status!=='approved'||tag.matchingMode==='manual'||decision?.locked||decision?.rejected)continue;
+      if(run.automatic&&!isAutoAssignable({...suggestion,status:'pending'},paper,this.state.tags,{...this.context(paperId),pilotApproved:true})){suggestion.status='pending';continue;}
+      if(suggestion.inputFingerprint!==paperFingerprint(paper)||fingerprint(validateEvidence(paper,suggestion.evidence))!==fingerprint(suggestion.evidence)||!hasAdequateNoTagEvidence(suggestion.evidence))continue;
+      ids.push(suggestion.id);
+    }
+    if(ids.length)await this.applySuggestions(ids,true);
+  }
+  private async resolveReviewItem(id:string,action?:string,choiceId?:string) {
+    const item=this.state.reviewItems?.find(item=>item.id===id&&item.state!=='resolved');
+    if(!item)throw new Error('This choice is no longer pending. Refresh Activity.');
+    if(item.kind==='assignment'){
+      const suggestion=this.suggestion(item.suggestionId!);
+      if(action!=='accept'&&action!=='reject')throw new Error('Choose whether to add this tag or reject and remember it.');
+      await this.dispatch(action==='accept'?'accept-suggestion':'reject-suggestion',{id:suggestion.id});
+    }else if(item.ownerPage==='cleanup'){
+      if(this.state.tagPreparation?.id!==item.workId)throw new Error('Open the saved build containing this meaning before choosing its answer.');
+      if(!choiceId)throw new Error('Choose a meaning first.');
+      await this.dispatch('answer-tag-question',{id:item.workId,questionId:item.questionId,choiceId});
+    }else{
+      if(this.state.nativeDefinitionPreparation?.work.id!==item.workId){
+        await this.ensureReviewIdle();
+        const archived=this.state.nativeDefinitionHistory?.find(review=>review.work.id===item.workId);
+        if(!archived)throw new Error('This saved meaning preparation is no longer available.');
+        if(this.state.nativeDefinitionPreparation)(this.state.nativeDefinitionHistory??=[]).push(copy(this.state.nativeDefinitionPreparation));
+        this.state.nativeDefinitionPreparation=copy(archived);
+      }
+      await this.changeNativeMeaning(item.workId!,{entryId:item.questionId!,...(action==='leave'?{leaveUndefined:true}:{choiceId})});
+    }
+  }
+  private async openReviewItem(id:string) {
+    const item=this.state.reviewItems?.find(item=>item.id===id&&item.state!=='resolved');
+    if(!item)throw new Error('This choice is no longer pending.');
+    if(item.kind==='assignment')return {page:'assignment',runId:item.taskId};
+    if(this.worker||this.maintenanceWorker||this.state.run?.status==='running')throw new Error('Pause or finish the current checks before opening another saved meaning.');
+    if(item.ownerPage==='vocabulary'&&this.state.nativeDefinitionPreparation?.work.id!==item.workId){
+      const archived=this.state.nativeDefinitionHistory?.findLast(review=>review.work.id===item.workId);
+      if(!archived)throw new Error('This saved meaning preparation is unavailable.');
+      if(this.state.nativeDefinitionPreparation)(this.state.nativeDefinitionHistory??=[]).push(copy(this.state.nativeDefinitionPreparation));
+      this.state.nativeDefinitionPreparation=copy(archived);
+    }
+    if(item.ownerPage==='cleanup'&&this.state.tagPreparation?.id!==item.workId){
+      const archived=this.state.preparationHistory?.findLast(review=>review.preparation?.id===item.workId);
+      if(!archived?.preparation)throw new Error('This saved build is unavailable.');
+      this.rememberPreparation();if(this.state.run)this.archiveSelection(this.state.run);
+      const selection=this.state.tagSelectionHistory?.findLast(record=>record.work.id===archived.proposal.id);
+      this.state.taxonomyProposal=copy(archived.proposal);this.state.tagPreparation=copy(archived.preparation);
+      this.state.run={id:selection?.runId??uid('restored-build'),kind:'rebuild',scope:'selected',automatic:false,status:'idle',jobs:archived.proposal.paperIds.map(paperId=>({id:uid('job'),paperId,status:'completed'})),vocabCursor:archived.proposal.paperIds.length,vocabFinished:true,message:'Saved tag meanings are open.',spentUSD:archived.spentUSD,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion,...(archived.preparation.processingPolicy?{processingPolicy:archived.preparation.processingPolicy}:{}),...(selection?{selection:copy(selection.work)}:{}),...(archived.proposal.extension?{buildMode:'extend',extensionBaseline:copy(archived.proposal.extension.baseline)}:{buildMode:'replace'})};
+      this.refreshPreparation();
+    }
+    await this.save();return {page:item.ownerPage};
   }
   private assignmentJobs(run:Run):AssignmentReviewJob[]{return run.jobs.map(job=>({...copy(job),...(run.skippedIds?.includes(job.paperId)||this.excluded(job.paperId)?{status:'skipped' as const,error:undefined}:{})}));}
   private warn(message:string,details:Partial<WarningInput>={}) {
@@ -539,6 +663,8 @@ export class AppController implements ManagerAPI {
     for(const task of this.state.maintenanceTasks??[])if(task.status==='running'){task.status='paused';task.run.status='paused';task.error='Interrupted by Zotero closing. Retry this task to continue.';}
     if(this.state.taxonomyProposal){this.refreshPreparation();if(this.state.run?.kind==='rebuild')this.state.run.preparationOnly=true;}
     await this.save();
+    if(this.state.run?.status==='idle')await this.admitPreparedDefinitions();
+    if(!this.state.maintenanceTasks?.some(task=>task.status==='running'||task.status==='paused'))await this.admitNativeDefinitions();
     if(this.deferredItems.size&&this.state.settings.autoAssign&&this.state.run?.status!=='paused')await this.processDeferred();
   }
   async shutdown() {this.shuttingDown=true;this.abort?.abort();this.maintenanceAbort?.abort();this.env.ai.cancelSignIn();await Promise.allSettled([this.worker,this.maintenanceWorker,this.mutationTail,this.commitTail]);await this.save();this.listeners.clear();}
@@ -550,13 +676,14 @@ export class AppController implements ManagerAPI {
     for(const assignments of Object.values(this.state.ownership))for(const id of Object.keys(assignments))protectedIds.add(id);
     for(const key of Object.keys(this.state.decisions))protectedIds.add(key.slice(key.lastIndexOf('|')+1));
     const run=this.state.run;
-    return {existingDefinitions:this.state.tags,protectedTagIds:[...protectedIds],facts:proposal?.paperIds.map(id=>this.state.facts[id]).filter(Boolean)??[],repairAttempts:run?.kind==='rebuild'?run.preparation?.attempts??0:0,maxRepairs:3,provider:run?.kind==='rebuild'?run.settings.provider:this.state.settings.provider,model:run?.kind==='rebuild'?run.settings.model:this.state.settings.model,targetCount:this.state.settings.coreConceptLimit??60};
+    const admitted=new Set(Object.keys(this.state.tagPreparation?.admissions??{}));
+    return {existingDefinitions:this.state.tags.filter(tag=>!admitted.has(tag.id)),protectedTagIds:[...protectedIds].filter(id=>!admitted.has(id)),facts:proposal?.paperIds.map(id=>this.state.facts[id]).filter(Boolean)??[],repairAttempts:run?.kind==='rebuild'?run.preparation?.attempts??0:0,maxRepairs:3,provider:run?.kind==='rebuild'?run.settings.provider:this.state.settings.provider,model:run?.kind==='rebuild'?run.settings.model:this.state.settings.model,targetCount:run?.kind==='rebuild'?run.settings.coreConceptLimit??60:this.state.settings.coreConceptLimit??60,...(run?.processingPolicy==='auto-clear'?{processingPolicy:'auto-clear' as const}:{})};
   }
   private refreshPreparation():PreparationResult|undefined {
     let proposal=this.state.taxonomyProposal;
     if(!proposal){delete this.state.tagPreparation;return;}
     const baseline=proposal.extension?.baseline??(this.state.run?.kind==='rebuild'&&this.state.run.buildMode==='extend'?this.state.run.extensionBaseline:undefined);
-    if(baseline)proposal=reconcileExtensionProposal(proposal,baseline);
+    if(baseline&&!Object.keys(this.state.tagPreparation?.admissions??{}).length)proposal=reconcileExtensionProposal(proposal,baseline);
     const previous=this.state.tagPreparation?.proposalId===proposal.id?this.state.tagPreparation:undefined;
     const result=prepareTagList(proposal,previous,this.preparationOptions());
     const work=this.state.run?.selection;
@@ -566,6 +693,56 @@ export class AppController implements ManagerAPI {
     }
     this.state.taxonomyProposal=result.proposal;this.state.tagPreparation=result.state;
     return result;
+  }
+  private async persistDefinitionAdmission(next:AppState) {
+    const previous=this.state;
+    this.state=next;this.syncReviewItems();this.state=previous;
+    if(!validState(next))throw new Error('The saved tag admission is invalid. The previous definitions were preserved.');
+    await this.env.persist(next);
+    for(const key of ['tags','tagShelves','tagPreparation','taxonomySupport','taxonomyEvidenceScopes','taxonomyReady','vocabularyVersion','history','nativeDefinitionPreparation','userEditedTagIds','reviewItems'] as const)Object.assign(previous,{[key]:next[key]});
+    this.emit();
+  }
+  private async admitPreparedDefinitions() {
+    const preparation=this.state.tagPreparation,proposal=this.state.taxonomyProposal;
+    if(preparation?.processingPolicy!=='auto-clear'||!proposal||!proposal.evidenceSnapshot)return;
+    const operation=this.commitTail.catch(()=>{}).then(async()=>{
+      if(this.state.tagPreparation!==preparation||this.state.taxonomyProposal!==proposal)return;
+      let compiled=compileReadyPreparedDefinitions(proposal,preparation,this.state.tags),stale=new Set<string>();
+      const paperIds=new Set(Object.values(compiled.support).flatMap(support=>support.paperIds));
+      for(const id of paperIds){
+        const original=this.state.papers[id],source=Object.values(proposal.evidenceSnapshot!.sources).find(source=>source.paperId===id);
+        if(!original||!source){stale.add(id);continue;}
+        const current=await this.fresh(original);
+        if(source.metadataFingerprint!==paperFingerprint({...current,pdfText:undefined})){stale.add(id);continue;}
+        if(source.inputFingerprint!==source.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(current.itemID),[],18000);
+        if(source.inputFingerprint!==paperFingerprint(current))stale.add(id);
+      }
+      if(stale.size)compiled=compileReadyPreparedDefinitions(proposal,preparation,this.state.tags,{pendingTagIds:compiled.tagIds.filter(id=>compiled.support[id]?.paperIds.some(id=>stale.has(id)))});
+      const available=new Map([...this.state.tags,...compiled.definitions].map(tag=>[tag.id,tag])),updates=new Map(compiled.definitions.map(tag=>[tag.id,tag]));
+      for(const [id,admission] of Object.entries(preparation.admissions??{})){
+        const saved=available.get(id),original=proposal.tags.find(tag=>tag.id===id);
+        if(!saved||!original||fingerprint(saved)!==admission.definitionFingerprint)continue;
+        const related=(original.relatedIds??[]).filter(target=>{const current=available.get(target),proposed=proposal.tags.find(tag=>tag.id===target);return !!current&&(!proposed||conceptMappingFingerprint(current)===conceptMappingFingerprint(proposed));});
+        const merged=[...new Set([...(saved.relatedIds??[]),...related])];
+        if(fingerprint(merged)!==fingerprint(saved.relatedIds??[]))updates.set(id,{...copy(saved),relatedIds:merged});
+      }
+      if(!updates.size)return;
+      const next=copy(this.state),before=copy(this.state.tags),beforeShelves=copy(this.shelves()),changeId=uid('definition-admission');
+      next.tags=applyDefinitionRecords(next.tags,Object.fromEntries(updates));
+      let shelves=beforeShelves;
+      const target=preparation.shelfId?shelves.find(shelf=>shelf.id===preparation.shelfId):undefined;
+      if(target)shelves=updateTagShelfMembers(shelves,target.id,[...target.tagIds,...compiled.tagIds],next.tags);
+      else shelves=createBuildTagShelf(shelves,before,next.tags);
+      next.tagShelves=shelves;next.tagPreparation!.shelfId=target?.id??shelves.find(shelf=>!beforeShelves.some(previous=>previous.id===shelf.id))?.id;
+      for(const tag of compiled.definitions)(next.tagPreparation!.admissions??={})[tag.id]={definitionFingerprint:fingerprint(tag),changeId};
+      for(const [id,tag] of updates)if(next.tagPreparation!.admissions?.[id])next.tagPreparation!.admissions[id].definitionFingerprint=fingerprint(tag);
+      next.taxonomySupport={...next.taxonomySupport,...compiled.support};
+      if(compiled.definitions.length)(next.taxonomyEvidenceScopes??=[]).push({evidenceSnapshot:copy(proposal.evidenceSnapshot!),support:compiled.support,review:compiled.review});
+      next.taxonomyReady=true;next.vocabularyVersion++;
+      next.history.unshift({id:changeId,taskId:proposal.id,date:new Date().toISOString(),label:'Save supported tag meanings',patches:[],beforeOwnership:{},afterOwnership:{},beforeDefinitions:Object.fromEntries([...updates.keys()].map(id=>[id,before.find(tag=>tag.id===id)??null])),afterDefinitions:Object.fromEntries(updates),beforeShelves,afterShelves:copy(shelves),suggestionIds:[],status:'applied'});
+      await this.persistDefinitionAdmission(next);
+    });
+    this.commitTail=operation;await operation;
   }
   private requirePreparation(id:string):PreparationResult {
     const result=this.refreshPreparation();
@@ -601,7 +778,7 @@ export class AppController implements ManagerAPI {
     const tags=new Map(proposal.tags.map(tag=>[tag.id,tag]));
     for(const tag of proposal.extension?.baseline.definitions??[])tags.set(tag.id,tag);
     for(const tag of this.state.tags)if(tag.custom&&!tags.has(tag.id)&&!removed.has(tag.id))tags.set(tag.id,tag);
-    return {id:preparation.id,status:preparation.status,verificationScope:proposal.verificationScope,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',needsRefresh:this.extensionNeedsRefresh(proposal),scopeCount:proposal.paperIds.length,targetCount:this.state.settings.coreConceptLimit??60,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
+    return {id:preparation.id,lastChangeId:this.lastTaskChangeId(proposal.id),processingPolicy:preparation.processingPolicy,savedCount:Object.keys(preparation.admissions??{}).length,shelfId:preparation.shelfId,status:preparation.status,verificationScope:proposal.verificationScope,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,reviewId:this.state.reviewItems?.find(item=>item.workId===preparation.id&&item.questionId===question.id&&item.state!=='resolved')?.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',needsRefresh:this.extensionNeedsRefresh(proposal),scopeCount:proposal.paperIds.length,targetCount:proposal.coreLimit,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
   }
   private extensionNeedsRefresh(proposal=this.state.taxonomyProposal) {
     return !!proposal?.extension&&proposal.extension.baseline.fingerprint!==captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint;
@@ -654,12 +831,12 @@ export class AppController implements ManagerAPI {
       if(!fact){job.error='One paper needs its saved information checked. Open Papers that need attention, recheck its PDF or retry its analysis, then retry faster build.';throw new Error(job.error);}
       facts.push(fact);
     }
-    if(!facts.length||facts.some(fact=>!fact))throw new Error('Some papers need their analysis refreshed. Resume paper analysis before switching this build.');
+    if(!facts.length)throw new Error('Some papers need their analysis refreshed. Resume paper analysis before switching this build.');
     facts.sort((a,b)=>a.paperId.localeCompare(b.paperId));
     const catalog=copy(this.state.evidenceCatalog);
     const snapshot=retained&&!validateSnapshotAgainstFacts(retained,facts).length?copy(retained):createRegistrySnapshot(facts,catalog);
     const targetCount=run.fasterBuild.targetCount,settings={...copy(this.state.settings),coreConceptLimit:targetCount},existing=this.consolidationDefinitions();
-    const selection=createTagSelection(facts,existing,snapshot,{plannerVersion:4,targetCount,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),maxOutputTokens:settings.maxOutputTokens,baseVersion:this.state.vocabularyVersion,generationId:uid('tag-selection'),baseline:run.buildMode==='extend'?run.extensionBaseline:undefined,previousWork:run.selection,review:this.state.taxonomyProposal??undefined,excludedTagIds:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.tagId),excludedNames:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.name),priorDecisions:{...(this.state.taxonomyReview?.machineDecisions??{}),...(this.state.taxonomyProposal?.machineDecisions??{})},protectedTagIds:this.preparationOptions().protectedTagIds});
+    const selection=createTagSelection(facts,existing,snapshot,{...(run.processingPolicy==='auto-clear'?{adaptivePolicyVersion:1 as const}:{}),plannerVersion:4,targetCount,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),maxOutputTokens:settings.maxOutputTokens,baseVersion:this.state.vocabularyVersion,generationId:uid('tag-selection'),baseline:run.buildMode==='extend'?run.extensionBaseline:undefined,previousWork:run.selection,review:this.state.taxonomyProposal??undefined,excludedTagIds:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.tagId),excludedNames:this.state.tagPreparation?.excluded.filter(value=>value.origin==='researcher').map(value=>value.name),priorDecisions:{...(this.state.taxonomyReview?.machineDecisions??{}),...(this.state.taxonomyProposal?.machineDecisions??{})},protectedTagIds:this.preparationOptions().protectedTagIds});
     const next={...copy(run),selection,settings,vocabFinished:false,preparationOnly:false,message:run.status==='running'?'Checking representative papers for your tags…':run.message};
     delete next.fasterBuild;delete next.selectionReplies;
     next.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:targetCount,baseVersion:this.state.vocabularyVersion,...(run.buildMode==='extend'?{buildMode:'extend',baselineFingerprint:run.extensionBaseline?.fingerprint}:{}),...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{})});
@@ -680,7 +857,7 @@ export class AppController implements ManagerAPI {
     run.settings=copy(this.state.settings);
     if(proposal.extension){run.buildMode='extend';run.extensionBaseline=copy(proposal.extension.baseline);}else{run.buildMode='replace';delete run.extensionBaseline;}
     const facts=proposal.paperIds.map(id=>this.state.facts[id]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
-    if(!run.selection)run.selection=createTagSelection(facts,this.consolidationDefinitions(),proposal.evidenceSnapshot!,{targetCount:proposal.coreLimit,maxOutputTokens:run.settings.maxOutputTokens,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),baseVersion:proposal.baseVersion,generationId:proposal.id,plannerVersion:proposal.verificationScope==='representative'?4:3,baseline:proposal.extension?.baseline,priorDecisions:proposal.machineDecisions,review:proposal,protectedTagIds:this.preparationOptions().protectedTagIds});
+    if(!run.selection)run.selection=createTagSelection(facts,this.consolidationDefinitions(),proposal.evidenceSnapshot!,{...(run.processingPolicy==='auto-clear'?{adaptivePolicyVersion:1 as const}:{}),targetCount:proposal.coreLimit,maxOutputTokens:run.settings.maxOutputTokens,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),baseVersion:proposal.baseVersion,generationId:proposal.id,plannerVersion:proposal.verificationScope==='representative'?4:3,baseline:proposal.extension?.baseline,priorDecisions:proposal.machineDecisions,review:proposal,protectedTagIds:this.preparationOptions().protectedTagIds});
     run.selectionInputFingerprint=fingerprint({protocolVersion:2,facts,existing:this.consolidationDefinitions(),limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,...(run.buildMode==='extend'?{buildMode:'extend',baselineFingerprint:run.extensionBaseline?.fingerprint}:{}),...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{})});
     return run;
   }
@@ -949,11 +1126,11 @@ export class AppController implements ManagerAPI {
       const actual=definitions.filter(tag=>[tag.name,tag.fullName,...tag.aliases].includes(entry.sourceName));
       const applied=entry.status!=='left-undefined'&&actual.length===1&&(review.appliedEntryIds.includes(entry.id)||entry.status==='question');
       const protectedChoice=entry.targetTagId&&entry.paperIds.some(paperId=>{const decision=this.state.decisions[pair(paperId,entry.targetTagId!)];return decision?.rejected||decision?.locked;});
-      return {id:entry.id,tagId:entry.tagId,sourceName:entry.sourceName,...(entry.definition?{name:entry.definition.name,fullName:entry.definition.fullName,description:entry.definition.description,facet:entry.definition.facet,aliases:entry.definition.aliases,inclusions:entry.definition.inclusions,exclusions:entry.definition.exclusions,examples:entry.definition.examples,broaderIds:entry.definition.broaderIds,relatedIds:entry.definition.relatedIds,matchingMode:entry.definition.matchingMode}:{}),paperIds:[...entry.paperIds],status:entry.status==='left-undefined'?entry.status:protectedChoice&&!applied?'question' as const:entry.status==='pending'&&review.work.tasks.some(task=>task.status==='failed'&&task.entryIds.includes(entry.id))?'failed' as const:entry.status,question:protectedChoice&&!applied?'An earlier lock or rejection protects a paper using this saved tag. Keep this name separate or revise that choice first.':entry.question,questionKind:protectedChoice&&!applied?'protection' as const:entry.questionDetails?.kind,canSuggestMeaning:entry.status==='question'&&!protectedChoice&&!entry.humanAnswer&&(!entry.questionDetails||entry.questionDetails.kind==='meaning'&&!entry.definition&&!entry.questionDetails.choices.length),choices:entry.questionDetails?.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.definition.description})),needsContinuation:entry.status==='question'&&!entry.questionDetails,targetTagId:entry.targetTagId,applied};
+      return {id:entry.id,reviewId:this.state.reviewItems?.find(item=>item.workId===review.work.id&&item.questionId===entry.id&&item.state!=='resolved')?.id,tagId:entry.tagId,sourceName:entry.sourceName,...(entry.definition?{name:entry.definition.name,fullName:entry.definition.fullName,description:entry.definition.description,facet:entry.definition.facet,aliases:entry.definition.aliases,inclusions:entry.definition.inclusions,exclusions:entry.definition.exclusions,examples:entry.definition.examples,broaderIds:entry.definition.broaderIds,relatedIds:entry.definition.relatedIds,matchingMode:entry.definition.matchingMode}:{}),paperIds:[...entry.paperIds],status:entry.status==='left-undefined'?entry.status:protectedChoice&&!applied?'question' as const:entry.status==='pending'&&review.work.tasks.some(task=>task.status==='failed'&&task.entryIds.includes(entry.id))?'failed' as const:entry.status,question:protectedChoice&&!applied?'An earlier lock or rejection protects a paper using this saved tag. Keep this name separate or revise that choice first.':entry.question,questionKind:protectedChoice&&!applied?'protection' as const:entry.questionDetails?.kind,canSuggestMeaning:entry.status==='question'&&!protectedChoice&&!entry.humanAnswer&&(!entry.questionDetails||entry.questionDetails.kind==='meaning'&&!entry.definition&&!entry.questionDetails.choices.length),choices:entry.questionDetails?.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.definition.description})),needsContinuation:entry.status==='question'&&!entry.questionDetails,targetTagId:entry.targetTagId,applied};
     });
     const status=review.finishedAt&&rows.every(row=>row.applied||row.status==='left-undefined')?'finished':rows.every(row=>row.applied)?'applied':task?.status==='queued'?'queued':task?.status==='running'?'running':task?.status==='paused'?'paused':'ready';
     const technical=review.work.status==='failed'&&!review.work.tasks.some(task=>task.status==='failed'&&task.attempts.at(-1)?.transport);
-    return {id:review.work.id,status,completed:rows.filter(row=>row.status==='ready'||row.status==='question'||row.status==='left-undefined').length,total:rows.length,rows,readyCount:rows.filter(row=>row.status==='ready'&&!row.applied).length,questionCount:rows.filter(row=>row.status==='question'&&!row.applied).length,savedCount:rows.filter(row=>row.applied).length,leftUndefinedCount:rows.filter(row=>row.status==='left-undefined').length,canContinue:rows.some(row=>row.needsContinuation&&!row.applied),spentUSD:task?.run.spentUSD??0,budgetUSD:task?.run.settings.budgetUSD??this.state.settings.budgetUSD,canApply:rows.some(row=>row.status==='ready'&&!row.applied)&&status!=='queued'&&status!=='running'&&status!=='finished'&&this.state.run?.status!=='running',...(task?.error?{error:technical?'Some meanings could not be checked. Retry the remaining work.':this.processingMessage(task.error)}:{})};
+    return {id:review.work.id,lastChangeId:this.lastTaskChangeId(review.work.id),processingPolicy:review.processingPolicy,status,completed:rows.filter(row=>row.status==='ready'||row.status==='question'||row.status==='left-undefined').length,total:rows.length,rows,readyCount:rows.filter(row=>row.status==='ready'&&!row.applied).length,questionCount:rows.filter(row=>row.status==='question'&&!row.applied).length,savedCount:rows.filter(row=>row.applied).length,leftUndefinedCount:rows.filter(row=>row.status==='left-undefined').length,canContinue:rows.some(row=>row.needsContinuation&&!row.applied),spentUSD:task?.run.spentUSD??0,budgetUSD:task?.run.settings.budgetUSD??this.state.settings.budgetUSD,canApply:rows.some(row=>row.status==='ready'&&!row.applied)&&status!=='queued'&&status!=='running'&&status!=='finished'&&this.state.run?.status!=='running',...(task?.error?{error:technical?'Some meanings could not be checked. Retry the remaining work.':this.processingMessage(task.error)}:{})};
   }
   private nativeMeaningSummary(preparation:NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>) {
     const parts=[preparation.readyCount?`${preparation.readyCount} ${preparation.readyCount===1?'meaning':'meanings'} ready to save`:'',preparation.questionCount?`${preparation.questionCount} ${preparation.questionCount===1?'tag needs':'tags need'} your choice`:'',preparation.savedCount?`${preparation.savedCount} saved`:'',preparation.leftUndefinedCount?`${preparation.leftUndefinedCount} left undefined`:''].filter(Boolean);
@@ -971,7 +1148,7 @@ export class AppController implements ManagerAPI {
         const current=this.state.nativeDefinitionPreparation?.taskId===task.id&&native;
         const archive=this.state.nativeDefinitionHistory?.findLast(review=>review.taskId===task.id);
         activities.push({id:task.id,kind:'meanings',state:current?(current.status==='queued'?'queued':current.status==='running'?'running':current.status==='paused'?'paused':current.status==='finished'?'completed':current.questionCount?'needs-choice':current.readyCount?'ready-to-save':'completed'):'completed',label:'Tag meanings',ownerPage:'vocabulary',workId:current?current.id:undefined,message:current?this.nativeMeaningSummary(current):'Earlier meaning preparation',readyCount:current?current.readyCount:undefined,questionCount:current?current.questionCount:undefined,savedCount:current?current.savedCount:archive?archive.appliedEntryIds.length:undefined,leftUndefinedCount:current?current.leftUndefinedCount:archive?archive.work.entries.filter(entry=>entry.status==='left-undefined').length:undefined,completed:current?current.completed:undefined,total:current?current.total:undefined,spentUSD:task.run.spentUSD,createdAt:task.createdAt});
-      }else activities.push({id:task.id,kind:'maintenance',state:task.status==='completed'?'completed':task.status,label:task.kind==='retry'?'Recheck papers':'Tag maintenance',ownerPage:'activity',message:task.error?this.processingMessage(task.error):task.run.message,completed:task.run.jobs.filter(job=>job.status==='completed').length,total:task.run.jobs.length,spentUSD:task.run.spentUSD,createdAt:task.createdAt});
+      }else activities.push({id:task.id,kind:'maintenance',state:task.status,label:task.kind==='retry'?'Recheck papers':'Tag maintenance',ownerPage:'activity',message:task.error?this.processingMessage(task.error):task.run.message,completed:task.run.jobs.filter(job=>job.status==='completed').length,total:task.run.jobs.length,spentUSD:task.run.spentUSD,createdAt:task.createdAt});
     }
     const priority={'running':0,'paused':1,'queued':2,'needs-choice':3,'ready-to-save':4,'completed':5};
     return activities.sort((a,b)=>priority[a.state]-priority[b.state]||(b.createdAt??'').localeCompare(a.createdAt??''));
@@ -1001,7 +1178,8 @@ export class AppController implements ManagerAPI {
     if(display.status==='queued'||display.status==='running'||!display.rows.every(row=>row.applied||row.status==='left-undefined'))throw new Error('Save the ready meanings or leave the remaining tags undefined before finishing.');
     review.finishedAt??=new Date().toISOString();const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId);if(task){task.status='completed';task.run.status='idle';task.run.message=this.nativeMeaningSummary(display);}await this.save();
   }
-  private async prepareNativeDefinitions(names:unknown,shelfId?:string) {
+  private async prepareNativeDefinitions(names:unknown,shelfId?:string,processingPolicy?:'auto-clear') {
+    if(processingPolicy!==undefined&&processingPolicy!=='auto-clear')throw new Error('Choose a supported meaning-processing policy.');
     if(!Array.isArray(names)||!names.length||names.some(name=>typeof name!=='string'||!name))throw new Error('Select tag names that need a meaning first.');
     const old=this.state.nativeDefinitionPreparation,active=old&&this.state.maintenanceTasks?.find(task=>task.id===old.taskId);
     if(active&&(active.status==='running'||active.status==='queued'))throw new Error('Pause or finish the current meaning preparation before starting another one.');
@@ -1011,6 +1189,7 @@ export class AppController implements ManagerAPI {
     const taskId=uid('native-meaning-task'),paperIds=[...new Set(work.entries.flatMap(entry=>entry.paperIds))];
     const run:Run={id:uid('native-meaning-run'),kind:'rebuild',scope:'selected',automatic:false,status:work.status==='ready'?'idle':connectionError?'paused':'running',jobs:paperIds.map(paperId=>({id:uid('job'),paperId,status:work.status==='ready'?'completed':'pending'})),vocabCursor:0,vocabFinished:false,message:'Preparing meanings for your selected tags…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
     this.state.nativeDefinitionPreparation={work,taskId,shelfId:resolveTagShelfId(this.shelves(),shelfId&&shelfId!=='all'?shelfId:MY_TAGS_SHELF_ID),appliedEntryIds:[]};
+    if(processingPolicy==='auto-clear'){this.state.nativeDefinitionPreparation.processingPolicy='auto-clear';run.processingPolicy='auto-clear';}
     (this.state.maintenanceTasks??=[]).push({id:taskId,kind:'define-native',status:work.status==='ready'?'completed':connectionError?'paused':'queued',run,cursor:0,createdAt:new Date().toISOString(),groupIds:[],paperIds,definitionWorkId:work.id,...(connectionError?{error:connectionError}:{})});
     await this.save();this.launchMaintenance();return work.id;
   }
@@ -1037,10 +1216,34 @@ export class AppController implements ManagerAPI {
     const before=copy(this.shelves()),tags=applyDefinitionRecords(this.state.tags,compiled.afterDefinitions),target=resolveTagShelfId(before,review.shelfId),shelf=before.find(shelf=>shelf.id===target)??before.find(shelf=>shelf.id===MY_TAGS_SHELF_ID)!;
     const after=updateTagShelfMembers(before,shelf.id,[...shelf.tagIds,...compiled.entries.map(entry=>entry.tagId)],tags),previousApplied=[...review.appliedEntryIds];
     review.appliedEntryIds=[...new Set([...review.appliedEntryIds,...compiled.entries.map(entry=>entry.entryId)])];
-    try{await this.commit({id:uid('native-meanings'),date:new Date().toISOString(),label:'Save meanings for selected tag names',patches:[],beforeDefinitions:compiled.beforeDefinitions,afterDefinitions:compiled.afterDefinitions,beforeShelves:before,afterShelves:after,beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'prepared'});}catch(error){review.appliedEntryIds=previousApplied;throw error;}
+    try{await this.commit({id:uid('native-meanings'),taskId:review.work.id,date:new Date().toISOString(),label:'Save meanings for selected tag names',patches:[],beforeDefinitions:compiled.beforeDefinitions,afterDefinitions:compiled.afterDefinitions,beforeShelves:before,afterShelves:after,beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'prepared'});}catch(error){review.appliedEntryIds=previousApplied;throw error;}
     this.state.userEditedTagIds=[...new Set([...(this.state.userEditedTagIds??[]),...compiled.entries.map(entry=>entry.tagId)])];
     for(const entry of compiled.entries)this.detailChanged(entry.tagId);
     this.state.taxonomyReady=scientificDefinitions(this.state.tags).some(tag=>tag.status==='approved');await this.save();
+  }
+  private async admitNativeDefinitions() {
+    const review=this.state.nativeDefinitionPreparation;
+    if(review?.processingPolicy!=='auto-clear'||review.work.status!=='ready')return;
+    const ids=review.work.entries.filter(entry=>entry.status==='ready'&&!review.appliedEntryIds.includes(entry.id)).map(entry=>entry.id);
+    if(!ids.length){if(review.work.entries.every(entry=>review.appliedEntryIds.includes(entry.id)||entry.status==='left-undefined')){review.finishedAt??=new Date().toISOString();await this.save();}return;}
+    const input=await this.nativeDefinitionInput(review.work.entries.map(entry=>entry.sourceName));
+    const operation=this.commitTail.catch(()=>{}).then(async()=>{
+      if(this.state.nativeDefinitionPreparation!==review)return;
+      const compiled=compileNativeTagDefinitions(review.work,input,ids);
+      for(const issue of [...compiled.questions,...compiled.conflicts]){const entry=review.work.entries.find(entry=>entry.id===issue.entryId);if(entry){entry.status='question';entry.question=issue.message;}}
+      if(!compiled.entries.length){await this.save();return;}
+      const next=copy(this.state),beforeShelves=copy(this.shelves()),changeId=uid('native-admission');
+      next.tags=applyDefinitionRecords(next.tags,compiled.afterDefinitions);
+      const target=beforeShelves.find(shelf=>shelf.id===review.shelfId)??beforeShelves.find(shelf=>shelf.id===MY_TAGS_SHELF_ID)!;
+      next.tagShelves=updateTagShelfMembers(beforeShelves,target.id,[...target.tagIds,...compiled.entries.map(entry=>entry.tagId)],next.tags);
+      next.nativeDefinitionPreparation!.appliedEntryIds=[...new Set([...review.appliedEntryIds,...compiled.entries.map(entry=>entry.entryId)])];
+      if(review.work.entries.every(entry=>next.nativeDefinitionPreparation!.appliedEntryIds.includes(entry.id)||entry.status==='left-undefined'))next.nativeDefinitionPreparation!.finishedAt=new Date().toISOString();
+      next.userEditedTagIds=[...new Set([...(next.userEditedTagIds??[]),...compiled.entries.map(entry=>entry.tagId)])];
+      next.taxonomyReady=true;next.vocabularyVersion++;
+      next.history.unshift({id:changeId,taskId:review.work.id,date:new Date().toISOString(),label:'Save supported native tag meanings',patches:[],beforeDefinitions:compiled.beforeDefinitions,afterDefinitions:compiled.afterDefinitions,beforeShelves,afterShelves:copy(next.tagShelves),beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'applied'});
+      await this.persistDefinitionAdmission(next);
+    });
+    this.commitTail=operation;await operation;
   }
   private excluded(id:string) {
     return isExcludedByNativeTag((this.state.nativeTags[id]??[]).map(tag=>tag.tag));
@@ -1225,6 +1428,7 @@ export class AppController implements ManagerAPI {
     }
     if(review.work.status==='failed')throw new Error('Some meanings could not be checked. Retry the remaining work; completed results are saved.');
     if(review.work.status==='ready'){for(const job of task.run.jobs)job.status='completed';task.run.message=this.nativeMeaningSummary(this.nativeDefinitionDisplay()!);}
+    await this.admitNativeDefinitions();
   }
   private async runMaintenance() {
     this.maintenanceAbort=new AbortController();
@@ -1311,8 +1515,8 @@ export class AppController implements ManagerAPI {
     return [...(this.state.assignmentRuns??[])].reverse().map(review=>{
       const bulk=this.bulkAssignmentSuggestions(review.id),progress=assignmentRunProgress(review,review.jobs,this.state.suggestions),suggestions=this.state.suggestions.filter(s=>s.runId===review.id),current=this.state.run?.id===review.id?this.state.run:undefined;
       const records=(this.state.uncoveredTopics??[]).filter(record=>record.runId===review.id),groups=groupUncoveredTopics(records.map(record=>({...record,status:'active'}))),activeRecords=records.filter(record=>record.status==='active');
-      const report=review.status==='finished'?{topics:groups.map(group=>({id:group.id,name:group.name,paperIds:group.paperIds,reason:records.find(record=>group.recordIds.includes(record.id))?.reason,resolved:group.recordIds.every(id=>records.find(record=>record.id===id)?.status==='resolved')})),paperIds:[...new Set(activeRecords.map(record=>record.paperId))]}:undefined;
-      return {id:review.id,label:`${review.paperIds.length} papers · ${review.scope}`,status:review.status==='finished'?'finished':current?.status==='paused'?'paused':review.status==='review'?'ready':'running',scopeCount:review.paperIds.length,analysisComplete:progress.analysisCompleted===progress.analysisTotal,canFinish:review.status!=='finished'&&progress.canFinish&&review.vocabularyVersion===this.state.vocabularyVersion&&this.state.run?.status!=='running',highAccepted:suggestions.filter(s=>s.confidence==='high'&&s.status==='accepted').length,needsReview:progress.pending,bulkAcceptCount:bulk.length,bulkAcceptIds:bulk.map(s=>s.id),needsChoiceCount:progress.pending-bulk.length,lowRejected:suggestions.filter(s=>s.confidence==='low'&&s.status==='rejected'&&s.decisionOrigin==='automatic').length,acceptedIds:suggestions.filter(s=>s.status==='accepted'&&!s.applied).map(s=>s.id),...(report?{report}:{})};
+      const report=review.status==='finished'||review.processingPolicy==='auto-clear'&&progress.analysisCompleted===progress.analysisTotal?{topics:groups.map(group=>({id:group.id,name:group.name,paperIds:group.paperIds,reason:records.find(record=>group.recordIds.includes(record.id))?.reason,resolved:group.recordIds.every(id=>records.find(record=>record.id===id)?.status==='resolved')})),paperIds:[...new Set(activeRecords.map(record=>record.paperId))]}:undefined;
+      return {id:review.id,lastChangeId:this.lastTaskChangeId(review.id),processingPolicy:review.processingPolicy,appliedCount:progress.applied,label:`${review.paperIds.length} papers · ${review.scope}`,status:review.status==='finished'?'finished':current?.status==='paused'?'paused':review.status==='review'?'ready':'running',scopeCount:review.paperIds.length,analysisComplete:progress.analysisCompleted===progress.analysisTotal,canFinish:review.status!=='finished'&&progress.canFinish&&review.vocabularyVersion===this.state.vocabularyVersion&&this.state.run?.status!=='running',highAccepted:suggestions.filter(s=>s.confidence==='high'&&s.status==='accepted').length,needsReview:progress.pending,bulkAcceptCount:bulk.length,bulkAcceptIds:bulk.map(s=>s.id),needsChoiceCount:progress.pending-bulk.length,lowRejected:suggestions.filter(s=>s.confidence==='low'&&s.status==='rejected'&&s.decisionOrigin==='automatic').length,acceptedIds:suggestions.filter(s=>s.status==='accepted'&&!s.applied).map(s=>s.id),...(report?{report}:{})};
     });
   }
   private async finishAssignment(runId:string,acceptRemaining=false){
@@ -1329,7 +1533,7 @@ export class AppController implements ManagerAPI {
     this.state.assignmentRuns=this.state.assignmentRuns!.map(record=>record.id===runId?{...finished,jobs:review!.jobs,scope:review!.scope,automatic:review!.automatic}:record);
     await this.save();
   }
-  private async extendAssignmentTopics(runId:string,paperIds:string[],additionalTarget?:number){
+  private async extendAssignmentTopics(runId:string,paperIds:string[],additionalTarget?:number,processingPolicy?:'auto-clear'){
     await this.ensureReviewIdle();
     const review=this.assignmentDisplays().find(record=>record.id===runId);
     if(!review||review.status!=='finished')throw new Error('Finish this assignment before extending its tag list.');
@@ -1339,8 +1543,8 @@ export class AppController implements ManagerAPI {
     const papers:PaperRecord[]=[];
     for(const id of selected){const stored=this.state.papers[id],paper=stored?await this.env.host.read(stored.itemID):null;if(!paper||paper.id!==id)throw new Error('A selected paper is no longer available in the personal library.');papers.push(paper);this.state.nativeTags[id]=await this.env.host.readTags(paper.itemID);}
     const excluded=papers.filter(paper=>this.excluded(paper.id));
-    if(excluded.length){await this.previewPaperExclusion({ids:excluded.map(paper=>paper.id),exclude:false});this.state.pendingTopicExtension={runId,paperIds:selected,additionalTargetCount:target,inclusionPreviewId:this.state.paperExclusionPreview!.id};await this.save();return {needsInclusion:true};}
-    await this.start('rebuild','selected',false,papers,undefined,'extend',target);return {page:'cleanup'};
+    if(excluded.length){await this.previewPaperExclusion({ids:excluded.map(paper=>paper.id),exclude:false});this.state.pendingTopicExtension={runId,paperIds:selected,additionalTargetCount:target,inclusionPreviewId:this.state.paperExclusionPreview!.id,...(processingPolicy==='auto-clear'?{processingPolicy}:{})};await this.save();return {needsInclusion:true};}
+    await this.start('rebuild','selected',false,papers,undefined,'extend',target,undefined,processingPolicy);return {page:'cleanup'};
   }
   private pilotReviewIssue():string|undefined {
     const ids=new Set(this.state.pilotIds),run=this.state.run;
@@ -1391,12 +1595,13 @@ export class AppController implements ManagerAPI {
     const nativePreparation=this.nativeDefinitionDisplay();
     return {
       vocabularyVersion:this.state.vocabularyVersion,pilotReviewed:this.state.pilotReviewed&&this.state.pilotVersion===this.state.vocabularyVersion,workflow:this.workflowDisplay(nativeTags),
+      reviewItems:this.state.reviewItems?.map(({conditionFingerprint,...item})=>item),
       tagShelves:this.shelfDisplay(shelfNative),tagLibraryEntries:libraryTagShelfEntries(shelfNative,this.state.tags,undefined,true,this.shelves().flatMap(shelf=>shelf.nativeTagNames??[])),nativeDefinitionPreparation:nativePreparation,activityTasks:this.activityDisplay(nativePreparation),existingTags:this.existingTagDisplay(),diyComparison:this.diyComparisonDisplay(),assignmentReviews,assignmentReview:assignmentReviews[0],paperAttention:attention,metadataPreview:metadataDisplay,
       paperExclusionPreview:this.state.paperExclusionPreview?{id:this.state.paperExclusionPreview.id,exclude:this.state.paperExclusionPreview.exclude,changes:this.state.paperExclusionPreview.patches.map(patch=>({paperId:patch.paperId,title:this.state.papers[patch.paperId]?.title??'Item',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined,
       tags,papers:papers.map(({pdfText,...paper})=>({...paper,tags:(nativeTags[paper.id]??[]).map(t=>t.tag),evidenceStatus:pdfText?'Metadata and selected PDF passages':!paper.abstract?'Abstract missing; limited metadata':'Title, abstract, and imported keywords'})),
       analyzedPaperCount:Object.keys(this.state.papers).length,taxonomyReady:this.state.taxonomyReady,tagPreparation:this.preparationDisplay(),
       taxonomyArchives:this.state.taxonomyArchives.map(a=>({id:a.id,date:a.date,version:a.version,reason:a.reason,count:a.tags.length})),
-      suggestions:this.state.suggestions.map(s=>({...s,locked:!!this.state.decisions[pair(s.paperId,s.tagId)]?.locked,applied:s.applied||false})),
+      suggestions:this.state.suggestions.map(s=>({...s,reviewId:this.state.reviewItems?.find(item=>item.suggestionId===s.id&&item.state!=='resolved')?.id,locked:!!this.state.decisions[pair(s.paperId,s.tagId)]?.locked,applied:s.applied||false})),
       cleanup:this.state.cleanup.map(({patches,...display})=>display),history:this.state.history.map(h=>({id:h.id,date:h.date,label:h.label,count:h.patches.length+(h.metadataPatches?.length??0)+Object.keys(h.afterDefinitions??{}).length+(h.afterShelves?1:0),canUndo:h.status==='applied',status:h.status})),neighbors:this.state.neighbors,
       queue:{ownerPage:maintenance?.kind==='define-native'?'vocabulary':queueRun?.kind==='tag'?'assignment':'cleanup',taskLabel:maintenance?.kind==='define-native'?'Preparing tag meanings':maintenance&&maintenance.kind!=='retry'?'Checking tag names':undefined,kind:queueRun?.kind,phase:maintenance?'reading':phase,phaseProgress:maintenance?.kind==='define-native'&&nativePreparation?{completed:nativePreparation.completed,total:nativePreparation.total,label:'Meanings prepared'}:maintenance?undefined:phaseProgress,canUseFasterBuild:!maintenance&&this.canUseFasterBuild(run),switchingToFasterBuild:!!run?.fasterBuild,selection:!maintenance&&selection?{verificationScope:run?.selection?.policyVersion===4?'representative':'exhaustive',tagsPrepared:selection.tagsPrepared,tagsTotal:selection.tagsTotal,examplesChecked:selection.examplesChecked,examplesTotal:selection.examplesTotal,sourceCompleted:selection.sourceCompleted,sourceTotal:selection.sourceTotal,completedRequests:selection.completedRequests,queuedRequests:selection.queuedRequests,correctionsUsed:selection.correctionsUsed,correctionAllowance:selection.correctionAllowance,semanticRepairsUsed:selection.semanticRepairsUsed,semanticRepairAllowance:selection.semanticRepairAllowance,mappingCorrectionsUsed:selection.mappingCorrectionsUsed,mappingCorrectionAllowance:selection.mappingCorrectionAllowance,failed:run?.selection?.status==='failed'}:undefined,skipped,needsInformation:attention.papers.filter(paper=>paper.status==='needsInformation').length,provider:queueRun?.settings.provider,status:queueRun?.status??'idle',total:queueRun?.jobs.length??0,completed:queueRun?.jobs.filter(j=>j.status==='completed').length??0,failed:queueRun?.jobs.filter(j=>!!j.error).length??0,message:queueRun?.status==='paused'?this.processingMessage(queueMessage):queueMessage,spentUSD:queueRun?.spentUSD??0,estimatedUSD:queueEstimate.value,estimatePending:queueEstimate.pending,jobs:queueRun?.jobs.slice(-150).map(j=>({...j,title:this.state.papers[j.paperId]?.title,...(j.error?{error:this.processingMessage(j.error)}:{})}))??[]},
       settings:{...this.state.settings},models:[...this.state.models],connection:{apiKeyStored:apiKey,deepseekKeyStored:deepseekKey,chatgptSignedIn:session.connected&&session.sharing,accountLabel:session.email??undefined,verified:this.state.verifiedConnections.includes(this.connectionKey()),credentialStorage:this.env.credentialStatus?.()??'OS-encrypted',accounts:session.accounts.map(a=>({id:a.id,label:a.label})),selectedAccountId:session.accountId??undefined},warnings:[...this.state.warnings]
@@ -1419,6 +1624,12 @@ export class AppController implements ManagerAPI {
   }
   private async dispatch(action:string,payload:any):Promise<any> {
     switch(action) {
+      case 'defer-review-item':case 'reopen-review-item': {
+        const item=this.state.reviewItems?.find(item=>item.id===String(payload.id)&&item.state!=='resolved');if(!item)throw new Error('This choice is no longer pending.');
+        item.state=action==='defer-review-item'?'deferred':'open';await this.save();break;
+      }
+      case 'resolve-review-item': await this.resolveReviewItem(String(payload.id),payload.action,payload.choiceId);break;
+      case 'open-review-item': return this.openReviewItem(String(payload.id));
       case 'reset-paper-analysis': await this.resetAnalysis();break;
       case 'refresh-existing-tags': await this.refreshExistingTags();break;
       case 'set-kept-existing-tags': {const plan=updateKeptNames(this.keepPlan(String(payload.planId)),payload.names??[]),{snapshot,...stored}=plan;this.state.keepTagPlan=stored;delete this.state.keepRemovalPreview;await this.save();break;}
@@ -1439,13 +1650,13 @@ export class AppController implements ManagerAPI {
       case 'apply-paper-exclusion': {
         await this.applyPaperExclusion(String(payload.previewId));
         const pending=this.state.pendingTopicExtension;
-        if(pending&&pending.inclusionPreviewId===payload.previewId){delete this.state.pendingTopicExtension;await this.save();return this.extendAssignmentTopics(pending.runId,pending.paperIds,pending.additionalTargetCount);}
+        if(pending&&pending.inclusionPreviewId===payload.previewId){delete this.state.pendingTopicExtension;await this.save();return this.extendAssignmentTopics(pending.runId,pending.paperIds,pending.additionalTargetCount,pending.processingPolicy);}
         break;
       }
       case 'cancel-paper-exclusion': delete this.state.paperExclusionPreview;delete this.state.pendingTopicExtension;await this.save();break;
       case 'preview-metadata': await this.previewMetadata(String(payload.id),payload.identifier);break;
       case 'apply-metadata': await this.applyMetadataPreview(String(payload.previewId));break;
-      case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot',false,undefined,undefined,payload.mode,payload.additionalTargetCount);break;
+      case 'prepare-tags': await this.start('rebuild',payload.scope??'pilot',false,undefined,undefined,payload.mode,payload.additionalTargetCount,undefined,payload.processingPolicy,payload.targetCount);break;
       case 'use-faster-build': {
         const run=this.state.run;
         if(run?.fasterBuild)break;
@@ -1520,10 +1731,10 @@ export class AppController implements ManagerAPI {
       case 'apply-tag-list': return this.applyPreparedTags(String(payload.id));
       case 'export-tag-analysis': {const current=this.requirePreparation(String(payload.id));return this.dispatch('export-taxonomy-proposal',{id:current.proposal.id});}
       case 'scan': await this.scan(payload.scope??'library');break;
-      case 'rebuild':case 'tag': await this.start(action,payload.scope??'pilot',false,undefined,undefined,payload.mode,undefined,payload.tagShelfId);break;
+      case 'rebuild':case 'tag': await this.start(action,payload.scope??'pilot',false,undefined,undefined,payload.mode,undefined,payload.tagShelfId,payload.processingPolicy);return {page:action==='tag'?'assignment':'cleanup',runId:this.state.run!.id};
       case 'rename-tag-shelf': this.state.tagShelves=renameTagShelf(this.shelves(),String(payload.id),String(payload.name??''));await this.save();break;
       case 'merge-tag-shelves': return this.mergeShelves(payload);
-      case 'prepare-tag-meanings': return this.prepareNativeDefinitions(payload.names,payload.shelfId);
+      case 'prepare-tag-meanings': return this.prepareNativeDefinitions(payload.names,payload.shelfId,payload.processingPolicy);
       case 'answer-tag-meaning': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),choiceId:String(payload.choiceId)});break;
       case 'edit-tag-meaning': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),definition:payload.tag});break;
       case 'leave-tag-undefined': await this.changeNativeMeaning(String(payload.id),{entryId:String(payload.entryId),leaveUndefined:true});break;
@@ -1534,7 +1745,7 @@ export class AppController implements ManagerAPI {
       case 'cancel-tag-meanings': await this.discardNativeDefinitions(String(payload.id));break;
       case 'create-detail': {this.shelves();this.saveTag({...payload.tag,custom:true});const tag=this.state.tags.at(-1)!;this.addTagToShelf(tag.id,payload.tagShelfId);if(this.state.taxonomyProposal&&!this.state.taxonomyProposal.tags.some(value=>value.id===tag.id)){this.state.taxonomyProposal.tags.push(copy(tag));if(this.state.taxonomyProposal.mappingPolicyVersion===3)this.state.taxonomyProposal.retainedDefinitionIds=[...new Set([...(this.state.taxonomyProposal.retainedDefinitionIds??[]),tag.id])];}this.refreshPreparation();await this.save();return tag.id;}
       case 'assign-detail': await this.assignDetail(payload);break;
-      case 'preview-detail': {const tag=this.state.tags.find(t=>t.id===payload.tagId&&t.status==='approved'&&!isNoTagDefinition(t));if(!tag)throw new Error('Choose a saved tag.');if(tag.matchingMode==='manual')throw new Error('Enable suggestion matching for this tag before previewing.');await this.start('tag',payload.scope??'library',false,undefined,tag.id);break;}
+      case 'preview-detail': {const tag=this.state.tags.find(t=>t.id===payload.tagId&&t.status==='approved'&&!isNoTagDefinition(t));if(!tag)throw new Error('Choose a saved tag.');if(tag.matchingMode==='manual')throw new Error('Enable suggestion matching for this tag before previewing.');await this.start('tag',payload.scope??'library',false,undefined,tag.id,undefined,undefined,undefined,payload.processingPolicy);return {page:'assignment',runId:this.state.run!.id};}
       case 'save-taxonomy-proposal': {
         await this.ensureReviewIdle();const proposal=this.requireProposal(payload.id);
         if(!Array.isArray(payload.tags))throw new Error('Proposal tags are missing.');
@@ -1625,7 +1836,9 @@ export class AppController implements ManagerAPI {
         const key=pair(s.paperId,s.tagId),d=this.state.decisions[key]??{};
         if(action==='reject-suggestion'&&s.operation!=='remove')d.rejected=true;
         if(action==='reject-suggestion'&&s.operation==='remove')d.locked=true;
-        this.state.decisions[key]=d;await this.save();break;
+        this.state.decisions[key]=d;await this.save();
+        if(action==='accept-suggestion'&&this.state.assignmentRuns?.some(run=>run.id===s.runId&&run.processingPolicy==='auto-clear'))await this.applySuggestions([s.id]);
+        break;
       }
       case 'clear-rejection': delete this.state.decisions[pair(payload.paperId,payload.tagId)]?.rejected;await this.save();break;
       case 'lock-assignment':case 'unlock-assignment': {
@@ -1634,7 +1847,7 @@ export class AppController implements ManagerAPI {
       case 'apply-suggestions': await this.applySuggestions(payload.ids??[]);break;
       case 'accept-run-suggestions': await this.acceptRunSuggestions(String(payload.runId));break;
       case 'finish-assignment': await this.finishAssignment(String(payload.runId),payload.acceptRemaining===true);break;
-      case 'extend-assignment-topics': return this.extendAssignmentTopics(String(payload.runId),payload.paperIds??[],payload.additionalTargetCount);
+      case 'extend-assignment-topics': return this.extendAssignmentTopics(String(payload.runId),payload.paperIds??[],payload.additionalTargetCount,payload.processingPolicy);
       case 'preview-cleanup': await this.previewCleanup();break;
       case 'apply-cleanup': await this.applyCleanup(payload.ids??[]);break;
       case 'show-paper': {const p=this.state.papers[payload.id]??(await this.env.host.list('library')).find(paper=>paper.id===payload.id);if(p)await this.env.host.show(p.itemID);break;}
@@ -1650,7 +1863,7 @@ export class AppController implements ManagerAPI {
         const v=payload.settings??{};const previous=this.state.settings;
         if(!validProvider(v.provider))throw new Error('Choose OpenAI API, ChatGPT, or DeepSeek as the connection.');
         const settings:ManagerSettings={provider:v.provider,model:String(v.model??'').trim(),autoAssign:v.autoAssign===true,budgetUSD:this.number(v.budgetUSD,0.01,10000),inputPricePerMillion:this.number(v.inputPricePerMillion,0,10000),outputPricePerMillion:this.number(v.outputPricePerMillion,0,10000),maxOutputTokens:Math.round(this.number(v.maxOutputTokens,512,32768)),coreConceptLimit:Math.round(this.number(v.coreConceptLimit??previous.coreConceptLimit??60,1,500)),extensionTagTarget:Math.round(this.number(v.extensionTagTarget??previous.extensionTagTarget??30,1,500))};
-        if(settings.autoAssign&&(!this.state.pilotReviewed||this.state.pilotVersion!==this.state.vocabularyVersion))throw new Error('Complete and review the pilot for this vocabulary before enabling automatic assignment.');
+        if(settings.autoAssign&&!previous.autoAssign){this.checkConnectionSettings();if(!scientificDefinitions(this.state.tags).some(tag=>tag.status==='approved'&&(tag.matchingMode??'auto')==='auto'))throw new Error('Save a tag eligible for automatic matching before enabling incoming assignment.');}
         if(settings.provider!==previous.provider||settings.model!==previous.model)await this.pauseProviderRun(previous.provider,'Connection settings changed. Resume to use the selected connection.');
         if(settings.provider!==previous.provider)this.state.models=[];
         this.state.settings=settings;await this.save();break;
@@ -1676,6 +1889,8 @@ export class AppController implements ManagerAPI {
       case 'dismiss-warnings': this.state.warnings=dismissWarnings(this.state.warnings);await this.save();break;
       default:throw new Error(`Unknown Smart Tags action: ${action}`);
     }
+    if(this.state.run?.status!=='running'&&this.state.run?.status!=='paused')await this.admitPreparedDefinitions();
+    await this.admitNativeDefinitions();
   }
   private keyProvider(value:unknown):ApiKeyProvider {
     if(value===undefined)return 'api';
@@ -1894,7 +2109,7 @@ export class AppController implements ManagerAPI {
     await this.save();
   }
   private detailFingerprint(definitions=this.state.tags) {return fingerprint(scientificDefinitions(definitions).filter(t=>t.custom||this.state.userEditedTagIds?.includes(t.id)).map(t=>({id:t.id,name:t.name,fullName:t.fullName,description:t.description,aliases:t.aliases,inclusions:t.inclusions,exclusions:t.exclusions,matchingMode:t.matchingMode,status:t.status})));}
-  private definitionFingerprint(tag:TagDefinition) {return fingerprint({id:tag.id,name:tag.name,fullName:tag.fullName,description:tag.description,aliases:tag.aliases,inclusions:tag.inclusions,exclusions:tag.exclusions,matchingMode:tag.matchingMode,status:tag.status});}
+  private definitionFingerprint(tag:TagDefinition) {return fingerprint({id:tag.id,name:tag.name,fullName:tag.fullName,description:tag.description,facet:tag.facet,aliases:tag.aliases,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples,broaderIds:tag.broaderIds,relatedIds:tag.relatedIds,matchingMode:tag.matchingMode,status:tag.status});}
   private detailChanged(id:string) {
     this.state.suggestions=this.state.suggestions.filter(s=>s.tagId!==id||s.applied);
     if(this.state.run?.detailId===id&&this.state.run.status==='running'){this.state.run.status='paused';this.state.run.message='This detail definition changed. Resume to refresh its matches.';this.abort?.abort();}
@@ -1981,8 +2196,10 @@ export class AppController implements ManagerAPI {
     if(!s.model)throw new Error('Choose a model in Connect AI first.');
     if(paidProvider(s.provider)&&(s.inputPricePerMillion<=0||s.outputPricePerMillion<=0))throw new Error('Enter the current input and output token prices for this API model before starting a budgeted run.');
   }
-  private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string,mode?:BuildMode,additionalTargetCount?:number,tagShelfId?:string) {
+  private async start(kind:'rebuild'|'tag',scope:string,automatic=false,provided?:PaperRecord[],detailId?:string,mode?:BuildMode,additionalTargetCount?:number,tagShelfId?:string,processingPolicy?:'auto-clear',maximumTags?:number) {
     if(mode!==undefined&&mode!=='extend'&&mode!=='replace')throw new Error('Choose whether to extend or replace the tag list.');
+    if(processingPolicy!==undefined&&processingPolicy!=='auto-clear')throw new Error('Choose a supported tagging policy.');
+    if(maximumTags!==undefined&&(!Number.isInteger(maximumTags)||maximumTags<1||maximumTags>500))throw new Error('Choose a whole-number maximum from 1 to 500 tags.');
     const buildMode=mode??(this.state.taxonomyReady?'extend':'replace');
     const replacePausedRebuild=kind==='rebuild'&&this.state.run?.kind==='rebuild'&&this.state.run.status==='paused';
     if(replacePausedRebuild&&this.worker)await this.worker;
@@ -2002,6 +2219,8 @@ export class AppController implements ManagerAPI {
     if(kind==='rebuild'){this.rememberPreparation();this.state.taxonomyProposal=null;delete this.state.tagPreparation;}
     if(this.state.run)this.archiveSelection(this.state.run);
     this.state.run={id:uid('run'),kind,scope,automatic,status:'running',jobs:papers.map(p=>({id:uid('job'),paperId:p.id,status:'pending'})),vocabCursor:0,vocabFinished:false,message:kind==='rebuild'?'Reading papers for your tag list…':'Preparing tag suggestions…',spentUSD:0,settings:copy(this.state.settings),vocabularyVersion:this.state.vocabularyVersion};
+    if(kind==='rebuild'&&maximumTags!==undefined)this.state.run.settings.coreConceptLimit=maximumTags;
+    if((processingPolicy==='auto-clear'||automatic)&&!(kind==='rebuild'&&buildMode==='replace'&&this.state.taxonomyReady))this.state.run.processingPolicy='auto-clear';
     if(shelf){this.state.run.tagShelfId=resolveTagShelfId(this.shelves(),tagShelfId??'all');this.state.run.tagIds=[...shelf.assignableIds];}
     const selectedScope=['pilot','selected','collections','library'].includes(scope)?scope as Scope:undefined;
     if(kind==='rebuild'){
@@ -2009,7 +2228,7 @@ export class AppController implements ManagerAPI {
       if(buildMode==='extend'){this.state.run.extensionBaseline=captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion);const target=this.number(additionalTargetCount??this.state.settings.extensionTagTarget??30,1,500);if(!Number.isInteger(target))throw new Error('Choose a whole number of additional tags.');this.state.run.additionalTargetCount=target;}
       this.state.workflow={...workflow,buildMode,buildScope:selectedScope??'selected',buildPaperIds:papers.map(paper=>paper.id)};
     }else if(!automatic&&!detailId)this.state.workflow={...workflow,assignmentScope:selectedScope??'selected',assignmentPaperIds:papers.map(paper=>paper.id),assignmentTagShelfId:this.state.run.tagShelfId??'all'};
-    if(kind==='tag')(this.state.assignmentRuns??=[]).push({...createAssignmentRun({id:this.state.run.id,paperIds:papers.map(paper=>paper.id),vocabularyVersion:this.state.vocabularyVersion}),jobs:this.assignmentJobs(this.state.run),scope,automatic,...(shelf?{tagShelfId:this.state.run.tagShelfId,tagIds:[...shelf.assignableIds]}:{})});
+    if(kind==='tag')(this.state.assignmentRuns??=[]).push({...createAssignmentRun({id:this.state.run.id,paperIds:papers.map(paper=>paper.id),vocabularyVersion:this.state.vocabularyVersion,processingPolicy:this.state.run.processingPolicy}),jobs:this.assignmentJobs(this.state.run),scope,automatic,...(shelf?{tagShelfId:this.state.run.tagShelfId,tagIds:[...shelf.assignableIds]}:{})});
     if(checkpoint&&!checkpoint.failed)this.state.run.consolidation=copy(checkpoint);
     if(cachedSelection)this.state.run.cachedSelection=cachedSelection;
     if(detailId){this.state.run.detailId=detailId;this.state.run.proposalFingerprint=this.definitionFingerprint(this.state.tags.find(t=>t.id===detailId)!);}
@@ -2074,9 +2293,9 @@ export class AppController implements ManagerAPI {
             else this.updateEvidenceWarning(current,'facts',!cached.concepts.length,run);
           }
         }
-        if(job.status==='completed')continue;
+        if(job.status==='completed'){if(run.kind==='tag')await this.applyClearAssignments(run,job.paperId);continue;}
         job.status='running';delete job.error;run.message=this.state.papers[job.paperId]?.title??'Analyzing paper…';await this.save();
-        try{if(run.kind==='rebuild')await this.extractFacts(job,run);else await this.analyze(job,run);job.status='completed';if(run.scope==='pilot'&&run.kind==='tag'&&!run.detailId)this.state.pilotIds=[...new Set([...this.state.pilotIds,job.paperId])];await this.save();}
+        try{if(run.kind==='rebuild')await this.extractFacts(job,run);else{await this.analyze(job,run);await this.applyClearAssignments(run,job.paperId);}job.status='completed';if(run.scope==='pilot'&&run.kind==='tag'&&!run.detailId)this.state.pilotIds=[...new Set([...this.state.pilotIds,job.paperId])];await this.save();}
         catch(error){job.status='pending';job.error=this.message(error);throw error;}
       }
       await this.drainMaintenance();this.refreshAfterMaintenance=false;
@@ -2089,6 +2308,11 @@ export class AppController implements ManagerAPI {
       }else run.message='Your paper suggestions are ready.';
       if(run.status!=='running'||this.shuttingDown||run.fasterBuild)return;
       this.state.neighbors=buildSimilarityNetwork(Object.values(this.state.papers),10);run.status='idle';await this.save();
+      if(run.kind==='tag'&&run.processingPolicy==='auto-clear'){
+        const review=this.state.assignmentRuns?.find(review=>review.id===run.id);
+        if(review){const finished=finishAssignmentRun(review,this.assignmentJobs(run),this.state.suggestions);Object.assign(review,finished);run.message='Tag assignment completed. Uncertain cases remain available in Activity.';await this.save();}
+      }
+      if(run.kind==='rebuild')await this.admitPreparedDefinitions();
     } catch(error) {
       if(run.status==='running'){run.status='paused';run.message=this.message(error);}await this.save();
     }
@@ -2176,7 +2400,7 @@ export class AppController implements ManagerAPI {
       const retained=run.consolidation?.snapshot,snapshot=retained&&!validateSnapshotAgainstFacts(retained,facts).length?copy(retained):createRegistrySnapshot(facts,this.state.evidenceCatalog);
       run.message='Choosing useful tags from the saved paper analysis…';await this.save();await new Promise(resolve=>setTimeout(resolve,0));
       if(run.status!=='running'||this.shuttingDown)return;
-      run.selection=createTagSelection(facts,existing,snapshot,{tagPolicyVersion:2,targetCount:run.settings.coreConceptLimit??60,maxOutputTokens:run.settings.maxOutputTokens,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),baseVersion:this.state.vocabularyVersion,generationId:uid('tag-selection'),baseline:run.buildMode==='extend'?run.extensionBaseline:undefined,priorDecisions:{...(this.state.taxonomyReview?.machineDecisions??{}),...(this.state.taxonomyProposal?.machineDecisions??{})},protectedTagIds:this.preparationOptions().protectedTagIds});
+      run.selection=createTagSelection(facts,existing,snapshot,{...(run.processingPolicy==='auto-clear'?{adaptivePolicyVersion:1 as const}:{}),tagPolicyVersion:2,targetCount:run.settings.coreConceptLimit??60,maxOutputTokens:run.settings.maxOutputTokens,...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{}),baseVersion:this.state.vocabularyVersion,generationId:uid('tag-selection'),baseline:run.buildMode==='extend'?run.extensionBaseline:undefined,priorDecisions:{...(this.state.taxonomyReview?.machineDecisions??{}),...(this.state.taxonomyProposal?.machineDecisions??{})},protectedTagIds:this.preparationOptions().protectedTagIds});
       run.selectionInputFingerprint=inputFingerprint;await this.save();
     }
     this.applySelectionReplies(run);run.selection=resumeTagSelection(run.selection);await this.save();
@@ -2218,7 +2442,7 @@ export class AppController implements ManagerAPI {
   private async fresh(paper:PaperRecord,withPDF=false) {
     const current=await this.env.host.read(paper.itemID);if(!current)throw new Error('Paper was removed or moved outside the personal library.');
     current.keywords=[...new Set([...paper.keywords,...current.keywords])];
-    if(withPDF)current.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),this.state.tags,18000);
+    if(withPDF){const raw=await this.env.host.pdfText(paper.itemID),cached=this.state.analyses[paper.id];current.pdfText=cached?.assignmentPolicyVersion===2&&cached.pdfSourceFingerprint===fingerprint(raw)&&cached.sourceInputFingerprint===paperFingerprint(paper)?paper.pdfText:selectPDFPassages(raw,this.state.tags,18000);}
     current.fingerprint=paperFingerprint(current);return current;
   }
   private assignmentDefinitions(run:Run) {
@@ -2243,29 +2467,68 @@ export class AppController implements ManagerAPI {
     const detailFingerprint=this.detailFingerprint(definitions);
     const metadataFingerprint=paperFingerprint(paper),cached=this.state.analyses[paper.id];
     let raw:unknown,pdfProbed=false;
-    let reusable=cached?.metadataFingerprint===metadataFingerprint&&cached.vocabularyVersion===this.state.vocabularyVersion&&cached.provider===run.settings.provider&&cached.model===run.settings.model&&cached.detailFingerprint===detailFingerprint&&cached.tagScopeFingerprint===tagScopeFingerprint;
-    if(reusable&&(original.pdfText||!cached!.validatedCount&&(normalizeAnalysis(cached!.raw).needsPDF||!paper.abstract))){
-      paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);pdfProbed=true;
-      reusable=cached!.pdfFingerprint!==undefined?cached!.pdfFingerprint===fingerprint(paper.pdfText??''):String(paper.pdfText??'')===String(original.pdfText??'');
-    }
-    if(reusable) {
-      raw=cached!.raw;if(paper.pdfText)paper.fingerprint=paperFingerprint(paper);
-    } else {
-      const includedPDF=!!paper.pdfText;
-      raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:includedPDF,allowNoTag:this.allowNoTag(run),contextDefinitions}),run)).value;
-      if(this.excluded(paper.id))return;
-      const first=normalizeAnalysis(raw);
-      if(!validateSuggestions(paper,definitions,raw,context).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)) {
-        if(!pdfProbed)paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
-        if(paper.pdfText){paper.fingerprint=paperFingerprint(paper);if(!includedPDF)raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:true,allowNoTag:this.allowNoTag(run),contextDefinitions}),run)).value;}
+    if(run.processingPolicy==='auto-clear') {
+      let pdfText:string|undefined,usedFactPDF=false,facts:Pick<PaperFacts,'summary'|'concepts'>|undefined;
+      const readPDF=async()=>{pdfText??=await this.env.host.pdfText(paper.itemID);pdfProbed=true;return pdfText;};
+      const retained=this.state.facts[paper.id];
+      if(retained?.extractionVersion===1&&retained.metadataFingerprint===metadataFingerprint){
+        if(retained.inputFingerprint!==metadataFingerprint){
+          const passages=selectPDFPassages(await readPDF(),[],18000);
+          if(retained.inputFingerprint===paperFingerprint({...paper,pdfText:passages})){paper.pdfText=passages;usedFactPDF=true;}
+        }
+        if(retained.inputFingerprint===paperFingerprint(paper)&&retained.concepts.every(concept=>fingerprint(validateEvidence(paper,concept.evidence))===fingerprint(concept.evidence)))facts={summary:retained.summary,concepts:retained.concepts};
       }
-      if(run.status!=='running')throw new Error('Paper analysis was paused. Completed results are saved.');
+      if(!paper.pdfText&&(pdfProbed||original.pdfText||cached?.includedPDF||!paper.abstract))paper.pdfText=selectPDFPassages(await readPDF(),definitions,18000);
+      const promptFor=(targets=definitions,background=contextDefinitions,allowNoTag=context.allowNoTag)=>buildAnalysisPrompt(paper,targets,{includePDF:!!paper.pdfText,allowNoTag,contextDefinitions:background,...(facts?{facts}:{})});
+      const analyzeCurrentInput=async()=>{
+        const prompt=promptFor(),provider=run.settings.provider,model=run.settings.model,inputFingerprint=assignmentAnalysisFingerprint(prompt,provider,model),sourceInputFingerprint=paperFingerprint(paper),previous=this.state.analyses[paper.id];
+        if(previous?.assignmentPolicyVersion===ASSIGNMENT_ANALYSIS_POLICY_VERSION&&previous.assignmentInputFingerprint===inputFingerprint&&previous.sourceInputFingerprint===sourceInputFingerprint){
+          if(paper.pdfText&&pdfText!==undefined&&previous.pdfSourceFingerprint!==fingerprint(pdfText)){previous.pdfSourceFingerprint=fingerprint(pdfText);await this.save();}
+          return previous.raw;
+        }
+        const response=await this.request(prompt,run,undefined,true);
+        this.state.analyses[paper.id]={metadataFingerprint,vocabularyVersion:run.vocabularyVersion,provider,model,raw:response.value,detailFingerprint,pdfFingerprint:fingerprint(paper.pdfText??''),...(tagScopeFingerprint?{tagScopeFingerprint}:{}),assignmentPolicyVersion:ASSIGNMENT_ANALYSIS_POLICY_VERSION,assignmentInputFingerprint:inputFingerprint,sourceInputFingerprint,includedPDF:!!paper.pdfText,...(paper.pdfText&&pdfText!==undefined?{pdfSourceFingerprint:fingerprint(pdfText)}:{})};
+        await this.save();
+        return response.value;
+      };
+      const assertRunning=()=>{if(run.status!=='running'||this.state.run!==run||this.shuttingDown)throw new Error('Paper analysis was paused. Completed results are saved.');};
+      raw=await analyzeCurrentInput();assertRunning();
+      const first=normalizeAnalysis(raw);
+      if(!paper.pdfText&&!validateSuggestions(paper,definitions,raw,context).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)){
+        paper.pdfText=selectPDFPassages(await readPDF(),definitions,18000);
+        if(paper.pdfText){raw=await analyzeCurrentInput();assertRunning();}
+      }
       if(run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Vocabulary changed during analysis. Resume to refresh results.');
-      if(detailFingerprint!==this.detailFingerprint(this.assignmentDefinitions(run))||tagScopeFingerprint!==this.assignmentScopeFingerprint(run))throw new Error('A selected tag changed during analysis. Run its assignment again.');
+      if(promptFor()!==promptFor(this.assignmentDefinitions(run),this.assignmentContext(run),this.allowNoTag(run)))throw new Error('A selected tag changed during analysis. Run its assignment again.');
       const latest=await this.fresh(original);
-      if(paper.pdfText)latest.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
+      if(paper.pdfText)latest.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),usedFactPDF?[]:definitions,18000);
       if(paperFingerprint(latest)!==paperFingerprint(paper))throw new Error('Paper information changed during analysis. Retry this paper with its updated information.');
-      this.state.analyses[paper.id]={metadataFingerprint,vocabularyVersion:this.state.vocabularyVersion,provider:run.settings.provider,model:run.settings.model,raw,detailFingerprint,pdfFingerprint:fingerprint(paper.pdfText??''),...(tagScopeFingerprint?{tagScopeFingerprint}:{})};
+      paper.fingerprint=paperFingerprint(paper);
+    } else {
+      let reusable=cached?.assignmentPolicyVersion===undefined&&cached?.metadataFingerprint===metadataFingerprint&&cached.vocabularyVersion===this.state.vocabularyVersion&&cached.provider===run.settings.provider&&cached.model===run.settings.model&&cached.detailFingerprint===detailFingerprint&&cached.tagScopeFingerprint===tagScopeFingerprint;
+      if(reusable&&(original.pdfText||!cached!.validatedCount&&(normalizeAnalysis(cached!.raw).needsPDF||!paper.abstract))){
+        paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);pdfProbed=true;
+        reusable=cached!.pdfFingerprint!==undefined?cached!.pdfFingerprint===fingerprint(paper.pdfText??''):String(paper.pdfText??'')===String(original.pdfText??'');
+      }
+      if(reusable) {
+        raw=cached!.raw;if(paper.pdfText)paper.fingerprint=paperFingerprint(paper);
+      } else {
+        const includedPDF=!!paper.pdfText;
+        raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:includedPDF,allowNoTag:this.allowNoTag(run),contextDefinitions}),run)).value;
+        if(this.excluded(paper.id))return;
+        const first=normalizeAnalysis(raw);
+        if(!validateSuggestions(paper,definitions,raw,context).suggestions.length&&(first.needsPDF||!paper.abstract||!!original.pdfText)) {
+          if(!pdfProbed)paper.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
+          if(paper.pdfText){paper.fingerprint=paperFingerprint(paper);if(!includedPDF)raw=(await this.request(buildAnalysisPrompt(paper,definitions,{includePDF:true,allowNoTag:this.allowNoTag(run),contextDefinitions}),run)).value;}
+        }
+        if(run.status!=='running')throw new Error('Paper analysis was paused. Completed results are saved.');
+        if(run.vocabularyVersion!==this.state.vocabularyVersion)throw new Error('Vocabulary changed during analysis. Resume to refresh results.');
+        if(detailFingerprint!==this.detailFingerprint(this.assignmentDefinitions(run))||tagScopeFingerprint!==this.assignmentScopeFingerprint(run))throw new Error('A selected tag changed during analysis. Run its assignment again.');
+        const latest=await this.fresh(original);
+        if(paper.pdfText)latest.pdfText=selectPDFPassages(await this.env.host.pdfText(paper.itemID),definitions,18000);
+        if(paperFingerprint(latest)!==paperFingerprint(paper))throw new Error('Paper information changed during analysis. Retry this paper with its updated information.');
+        this.state.analyses[paper.id]={metadataFingerprint,vocabularyVersion:this.state.vocabularyVersion,provider:run.settings.provider,model:run.settings.model,raw,detailFingerprint,pdfFingerprint:fingerprint(paper.pdfText??''),...(tagScopeFingerprint?{tagScopeFingerprint}:{})};
+      }
     }
     const result=validateSuggestions(paper,definitions,raw,context);
     if(result.suggestions.some(suggestion=>suggestion.tagId===NO_TAG_ID)&&!this.state.tags.some(tag=>tag.id===NO_TAG_ID))this.state.tags.push(getNoTagDefinition());
@@ -2295,10 +2558,10 @@ export class AppController implements ManagerAPI {
       }
       if(review){
         const current=this.state.suggestions.filter(s=>s.runId===run.id&&s.paperId===paper.id),other=this.state.suggestions.filter(s=>s.runId!==run.id||s.paperId!==paper.id);
-        this.state.suggestions=[...other,...(run.automatic?current:triageAssignmentSuggestions(current,this.state.tags,this.state.papers,this.state.decisions,run.id))];
+        this.state.suggestions=[...other,...(run.automatic&&run.processingPolicy!=='auto-clear'?current:triageAssignmentSuggestions(current,this.state.tags,this.state.papers,this.state.decisions,run.id))];
         this.state.uncoveredTopics=updateUncoveredTopics(this.state.uncoveredTopics??[],{runId:run.id,paper,analysis:result,provider:run.settings.provider,model:run.settings.model,vocabularyVersion:run.vocabularyVersion,definitions:this.state.tags});
       }else this.state.warnings=updateTopicWarnings(this.state.warnings,{paperId:paper.id,runId:run.id,context:run.detailId?`assignment:${run.detailId}`:'assignment',conditionFingerprint:fingerprint({input:paper.fingerprint,vocabulary:run.vocabularyVersion,topics:[...result.newTagCandidates].sort()}),topics:result.newTagCandidates});
-      if(run.automatic&&this.state.settings.autoAssign&&this.state.pilotReviewed) {
+      if(run.automatic&&run.processingPolicy!=='auto-clear'&&this.state.settings.autoAssign&&this.state.pilotReviewed) {
         const ids=this.state.suggestions.filter(s=>s.paperId===paper.id&&(!review||s.runId===run.id)&&!s.applied&&s.operation!=='remove'&&isAutoAssignable(s,paper,this.state.tags,{...this.context(paper.id),pilotApproved:this.state.pilotVersion===this.state.vocabularyVersion})).map(s=>s.id);
         await this.applySuggestions(ids,true);
       }
@@ -2319,7 +2582,9 @@ export class AppController implements ManagerAPI {
       if(isExcludedByNativeTag(before.map(tag=>tag.tag))&&selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId!==NO_TAG_ID))throw new Error('This item is excluded from tagging. Include it again before applying paper tags.');
       if(selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId===NO_TAG_ID)&&selected.some(suggestion=>suggestion.paperId===paperId&&suggestion.tagId!==NO_TAG_ID&&suggestion.operation!=='remove'))throw new Error('Apply either no_tag or scientific tags for this item, not both.');
       for(const s of selected.filter(s=>s.paperId===paperId)) {
-        if(s.vocabularyVersion!==this.state.vocabularyVersion||s.inputFingerprint!==current.fingerprint)throw new Error('Paper content or vocabulary changed. Rerun suggestions before applying this preview.');
+        const automaticReview=s.runId&&this.state.assignmentRuns?.some(run=>run.id===s.runId&&run.processingPolicy==='auto-clear');
+        const currentTag=this.state.tags.find(tag=>tag.id===s.tagId),sameMeaning=!!currentTag&&s.definitionFingerprint===this.definitionFingerprint(currentTag);
+        if((s.vocabularyVersion!==this.state.vocabularyVersion&&!(automaticReview&&s.tagId!==NO_TAG_ID&&sameMeaning))||s.inputFingerprint!==current.fingerprint)throw new Error('Paper content or vocabulary changed. Rerun suggestions before applying this preview.');
         const tag=this.state.tags.find(t=>t.id===s.tagId&&t.status==='approved');if(!tag)throw new Error('A tag definition needs approval.');
         const review=s.runId?this.state.assignmentRuns?.find(run=>run.id===s.runId):undefined;
         if(isNoTagDefinition(tag)&&review?.tagIds&&scientificDefinitions(this.state.tags).some(tag=>tag.status==='approved'&&!review.tagIds!.includes(tag.id)))throw new Error('Your tag library has grown since this check. Retry this paper before marking it no_tag.');
@@ -2340,7 +2605,7 @@ export class AppController implements ManagerAPI {
       }
       if(!sameTags(before,after))patches.push({paperId,itemID:stored.itemID,before,after});
     }
-    const history:History={id:changeId,date:new Date().toISOString(),label:automatic?'Automatic tag assignments':'Approved tag assignments',patches,beforeOwnership,afterOwnership,suggestionIds:selected.map(s=>s.id),status:'prepared'};
+    const history:History={id:changeId,...(selected[0].runId?{taskId:selected[0].runId}:{}),date:new Date().toISOString(),label:automatic?'Automatic tag assignments':'Approved tag assignments',patches,beforeOwnership,afterOwnership,suggestionIds:selected.map(s=>s.id),status:'prepared'};
     let resolved=this.state.uncoveredTopics??[];
     for(const paperId of new Set(selected.map(s=>s.paperId))){const paper=this.state.papers[paperId];if(paper)resolved=resolveUncoveredTopics(resolved,{paper,vocabularyVersion:this.state.vocabularyVersion,appliedSuggestions:selected.map(s=>({...s,applied:true})),definitions:this.state.tags});}
     const changed=resolved.filter(topic=>fingerprint(topic)!==fingerprint(this.state.uncoveredTopics?.find(previous=>previous.id===topic.id)));
@@ -2431,7 +2696,10 @@ export class AppController implements ManagerAPI {
   private finishUndoJournal(change:History) {
     if(!change.undoOfId)return;
     const original=this.state.history.find(history=>history.id===change.undoOfId);if(!original)return;
-    original.status='undone';for(const suggestion of this.state.suggestions)if(original.suggestionIds.includes(suggestion.id))suggestion.applied=false;
+    original.status='undone';for(const suggestion of this.state.suggestions)if(original.suggestionIds.includes(suggestion.id)){
+      suggestion.applied=false;
+      if(original.label==='Automatic tag assignments'&&suggestion.operation!=='remove')this.state.automaticSuppressions=[...new Set([...(this.state.automaticSuppressions??[]),this.automaticDecisionKey(suggestion)])];
+    }
   }
   private async refreshMetadataPapers(patches:readonly MetadataPatch[],reason:string) {
     for(const patch of patches){
@@ -2492,7 +2760,7 @@ export class AppController implements ManagerAPI {
     const changed=!previous||paperFingerprint({...previous,pdfText:undefined})!==current.fingerprint;
     if(changed){this.remember(current);delete this.state.analyses[current.id];delete this.state.facts[current.id];}
     await this.save();
-    if(changed&&this.state.settings.autoAssign&&this.state.pilotReviewed){this.deferredItems.add(itemID);await this.save();if(!this.worker&&this.state.run?.status!=='paused')await this.processDeferred();}
+    if(changed&&this.state.settings.autoAssign){this.deferredItems.add(itemID);await this.save();if(!this.worker&&this.state.run?.status!=='paused')await this.processDeferred();}
   }
   async onAttachmentChanged(parentID:number) {
     const paper=await this.env.host.read(parentID);if(!paper)return;
@@ -2512,7 +2780,7 @@ export class AppController implements ManagerAPI {
     if(this.state.settings.autoAssign){this.deferredItems.add(parentID);if(!this.worker)await this.processDeferred();}
   }
   private async processDeferred() {
-    if(!this.state.settings.autoAssign||!this.state.pilotReviewed||this.state.run?.status==='paused')return;
+    if(!this.state.settings.autoAssign||this.state.run?.status==='paused')return;
     const ids=[...this.deferredItems];this.deferredItems.clear();const papers:PaperRecord[]=[];
     for(const id of ids){const paper=await this.env.host.read(id);if(paper){this.remember(paper);papers.push(paper);}}
     if(papers.length)try{await this.start('tag','incoming',true,papers);}catch(error){for(const id of ids)this.deferredItems.add(id);this.warn(this.message(error));await this.save();}

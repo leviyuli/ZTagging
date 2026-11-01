@@ -14,8 +14,8 @@ export const PREPARATION_REQUEST_BYTE_LIMIT=100_000;
 export type SourceJudgement=MachineEvidenceDecision;
 export interface PreparationChoice {id:string;label:string;description:string;meaning?:Partial<Pick<TagDefinition,'name'|'fullName'|'description'|'facet'>>;exclude?:boolean;action?:'separate-reaction'}
 export interface PreparationQuestion {id:string;tagId?:string;title:string;description:string;paperIds:string[];sourceIds:string[];choices:PreparationChoice[];kind:'meaning'|'category'|'scope'|'protected-conflict';contextFingerprint:string}
-export interface TagPreparationState {id:string;proposalId:string;snapshotId:string;policyVersion:number;status:'checking'|'questions'|'ready'|'failed';judgements:Record<string,SourceJudgement>;questions:PreparationQuestion[];answers:Record<string,string>;diagnostics:string[];excluded:{tagId:string;name:string;reason:string;origin?:'researcher'|'ai'}[];provider?:string;model?:string;contextTruncated?:boolean;pendingSourceCount?:number}
-export interface PreparationOptions {existingDefinitions?:readonly TagDefinition[];protectedTagIds?:readonly string[];facts?:readonly PaperFacts[];repairAttempts?:number;maxRepairs?:number;provider?:string;model?:string;targetCount?:number}
+export interface TagPreparationState {id:string;proposalId:string;snapshotId:string;policyVersion:number;status:'checking'|'questions'|'ready'|'failed';judgements:Record<string,SourceJudgement>;questions:PreparationQuestion[];answers:Record<string,string>;diagnostics:string[];excluded:{tagId:string;name:string;reason:string;origin?:'researcher'|'ai'}[];provider?:string;model?:string;contextTruncated?:boolean;pendingSourceCount?:number;processingPolicy?:'auto-clear';admissions?:Record<string,{definitionFingerprint:string;changeId:string}>;shelfId?:string}
+export interface PreparationOptions {existingDefinitions?:readonly TagDefinition[];protectedTagIds?:readonly string[];facts?:readonly PaperFacts[];repairAttempts?:number;maxRepairs?:number;provider?:string;model?:string;targetCount?:number;processingPolicy?:'auto-clear'}
 export interface PreparationResult {proposal:TaxonomyProposal;state:TagPreparationState;repairRequest:boolean;diagnostics:string[]}
 
 const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
@@ -25,7 +25,9 @@ const strings=(value:unknown)=>Array.isArray(value)?[...new Set(value.filter((it
 const decisionRelations=new Set(['equivalent','subtype','related','unrelated','needs-context']);
 
 export function validTagPreparationState(value:unknown):value is TagPreparationState {
-  const state=record(value);return !!state&&['id','proposalId','snapshotId'].every(key=>typeof state[key]==='string')&&typeof state.policyVersion==='number'&&['checking','questions','ready','failed'].includes(String(state.status))&&!!record(state.judgements)&&!!record(state.answers)&&Array.isArray(state.questions)&&Array.isArray(state.diagnostics)&&Array.isArray(state.excluded);
+  const state=record(value);if(!state)return false;
+  const admissions=record(state.admissions);
+  return ['id','proposalId','snapshotId'].every(key=>typeof state[key]==='string')&&typeof state.policyVersion==='number'&&['checking','questions','ready','failed'].includes(String(state.status))&&!!record(state.judgements)&&!!record(state.answers)&&Array.isArray(state.questions)&&Array.isArray(state.diagnostics)&&Array.isArray(state.excluded)&&(state.processingPolicy===undefined||state.processingPolicy==='auto-clear')&&(state.shelfId===undefined||typeof state.shelfId==='string'&&!!state.shelfId)&&(state.admissions===undefined||!!admissions&&Object.entries(admissions).every(([id,value])=>{const admission=record(value);return !!id&&!!admission&&['definitionFingerprint','changeId'].every(key=>typeof admission[key]==='string'&&!!admission[key]);}));
 }
 function protectedIds(options:PreparationOptions,proposal:TaxonomyProposal):Set<string> {
   const answered=Object.values(proposal.machineDecisions??{}).filter(value=>value.origin==='researcher'&&value.snapshotId===proposal.evidenceSnapshot?.id&&proposal.tags.some(tag=>tag.id===value.tagId&&conceptMeaningFingerprint(tag)===value.meaningFingerprint)).map(value=>value.tagId);
@@ -146,6 +148,7 @@ export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,opt
   let proposal=input.extension?reconcileExtensionProposal(input,input.extension.baseline):clone(input);const snapshot=proposal.evidenceSnapshot;
   const policy=preparationPolicy(proposal),compatible=previous?.proposalId===proposal.id&&previous.snapshotId===snapshot?.id&&previous.policyVersion===policy;
   const state:TagPreparationState=compatible?clone(previous!):{id:allocateOpaqueId('preparation'),proposalId:proposal.id,snapshotId:snapshot?.id??'',policyVersion:policy,status:'checking',judgements:{},questions:[],answers:{},diagnostics:[],excluded:[]};
+  if(options.processingPolicy)state.processingPolicy=options.processingPolicy;
   state.provider=options.provider??state.provider;state.model=options.model??state.model;
   if(!snapshot||validateRegistrySnapshot(snapshot).length){state.status='failed';state.diagnostics.push('The selected evidence snapshot is unavailable or invalid. Rebuild using the retained paper facts.');return {proposal,state,repairRequest:false,diagnostics:state.diagnostics};}
   respectResearcherExclusions(proposal,state);

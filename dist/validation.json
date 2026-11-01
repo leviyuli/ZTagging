@@ -1,1626 +1,218 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "0.13.1",
-  "verifiedAt": "2026-10-31T13:10:12.653Z",
+  "version": "1.0.0",
+  "verifiedAt": "2026-11-01T06:57:02.833280+00:00",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Unblocked tag browsing, reachable page navigation and explicit legacy meaning actions",
-  "schemaVersion": 11,
-  "plannerVersion": 4,
-  "consolidationProtocolVersion": 2,
-  "sourceValidationPolicyVersion": 3,
+  "scope": "Automatic clear tagging results, exceptional choices, simpler keyboard-driven task pages and reversible corrections",
+  "schemaVersion": 12,
+  "assignmentAnalysisPolicyVersion": 2,
+  "adaptiveVocabularyPolicyVersion": 1,
+  "nativeDefinitionProtocolVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 1019,
-    "failed": 0
+    "passed": 1084,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0
   },
+  "typeChecks": {
+    "standard": "passed",
+    "unusedBindings": "passed",
+    "unusedBindingsCommand": "tsc --noEmit --noUnusedLocals --noUnusedParameters"
+  },
+  "inMemoryBundle": "passed",
+  "productionBuild": "passed",
   "nativeSmoke": {
-    "browsingAndNavigation": {
-      "retainedPapers": 17,
-      "savedTags": 17,
-      "syntheticRequests": 2,
-      "pdfReads": 0,
-      "extractionRequests": 0,
-      "nativeTagWrites": 0,
-      "sidebarRoutes": 8,
-      "viewports": 2,
-      "realPointerClicks": 0,
-      "realProviderRequests": 0
-    },
-    "actionableMeanings": {
-      "retainedPapers": 48,
-      "syntheticRequests": 3,
-      "extractionRequests": 0,
-      "nativeTagWrites": 0,
-      "scopeChoice": true,
-      "entryBoundManualEdit": true,
-      "leftUndefined": true,
-      "completedHistory": true,
-      "realProviderRequests": 0
-    },
-    "nativeMeanings": {
-      "cachedPapers": 2,
-      "syntheticRequests": 1,
-      "extractionRequests": 0,
-      "pdfReads": 0,
-      "nativeTagWrites": 0,
-      "shelfMergeKeepsDefinitions": true,
-      "meaningsSavedWithoutNativeCleanup": true,
-      "unresolvedProjectNameRemainsUndefined": true,
-      "completedProgressScopedToActivity": true,
-      "realProviderRequests": 0
-    },
     "status": "passed",
-    "passed": 259,
-    "checks": [
-      {
-        "name": "isolatedDataDirectory",
-        "passed": true
-      },
-      {
-        "name": "isolatedProfile",
-        "passed": true
-      },
-      {
-        "name": "extensionStartup",
-        "passed": true
-      },
-      {
-        "name": "menuAPI",
-        "passed": true
-      },
-      {
-        "name": "sourceGlobals",
-        "passed": true
-      },
-      {
-        "name": "automaticAssignmentInitiallyOff",
-        "passed": true
-      },
-      {
-        "name": "managerSnapshot",
-        "passed": true
-      },
-      {
-        "name": "v020ApprovedStartupDefaultsToTags",
-        "passed": true
-      },
-      {
-        "name": "fixtureSetupUsesCollections",
-        "passed": true
-      },
-      {
-        "name": "deepseekCredentialIsolation",
-        "passed": true
-      },
-      {
-        "name": "deepseekModelDiscovery",
-        "passed": true
-      },
-      {
-        "name": "deepseekJSONResult",
-        "passed": true
-      },
-      {
-        "name": "deepseekUsageCost",
-        "passed": true
-      },
-      {
-        "name": "deepseekQuotaClassification",
-        "passed": true
-      },
-      {
-        "name": "deepseekNoProviderFallback",
-        "passed": true
-      },
-      {
-        "name": "hostScan",
-        "passed": true
-      },
-      {
-        "name": "rclDefinitionPresent",
-        "passed": true
-      },
-      {
-        "name": "nativeTagApplied",
-        "passed": true
-      },
-      {
-        "name": "manualTagPreserved",
-        "passed": true
-      },
-      {
-        "name": "unrelatedPaperUntouched",
-        "passed": true
-      },
-      {
-        "name": "ownedAssignmentRecorded",
-        "passed": true
-      },
-      {
-        "name": "historyRecorded",
-        "passed": true
-      },
-      {
-        "name": "nativeUndo",
-        "passed": true
-      },
-      {
-        "name": "savedSearch",
-        "passed": true
-      },
-      {
-        "name": "isolatedServerPort",
-        "passed": true
-      },
-      {
-        "name": "nativeOAuthCallback",
-        "passed": true
-      },
-      {
-        "name": "callbackNoStoreHeader",
-        "passed": true
-      },
-      {
-        "name": "callbackDisposed",
-        "passed": true
-      },
-      {
-        "name": "v020IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v020IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v020NativeDescendantsAndLegacyAliases",
-        "passed": true
-      },
-      {
-        "name": "v020NativeSpecificSubtypeExcludesBroadOnly",
-        "passed": true
-      },
-      {
-        "name": "v020NativeContextDetailAll",
-        "passed": true
-      },
-      {
-        "name": "v020NativeGlobalDetail",
-        "passed": true
-      },
-      {
-        "name": "v020NativeLegacyDetailDoesNotExpandParent",
-        "passed": true
-      },
-      {
-        "name": "v020NativeLegacyDetailKeepsCompoundContext",
-        "passed": true
-      },
-      {
-        "name": "v020NativeContextCompoundAny",
-        "passed": true
-      },
-      {
-        "name": "v020NativeScientificCaseCo",
-        "passed": true
-      },
-      {
-        "name": "v020NativeScientificCaseCO",
-        "passed": true
-      },
-      {
-        "name": "v020NativeInvalidConceptMatchesNone",
-        "passed": true
-      },
-      {
-        "name": "v020NativeCountsDeduplicateAndIncludeUnindexedPapers",
-        "passed": true
-      },
-      {
-        "name": "v020NativeSavedSearchFreezesHierarchy",
-        "passed": true
-      },
-      {
-        "name": "v020NativePDFTextExtractedAndIndexed",
-        "passed": true
-      },
-      {
-        "name": "v020NativeChildEvidenceFixtures",
-        "passed": true
-      },
-      {
-        "name": "v020BaselineTitleSearch",
-        "passed": true
-      },
-      {
-        "name": "v020BaselinePDFSearch",
-        "passed": true
-      },
-      {
-        "name": "v020BaselineNoteSearch",
-        "passed": true
-      },
-      {
-        "name": "v020BaselineAnnotationSearch",
-        "passed": true
-      },
-      {
-        "name": "v020BaselineQuotedSearch",
-        "passed": true
-      },
-      {
-        "name": "v020BaselineMultiwordSearch",
-        "passed": true
-      },
-      {
-        "name": "v020NativeAdapterAvailable",
-        "passed": true
-      },
-      {
-        "name": "v020TagModeTitleSearch",
-        "passed": true
-      },
-      {
-        "name": "v020TagModePDFSearch",
-        "passed": true
-      },
-      {
-        "name": "v020TagModeNoteSearch",
-        "passed": true
-      },
-      {
-        "name": "v020TagModeAnnotationSearch",
-        "passed": true
-      },
-      {
-        "name": "v020TagModeQuotedSearch",
-        "passed": true
-      },
-      {
-        "name": "v020TagModeMultiwordSearch",
-        "passed": true
-      },
-      {
-        "name": "v020NativeEmptyQuickSearch",
-        "passed": true
-      },
-      {
-        "name": "v020NativeIncomingPaperRefreshesExistingView",
-        "passed": true
-      },
-      {
-        "name": "v020NativeTagRemovalRefreshesExistingView",
-        "passed": true
-      },
-      {
-        "name": "v020NativeColumnsPreserved",
-        "passed": true
-      },
-      {
-        "name": "v020NativeIndependentWindows",
-        "passed": true
-      },
-      {
-        "name": "v020NativeDestroyRestoresCollectionsAndFilters",
-        "passed": true
-      },
-      {
-        "name": "v020NativeOtherWindowRemainsFiltered",
-        "passed": true
-      },
-      {
-        "name": "v020NativeOtherWindowColumnsRestored",
-        "passed": true
-      },
-      {
-        "name": "v020CollectionsChoiceSurvivesTaxonomyUpdate",
-        "passed": true
-      },
-      {
-        "name": "v020MountedNavigatorDefaultsToApprovedTags",
-        "passed": true
-      },
-      {
-        "name": "v060IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v060IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v060SidebarFollowsWorkflow",
-        "passed": true
-      },
-      {
-        "name": "v060BuildGroupIsIndependent",
-        "passed": true
-      },
-      {
-        "name": "v060ApplyOnlySavesTagLibrary",
-        "passed": true
-      },
-      {
-        "name": "v060AssignmentStartsWithWholeLibrary",
-        "passed": true
-      },
-      {
-        "name": "v060ChosenCollectionReceivesPreview",
-        "passed": true
-      },
-      {
-        "name": "v060WholeLibraryAssignmentIncludesOtherPapers",
-        "passed": true
-      },
-      {
-        "name": "v060LaterBuildDefaultsToExtend",
-        "passed": true
-      },
-      {
-        "name": "v060ExtensionOnlyReadsNewGroup",
-        "passed": true
-      },
-      {
-        "name": "v060ExtensionRetainsOldIdentityWithoutDuplicates",
-        "passed": true
-      },
-      {
-        "name": "v060TagLibraryRetainsDIYEditor",
-        "passed": true
-      },
-      {
-        "name": "v060AssignmentRetainsIndependentScopeAndPilotGate",
-        "passed": true
-      },
-      {
-        "name": "v060PreviewPreservesNativeDataAndColumns",
-        "passed": true
-      },
-      {
-        "name": "v070IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v070IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v070MappingUsesAtMostTwoRequestsAtOnce",
-        "passed": true
-      },
-      {
-        "name": "v070CompletedSourceMappingIsSavedBeforePause",
-        "passed": true
-      },
-      {
-        "name": "v070FiniteGlobalChoiceReachesReview",
-        "passed": true
-      },
-      {
-        "name": "v071GeneratedRCLAliasIsWithheldWithoutChangingDIY",
-        "passed": true
-      },
-      {
-        "name": "v070SerializedResumeDoesNotRepeatCompletedRequests",
-        "passed": true
-      },
-      {
-        "name": "v070EveryFindingHasOnePersistentOutcome",
-        "passed": true
-      },
-      {
-        "name": "v070PlainProgressHasNoInventedETA",
-        "passed": true
-      },
-      {
-        "name": "v070FactsNativeTagsAndAutomationRemainUnchanged",
-        "passed": true
-      },
-      {
-        "name": "v080IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v080IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v080LiveSwitchLetsCurrentCallsFinish",
-        "passed": true
-      },
-      {
-        "name": "v080LegacyRawWorkIsRetainedDuringSwitch",
-        "passed": true
-      },
-      {
-        "name": "v081MissingCacheRecoversFromUnchangedEvidence",
-        "passed": true
-      },
-      {
-        "name": "v080RepresentativeChecksPersistBeforeRestart",
-        "passed": true
-      },
-      {
-        "name": "v080RepresentativeBuildFinishesWithSixtyTags",
-        "passed": true
-      },
-      {
-        "name": "v080RestartReusesCompletedChecksAndFrozenChoice",
-        "passed": true
-      },
-      {
-        "name": "v080ProgressDoesNotClaimExhaustiveVerification",
-        "passed": true
-      },
-      {
-        "name": "v080ApplySavesOnlyDefinitions",
-        "passed": true
-      },
-      {
-        "name": "v080CachedEvidenceNativeTagsAndColumnsStayIntact",
-        "passed": true
-      },
-      {
-        "name": "v080FreshBuildDefaultsToRepresentativeChecks",
-        "passed": true
-      },
-      {
-        "name": "v080FreshBuildReusesCachedFactsWithoutAssignment",
-        "passed": true
-      },
-      {
-        "name": "v040IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v040IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v040StateSchema",
-        "passed": true
-      },
-      {
-        "name": "v040LargeCleanPreparation",
-        "passed": true
-      },
-      {
-        "name": "v040LargeHumanUIFast",
-        "passed": true
-      },
-      {
-        "name": "v040NoRoutineProofControls",
-        "passed": true
-      },
-      {
-        "name": "v040CuratedTechnologyReadyWithoutQuestions",
-        "passed": true
-      },
-      {
-        "name": "v040EditorScrollKeepsSaveVisible",
-        "passed": true
-      },
-      {
-        "name": "v040NarrowEditorKeepsSaveVisible",
-        "passed": true
-      },
-      {
-        "name": "v040UnsavedEditorBlocksApply",
-        "passed": true
-      },
-      {
-        "name": "v040SuccessNoticeExpires",
-        "passed": true
-      },
-      {
-        "name": "v040ApplySavesWithoutAssignment",
-        "passed": true
-      },
-      {
-        "name": "v040ExplicitGroupCreatesSeparatePaperPreview",
-        "passed": true
-      },
-      {
-        "name": "v040OnlyUnresolvedScopeBecomesQuestion",
-        "passed": true
-      },
-      {
-        "name": "v040QuestionChoiceFinishesPreparation",
-        "passed": true
-      },
-      {
-        "name": "v041NewChatGPTConnectionUsesFreshRegistration",
-        "passed": true
-      },
-      {
-        "name": "v041ContinueRetainsSavedConnection",
-        "passed": true
-      },
-      {
-        "name": "v053IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v053IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v053FiniteSelectionUsesRetainedFacts",
-        "passed": true
-      },
-      {
-        "name": "v053LegacyCheckpointAndCompletedPartsStayImmutable",
-        "passed": true
-      },
-      {
-        "name": "v053OneGlobalPlanReplacesLegacyBatchReduction",
-        "passed": true
-      },
-      {
-        "name": "v053RetainedFactsAndNativeTagsUnchanged",
-        "passed": true
-      },
-      {
-        "name": "v053ActivityShowsRecordedUsageRatherThanFalseTotal",
-        "passed": true
-      },
-      {
-        "name": "v052IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v052IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v052RowsKeepOneRecoveryAndMore",
-        "passed": true
-      },
-      {
-        "name": "v052LongTitlesStayInsideTheirColumn",
-        "passed": true
-      },
-      {
-        "name": "v052NoZeroQueueOrFooterClutter",
-        "passed": true
-      },
-      {
-        "name": "v052BulkActionsOnlyAfterSelection",
-        "passed": true
-      },
-      {
-        "name": "v052ActionsUseAccessibleMenu",
-        "passed": true
-      },
-      {
-        "name": "v052MenuStaysInsideWindow",
-        "passed": true
-      },
-      {
-        "name": "v052EscapeClosesAndRestoresFocus",
-        "passed": true
-      },
-      {
-        "name": "v052EmptyViewHasNoSelectionOrPager",
-        "passed": true
-      },
-      {
-        "name": "v052FilteringClearsHiddenSelections",
-        "passed": true
-      },
-      {
-        "name": "v052LayoutChecksNeedNoProvider",
-        "passed": true
-      },
-      {
-        "name": "v051IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v051IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v051DismissPreservesLibraryAndEligibility",
-        "passed": true
-      },
-      {
-        "name": "v051ChangedConditionReturnsAfterDismissal",
-        "passed": true
-      },
-      {
-        "name": "v051ExclusionPreviewIsReadOnly",
-        "passed": true
-      },
-      {
-        "name": "v051CancelledExclusionChangesNothing",
-        "passed": true
-      },
-      {
-        "name": "v051ManualExclusionPreservesExistingTagTypes",
-        "passed": true
-      },
-      {
-        "name": "v051ExcludedViewHasIncludeInsteadOfRetry",
-        "passed": true
-      },
-      {
-        "name": "v051BuiltinFilterAvailableWithoutVocabulary",
-        "passed": true
-      },
-      {
-        "name": "v051NativeNoTagFilterKeepsColumns",
-        "passed": true
-      },
-      {
-        "name": "v051ExclusionUndoRestoresExactNativeTags",
-        "passed": true
-      },
-      {
-        "name": "v051IncludePreviewLeavesMarkUntilApply",
-        "passed": true
-      },
-      {
-        "name": "v051IncludeAgainPreservesAllOtherTags",
-        "passed": true
-      },
-      {
-        "name": "v090IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v090IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v090KeepDefaultsReserveNoTag",
-        "passed": true
-      },
-      {
-        "name": "v090KeepPreviewIsWholeInventoryAndReadOnly",
-        "passed": true
-      },
-      {
-        "name": "v090KeepApplyAndUndoRestoreExactTagsAndLocks",
-        "passed": true
-      },
-      {
-        "name": "v090KeepUndoRestoresTypedNativeTags",
-        "passed": true
-      },
-      {
-        "name": "v090AssignmentTriagesWithoutNativeWrites",
-        "passed": true
-      },
-      {
-        "name": "v090FinishAppliesAcceptedAndRevealsOneReport",
-        "passed": true
-      },
-      {
-        "name": "v090DIYComparisonIsManualAndInitiallyUnselected",
-        "passed": true
-      },
-      {
-        "name": "v090DIYMergePreservesCanonicalTagAndUndo",
-        "passed": true
-      },
-      {
-        "name": "v090DIYUndoRestoresDefinitionsNativeTagsAndColumns",
-        "passed": true
-      },
-      {
-        "name": "v0100IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0100CombinedNavigationHasNoCleanupStep",
-        "passed": true
-      },
-      {
-        "name": "v0100ShelfRenameLeavesTagDefinitionsAndNativeDataAlone",
-        "passed": true
-      },
-      {
-        "name": "v0100ExistingNamesVisibleWithoutDefinitionsOrCleanup",
-        "passed": true
-      },
-      {
-        "name": "v0100AssignmentUsesShelfOnlyWithParentContext",
-        "passed": true
-      },
-      {
-        "name": "v0100OneBatchFinishPreservesExistingTagsAndOtherPapers",
-        "passed": true
-      },
-      {
-        "name": "v0100ShelfAssignmentUndoRestoresExactNativeTags",
-        "passed": true
-      },
-      {
-        "name": "v0100BuildAndReviewShareOnePage",
-        "passed": true
-      },
-      {
-        "name": "v0100ApplyingBuildCreatesShelfWithoutNativeWrites",
-        "passed": true
-      },
-      {
-        "name": "v0100ResetWaitsForExplicitConfirmation",
-        "passed": true
-      },
-      {
-        "name": "v0100ResetKeepsDefinitionsNativeTagsAndPaidHistory",
-        "passed": true
-      },
-      {
-        "name": "v0101IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0101SavedChooserRecoversLocallyBeforeRetry",
-        "passed": true
-      },
-      {
-        "name": "v0101ExistingLabelsAliasesAndSafeAcronymsResolve",
-        "passed": true
-      },
-      {
-        "name": "v0101UnknownOptionalContextDoesNotDeleteCandidates",
-        "passed": true
-      },
-      {
-        "name": "v0101PublicRetryFinishesWithoutChoosingOrExtraction",
-        "passed": true
-      },
-      {
-        "name": "v0101PublicRecoveryKeepsPaidRepliesFactsAndIDs",
-        "passed": true
-      },
-      {
-        "name": "v0101ApplyKeepsSavedDefinitionsAndNativeLibrary",
-        "passed": true
-      },
-      {
-        "name": "v0102IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0102NewGroupHasOnlyCurrentReadingProgress",
-        "passed": true
-      },
-      {
-        "name": "v0102ActivityHidesDormantSelectionProgress",
-        "passed": true
-      },
-      {
-        "name": "v0102PauseKeepsReadingPhaseAndDormantCache",
-        "passed": true
-      },
-      {
-        "name": "v0102CancelKeepsCachedFactsNativeDataAndColumns",
-        "passed": true
-      },
-      {
-        "name": "v0103IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0103SavedAliasCollisionsRecoverBeforePaidRetry",
-        "passed": true
-      },
-      {
-        "name": "v0103AliasesCannotStealSavedOrGeneratedMeanings",
-        "passed": true
-      },
-      {
-        "name": "v0103ChemicalContradictionsStayBlocked",
-        "passed": true
-      },
-      {
-        "name": "v0103PublicRetryKeepsRawFactsIDsAndSpending",
-        "passed": true
-      },
-      {
-        "name": "v0103RecoveryUsesOnlyExactCurrentSnapshotSources",
-        "passed": true
-      },
-      {
-        "name": "v0103ApplyKeepsProtectedDefinitionsAndNativeLibrary",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationIsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationSelectionPreservesScrollAndFocus",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationExpansionPreservesScrollAndFocus",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationSearchKeepsCaretAndResultsPosition",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationSearchClearRestoresTreePosition",
-        "passed": true
-      },
-      {
-        "name": "v0110NavigationCollectionsRoundTripPreservesPosition",
-        "passed": true
-      },
-      {
-        "name": "v0110WorkflowIsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0110ImportedKeywordsReachChooserWithoutManualTagProvenance",
-        "passed": true
-      },
-      {
-        "name": "v0110UnifiedMyShelfHasDeduplicatedLibraryCounts",
-        "passed": true
-      },
-      {
-        "name": "v0111ShelfMenusShowSameTotalAndReadyCounts",
-        "passed": true
-      },
-      {
-        "name": "v0110TopicReportGroupsDRTWithoutMergingDifferentCathodeScopes",
-        "passed": true
-      },
-      {
-        "name": "v0110ChangedSavedListOffersApplyWithoutResume",
-        "passed": true
-      },
-      {
-        "name": "v0110ChangedSavedListAppliesWithoutRebuildingOrLosingEdits",
-        "passed": true
-      },
-      {
-        "name": "v0110DefinitionApplyKeepsNativeDataChoicesAndColumns",
-        "passed": true
-      },
-      {
-        "name": "v0120IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0120RenderedMergeDeduplicatesMembershipWithoutChangingTags",
-        "passed": true
-      },
-      {
-        "name": "v0120ReadinessFilterShowsOnlyUndefinedNativeNames",
-        "passed": true
-      },
-      {
-        "name": "v0120MeaningReviewScrollsWithSaveVisible",
-        "passed": true
-      },
-      {
-        "name": "v0120SelectedNamesPrepareOnlyGroundedDefinitionsAndRealQuestions",
-        "passed": true
-      },
-      {
-        "name": "v0120DefinitionApplyPreservesNativeNamesFactsAndManualProject",
-        "passed": true
-      },
-      {
-        "name": "v0120CompletedBuildProgressStaysInHistory",
-        "passed": true
-      },
-      {
-        "name": "v0130IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0130CurrentMeaningQuestionsReplaceOldCompletedBuild",
-        "passed": true
-      },
-      {
-        "name": "v0130ShelfControlsStayOutsideMeaningReview",
-        "passed": true
-      },
-      {
-        "name": "v0130ScopeChoicesAreFocusableAndConcrete",
-        "passed": true
-      },
-      {
-        "name": "v0130MeaningEditorRetainsAIProposalAndVisibleFooter",
-        "passed": true
-      },
-      {
-        "name": "v0130ChoicesEditsAndLeavingUndefinedFinishWithoutNativeWrites",
-        "passed": true
-      },
-      {
-        "name": "v0130FinishedMeaningWorkAppearsOnlyInCollapsedHistory",
-        "passed": true
-      },
-      {
-        "name": "v0131IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v0131ManagerResourcesUseInstalledVersion",
-        "passed": true
-      },
-      {
-        "name": "v0131DefaultLibraryBrowsesDespiteLegacyQuestion",
-        "passed": true
-      },
-      {
-        "name": "v0131WideLibraryHasFullWidthListAndSeparateSidebar",
-        "passed": true
-      },
-      {
-        "name": "v0131WideSidebarRoutesAreHitTestedAndResetPageScroll",
-        "passed": true
-      },
-      {
-        "name": "v0131WideLibraryReturnsToBrowsing",
-        "passed": true
-      },
-      {
-        "name": "v0131NarrowSidebarRoutesAreHitTestedAndResetPageScroll",
-        "passed": true
-      },
-      {
-        "name": "v0131NarrowLibraryReturnsToBrowsing",
-        "passed": true
-      },
-      {
-        "name": "v0131LegacyQuestionOffersAnActionInsteadOfAnUnanswerableChoice",
-        "passed": true
-      },
-      {
-        "name": "v0131ChangingShelfReturnsToSavedTags",
-        "passed": true
-      },
-      {
-        "name": "v0131ChangingReadinessReturnsToBrowsing",
-        "passed": true
-      },
-      {
-        "name": "v0131BackgroundRefreshPreservesInnerListScroll",
-        "passed": true
-      },
-      {
-        "name": "v0131ShortDrawerKeepsDraftScrollFooterAndSidebarUsable",
-        "passed": true
-      },
-      {
-        "name": "v0131SidebarClickClosesDrawerAndShowsNewPage",
-        "passed": true
-      },
-      {
-        "name": "v0131SuggestMeaningRecoversLegacyWorkWithoutRepeatedExtraction",
-        "passed": true
-      },
-      {
-        "name": "v0131RecoveredMeaningSavesWithoutChangingLibraryPapers",
-        "passed": true
-      },
-      {
-        "name": "v050IsolatedDataGuard",
-        "passed": true
-      },
-      {
-        "name": "v050IsolatedProfileGuard",
-        "passed": true
-      },
-      {
-        "name": "v050StateSchema",
-        "passed": true
-      },
-      {
-        "name": "v050NativeVersionAndRecoveryControls",
-        "passed": true
-      },
-      {
-        "name": "v050NativeNavigationRestoresOnce",
-        "passed": true
-      },
-      {
-        "name": "v050CompatibilityInventoryRecognizesAliasWithoutSelection",
-        "passed": true
-      },
-      {
-        "name": "v050ExistingNativePreviewIsReadOnly",
-        "passed": true
-      },
-      {
-        "name": "v050CompatibilityPreviewPreservesOtherManualNativeTags",
-        "passed": true
-      },
-      {
-        "name": "v050PaperAttentionIsUnique",
-        "passed": true
-      },
-      {
-        "name": "v050MetadataPreviewIsReadOnly",
-        "passed": true
-      },
-      {
-        "name": "v050MetadataFillsOnlyMissingFields",
-        "passed": true
-      },
-      {
-        "name": "v050MetadataUndoRestoresEmptyField",
-        "passed": true
-      },
-      {
-        "name": "v050UpdatePackagesKeepStableIdentity",
-        "passed": true
-      },
-      {
-        "name": "v050UpdateURLRemainsSecureAndStable",
-        "passed": true
-      },
-      {
-        "name": "v050LocalUpdateManifestMatchesPackage",
-        "passed": true
-      },
-      {
-        "name": "v050NativeUpgradeStartsFromTestAddon",
-        "passed": true
-      },
-      {
-        "name": "v050OldPackageStaysDisabled",
-        "passed": true
-      },
-      {
-        "name": "v050OldPackageCannotRewriteNewerState",
-        "passed": true
-      },
-      {
-        "name": "v050NativePackageUpgradeWithoutUninstall",
-        "passed": true
-      },
-      {
-        "name": "v050NativeUpgradePreservesPluginState",
-        "passed": true
-      },
-      {
-        "name": "v050NativeUpgradePreservesLibraryAndColumns",
-        "passed": true
+    "passed": 92,
+    "failed": 0,
+    "themes": {
+      "light": {
+        "status": "passed",
+        "passed": 46,
+        "failed": 0,
+        "version": "1.0.0",
+        "addonSource": "production-build",
+        "completedAt": "2026-11-01T06:55:25.620Z",
+        "checks": [
+          "isolatedDataDirectory",
+          "isolatedProfile",
+          "extensionStartup",
+          "menuAPI",
+          "sourceGlobals",
+          "automaticAssignmentInitiallyOff",
+          "managerSnapshot",
+          "fixtureSetupUsesCollections",
+          "automaticIsolatedProfileAndData",
+          "automaticProductionVersion",
+          "automaticProductionManagerResourceVersions",
+          "automaticSeparatePrimaryPages",
+          "automaticKeyboardOpensScope",
+          "automaticEscapeClosesAndRestoresFocus",
+          "automaticKeyboardEnterCommitsScope",
+          "automaticClearWrittenWithoutBatchApproval",
+          "automaticUncertainDoesNotBlockCompletion",
+          "automaticRequestedTheme",
+          "automaticLayoutFitsViewport",
+          "automaticLaterDoesNotReject",
+          "automaticDeferredItemCanReopen",
+          "automaticAssignReopensActiveResult",
+          "automaticUIUndoPreservesManualTags",
+          "automaticUndoSurvivesExactCachedRerun",
+          "automaticUserChoiceChangesOnlyChosenPaper",
+          "automaticBuildAdvancedOptionsCollapsed",
+          "automaticNativeMeaningSavedWithoutExtraApproval",
+          "automaticConnectionShowsOneModelControl",
+          "automaticConnectionSaveAndTestUsesChosenModel",
+          "automaticEditorEnterSavesAndRestoresFocus",
+          "automaticEditorControlEnterSaves",
+          "automaticEditorEscapeKeepsSavedMeaning",
+          "automaticEditorReopensUnsavedDraft",
+          "automaticEditorCloseKeepsDraft",
+          "automaticEditorDiscardRestoresSavedMeaning",
+          "automaticNarrowbuildFitsViewport",
+          "automaticNarrowbuildPrimaryReachable",
+          "automaticNarrowlibraryFitsViewport",
+          "automaticNarrowlibraryPrimaryReachable",
+          "automaticNarrowassignmentFitsViewport",
+          "automaticNarrowassignmentPrimaryReachable",
+          "automaticNarrowconnectionFitsViewport",
+          "automaticNarrowconnectionPrimaryReachable",
+          "automaticNarrowEditorSaveAndCloseReachable",
+          "automaticNarrowSidebarClosesEditorSafely",
+          "automaticNativeColumnsPreserved"
+        ],
+        "syntheticPapers": 3,
+        "mockRequests": 5,
+        "isolatedNativeWrites": 3,
+        "pointerActions": 28,
+        "keyboardActions": 10,
+        "keyboardTransport": "Gecko TextInputProcessor",
+        "realProviderRequests": 0,
+        "screenshots": 10,
+        "contentViewports": [
+          {
+            "width": 1266,
+            "height": 862
+          },
+          {
+            "width": 806,
+            "height": 582
+          }
+        ]
+      },
+      "dark": {
+        "status": "passed",
+        "passed": 46,
+        "failed": 0,
+        "version": "1.0.0",
+        "addonSource": "production-build",
+        "completedAt": "2026-11-01T06:56:10.744Z",
+        "checks": [
+          "isolatedDataDirectory",
+          "isolatedProfile",
+          "extensionStartup",
+          "menuAPI",
+          "sourceGlobals",
+          "automaticAssignmentInitiallyOff",
+          "managerSnapshot",
+          "fixtureSetupUsesCollections",
+          "automaticIsolatedProfileAndData",
+          "automaticProductionVersion",
+          "automaticProductionManagerResourceVersions",
+          "automaticSeparatePrimaryPages",
+          "automaticKeyboardOpensScope",
+          "automaticEscapeClosesAndRestoresFocus",
+          "automaticKeyboardEnterCommitsScope",
+          "automaticClearWrittenWithoutBatchApproval",
+          "automaticUncertainDoesNotBlockCompletion",
+          "automaticRequestedTheme",
+          "automaticLayoutFitsViewport",
+          "automaticLaterDoesNotReject",
+          "automaticDeferredItemCanReopen",
+          "automaticAssignReopensActiveResult",
+          "automaticUIUndoPreservesManualTags",
+          "automaticUndoSurvivesExactCachedRerun",
+          "automaticUserChoiceChangesOnlyChosenPaper",
+          "automaticBuildAdvancedOptionsCollapsed",
+          "automaticNativeMeaningSavedWithoutExtraApproval",
+          "automaticConnectionShowsOneModelControl",
+          "automaticConnectionSaveAndTestUsesChosenModel",
+          "automaticEditorEnterSavesAndRestoresFocus",
+          "automaticEditorControlEnterSaves",
+          "automaticEditorEscapeKeepsSavedMeaning",
+          "automaticEditorReopensUnsavedDraft",
+          "automaticEditorCloseKeepsDraft",
+          "automaticEditorDiscardRestoresSavedMeaning",
+          "automaticNarrowbuildFitsViewport",
+          "automaticNarrowbuildPrimaryReachable",
+          "automaticNarrowlibraryFitsViewport",
+          "automaticNarrowlibraryPrimaryReachable",
+          "automaticNarrowassignmentFitsViewport",
+          "automaticNarrowassignmentPrimaryReachable",
+          "automaticNarrowconnectionFitsViewport",
+          "automaticNarrowconnectionPrimaryReachable",
+          "automaticNarrowEditorSaveAndCloseReachable",
+          "automaticNarrowSidebarClosesEditorSafely",
+          "automaticNativeColumnsPreserved"
+        ],
+        "syntheticPapers": 3,
+        "mockRequests": 5,
+        "isolatedNativeWrites": 3,
+        "pointerActions": 28,
+        "keyboardActions": 10,
+        "keyboardTransport": "Gecko TextInputProcessor",
+        "realProviderRequests": 0,
+        "screenshots": 10,
+        "contentViewports": [
+          {
+            "width": 1266,
+            "height": 862
+          },
+          {
+            "width": 806,
+            "height": 582
+          }
+        ]
       }
-    ],
-    "navigationScroll": {
-      "scrollingTreeTags": 101,
-      "selectionFocusPreserved": true,
-      "searchCaretPreserved": true,
-      "treePositionRestored": true,
-      "nativeTagWrites": 0,
-      "realProviderRequests": 0
-    },
-    "unifiedLibraryAndRefresh": {
-      "cachedPapers": 2,
-      "priorSpendUSD": 1.25,
-      "mergedShelfRows": 5,
-      "allLibraryRows": 6,
-      "topicRecords": 4,
-      "topicGroups": 3,
-      "savedListRefreshed": true,
-      "providerRequests": 0,
-      "nativeTagWrites": 0,
-      "pdfReads": 0,
-      "realProviderRequests": 0
-    },
-    "generatedNameRecovery": {
-      "cachedPapers": 2,
-      "retainedPaidReplies": 12,
-      "oldSpendUSD": 3.25,
-      "syntheticMappingRequests": 1,
-      "newChooserRequests": 0,
-      "newExtractionRequests": 0,
-      "nativeTagWrites": 0,
-      "realProviderRequests": 0
-    },
-    "progressIsolation": {
-      "cachedPapers": 1,
-      "currentPaperGroup": 3,
-      "providerRequests": 0,
-      "nativeTagWrites": 0,
-      "dormantSelectionHidden": true
-    },
-    "relationshipRecovery": {
-      "cachedPapers": 2,
-      "retainedPaidReplies": 8,
-      "oldSpendUSD": 1.75,
-      "syntheticMappingRequests": 1,
-      "newChooserRequests": 0,
-      "newExtractionRequests": 0,
-      "nativeTagWrites": 0,
-      "realProviderRequests": 0
-    },
-    "shelvesAndReset": {
-      "shelvesRenamed": true,
-      "scopedAssignment": true,
-      "combinedBuildReview": true,
-      "nativeNamesPreserved": true,
-      "analysisReset": true,
-      "syntheticRequests": 3,
-      "realAIRequests": 0,
-      "nativeWriteBatches": 2
-    },
-    "legacyCleanupAndAssignment": {
-      "papers": 3,
-      "syntheticProviderRequests": 2,
-      "realAIRequests": 0,
-      "nativeWriteBatches": 5,
-      "keepUndo": true,
-      "assignmentReport": true,
-      "diyMergeUndo": true
-    },
-    "representativeSelection": {
-      "topics": 60,
-      "papers": 180,
-      "retainedFindings": 540,
-      "syntheticProviderRequests": 9,
-      "maximumConcurrentRequests": 2,
-      "serializedResume": true,
-      "freshGlobalChooserCount": 1,
-      "realAIRequests": 0,
-      "nativeTagWrites": 0,
-      "pdfExtractions": 0
-    },
-    "legacySelection": {
-      "papers": 2,
-      "findings": 66,
-      "plannedCoreTags": 2,
-      "syntheticProviderRequests": 35,
-      "maximumConcurrentRequests": 2,
-      "serializedResume": true,
-      "realAIRequests": 0,
-      "pdfExtractions": 0,
-      "nativeTagWrites": 0
-    },
-    "legacyBuildResume": {
-      "papers": 64,
-      "concepts": 256,
-      "legacyPartInputs": 172,
-      "syntheticProviderRequests": 11,
-      "realAIRequests": 0,
-      "nativeTagWrites": 0,
-      "pdfExtractions": 0,
-      "legacyCheckpointUnchanged": true,
-      "finiteGlobalSelection": true
-    },
-    "nativePackageUpgrade": {
-      "from": "0.13.0",
-      "to": "0.13.1",
-      "method": "Native AddonManager.getInstallForFile",
-      "oldPackageDisabled": true,
-      "uninstallEvents": 0,
-      "packageHash": "c674211527df66f97f5fd4e883c8b6167d2c7728c574396ed08c2653b59451e3",
-      "feedDiscovery": "Not tested before publication; local HTTPS feed metadata and package hash verified."
-    },
-    "workflow": {
-      "syntheticProviderRequests": 6,
-      "realAIRequests": 0,
-      "nativeTagWrites": 0,
-      "separateGroups": true,
-      "applySavesOnly": true,
-      "extensionPreservesOldIdentity": true
-    },
-    "preparation": {
-      "largeRenderMS": 118,
-      "largePapers": 51,
-      "largeSources": 428,
-      "meaningfulQuestions": 1,
-      "syntheticAIRequests": 7,
-      "realAIRequests": 0,
-      "nativeTagWrites": 0,
-      "independentEditor": true,
-      "narrowSaveVisible": true
-    },
-    "pdfEvidence": "Real minimal PDF extracted and indexed through Zotero.Fulltext.indexItems; no synthetic fulltext database injection."
+    }
   },
-  "nativeBundleMatchesInstaller": true,
-  "bundledSourceFilesMatch": 27,
-  "selection": {
-    "sparseTFIDFComparisonLimitPerTopic": 32,
-    "defaultSoftTarget": 60,
-    "defaultAdditionalTarget": 30,
-    "cumulativeTagLimit": false,
-    "shortlistMultiple": 4,
-    "globalDraftBeforeChecks": true,
-    "maximumExamplesPerTag": 3,
-    "distinctExamplePapers": true,
-    "maximumPairsPerRequest": 64,
-    "maximumRequestUTF8Bytes": 90000,
-    "outputLimitRespected": true,
-    "maximumConcurrentRequests": 2,
-    "semanticRepairAllowance": 3,
-    "exampleCorrectionRounds": 1,
-    "sourceSpecificProofsBeforeExampleCoverage": true,
-    "parentSupportRequiresValidatedChildren": true,
-    "unsupportedGeneratedTagsDeferred": true,
-    "unsampledSourcesRemainUnexamined": true,
-    "sourceWideOutsideDoesNotRejectNewPairs": true,
-    "protectedDIYAndManualDefinitionsPreserved": true,
-    "meaningAndSourceChangesRevalidated": true
-  },
-  "execution": {
-    "serializedBudgetReservationsAndPersistence": true,
-    "rawRepliesSavedBeforeApplication": true,
-    "validPairsSavedBeforeRepair": true,
-    "completedChecksSurviveRestart": true,
-    "ordinaryResumeDoesNotResetRepairAllowances": true,
-    "missingCacheRecoveryChecksCurrentInputsAndQuotes": true,
-    "unchangedAttachmentNotificationsPreserveFacts": true,
-    "pausedSwitchRetriesWithoutLegacyChooser": true,
-    "explicitFasterBuildWaitsForActiveReplies": true,
-    "oldWorkAndChargesRetained": true,
-    "unchangedRerunsReuseWork": true,
-    "legacyConsolidationCheckpointsRetained": true
-  },
-  "nativeDefinitionPreparation": {
-    "protocolVersion": 2,
-    "legacyProtocolOnePreserved": true,
-    "structuredChoices": true,
-    "ordinaryBroadMeaningDefault": true,
-    "humanAnswersSeparateFromProof": true,
-    "sourceSpecificRechecksAfterMeaningChange": true,
-    "uncertainJudgmentsRecheckedAfterChoice": true,
-    "knownContradictionsCannotBeOverridden": true,
-    "leaveUndefinedIsPersistentAndNoCost": true,
-    "legacyQuestionsContinueExplicitly": true,
-    "transactionalQuestionParsing": true,
-    "maxPairsPerRequest": 16,
-    "maxRequestUTF8Bytes": 90000,
-    "maxAutomaticFormatCorrections": 1,
-    "allCarryingPapersCheckedBeforeAlias": true,
-    "nonKeywordEvidenceRequired": true,
-    "frozenMeaningBeforeAdditionalChecks": true,
-    "existingMeaningsAndIdentitiesPreserved": true,
-    "manualConflictsRemainQuestions": true,
-    "sourceSpecificCachedFactsOnly": true,
-    "standaloneNamesNeedManualMeaningWithoutAPI": true,
-    "unresolvedNamesExcludedFromAssignment": true,
-    "selectedProviderAndBudget": true,
-    "rawRepliesAndProvenancePersisted": true,
-    "queuedBehindActiveWork": true,
-    "resetArchivesPaidWork": true,
-    "definitionApplyHasNoNativeWrites": true,
-    "suggestionOnlyDefaults": true
-  },
-  "reviewWorkflow": {
-    "tagLibraryOpensBrowseByDefault": true,
-    "meaningReviewOpensExplicitly": true,
-    "shelfAndReadinessChangesRestoreBrowse": true,
-    "legacyQuestionHasSuggestMeaningAction": true,
-    "pageNavigationResetsDocumentScroll": true,
-    "backgroundRefreshPreservesInnerScrollAndDrafts": true,
-    "narrowEditorLeavesSidebarReachable": true,
-    "noEmptyEditorPlaceholder": true,
+  "packageChecks": {
+    "installerFiles": 11,
+    "stableExtensionId": "smart-tags@zotero-local.org",
     "versionedManagerResources": true,
-    "directPersistentShelfMergeAndRename": true,
-    "meaningEditorDraftsRetained": true,
-    "unsavedEditsGateSelectedBatchSave": true,
-    "staleEditorCannotChangeAppliedMeaning": true,
-    "partialMeaningSaveAndDone": true,
-    "activityRetainsQuestionsAfterRequestsFinish": true,
-    "completedWorkInCollapsedHistory": true,
-    "noDuplicateCompletedProgress": true,
-    "unfinishedAssignmentsRemainActionable": true,
-    "shelfMergingReplacesSelectedSourcesByDefault": true,
-    "myShelfProtected": true,
-    "explicitRawMembershipsAndHistoricalRedirects": true,
-    "shelfMergingHasAtomicJournalsAndConflictAwareUndo": true,
-    "definitionReviewScrollsWithVisibleSave": true,
-    "progressOnlyActivityOrOwningPage": true,
-    "appliedIdleBuildHiddenOutsideActivity": true,
-    "libraryAndAssignmentUseIdenticalShelfLabels": true,
-    "totalAndReadyCountsExplicit": true,
-    "sidebarUsesUniqueLibraryTotal": true,
-    "shelfMembershipAndAssignmentEligibilityUnchanged": true,
-    "navigatorScrollFocusAndCaretPreserved": true,
-    "existingShelfMergedIntoMyTags": true,
-    "allLibraryCountsDeduplicated": true,
-    "legacyShelfSelectionCompatible": true,
-    "currentSavedListRefreshReusesChecks": true,
-    "deletedDefinitionsNotResurrected": true,
-    "importedKeywordNamesPreferredWhenSupported": true,
-    "originalEvidenceAndInterpretationPoliciesUnchanged": true,
-    "explicitDRTReportVariantsGrouped": true,
-    "compoundTopicsRemainDistinct": true,
-    "savedLabelsAndMeaningsImmutable": true,
-    "unapprovedAliasOverlapCannotMergeDefinitions": true,
-    "conflictingGeneratedLabelsDeferred": true,
-    "knownScientificContradictionsRemainBlocked": true,
-    "readingHidesPriorSelectionMetrics": true,
-    "completedCachePromotedOnlyAfterInputValidation": true,
-    "dormantCacheSurvivesPauseAndRestart": true,
-    "legacyReadingCheckpointNormalized": true,
-    "savedNameReferencesResolvedLocally": true,
-    "unknownRelationshipsDoNotInventSupport": true,
-    "earlierValidActiveReplyRecovered": true,
-    "rawRepliesAndRepairCountersPreserved": true,
-    "choosingPhaseHidesUndefinedTotals": true,
-    "combinedBuildAndReview": true,
-    "noMandatoryCleanup": true,
-    "renamableShelves": true,
-    "nativeNamesDisplayWithoutInferredDefinitions": true,
-    "assignmentScopeFrozen": true,
-    "contextParentsNotAssignmentTargets": true,
-    "partialShelfCannotGloballyExclude": true,
-    "oneBatchRoutineReview": true,
-    "optionalAnalysisResetPreservesAudit": true,
-    "legacyKeepUsesCompleteExactInventory": true,
-    "noTagProtected": true,
-    "uncheckedSmartTagsAssignmentsMayBeRemoved": true,
-    "cleanupDoesNotRejectConcepts": true,
-    "cleanupAndDIYMergeHaveStaleChecksAndUndo": true,
-    "diyEquivalenceRequiresReviewedMerge": true,
-    "canonicalMeaningsAndIDsRetained": true,
-    "highCoreAndDIYAcceptedBeforeBatchApply": true,
-    "lowDeclinesRunLocal": true,
-    "mediumNoTagAndRemovalsRequireReview": true,
-    "assignmentRunsIsolated": true,
-    "zeroChangeFinishSupported": true,
-    "uncoveredTopicsOnlyAfterFinish": true,
-    "selectedPaperExtensionAndReviewedInclusion": true,
-    "topicResolutionRequiresAppliedMatchingEvidence": true,
-    "topicResolutionUndoable": true,
-    "independentAdditionalTagTarget": true
-  },
-  "privateRetainedWorkReplay": {
-    "status": "passed",
-    "scope": "Schema-eleven compatibility replay of retained work with locally verified PDF and simulated judgments",
-    "schemaVersion": 11,
-    "evictedFactsRecovered": 1,
-    "otherCachedFactsUnchanged": true,
-    "localPDFInputVerified": true,
-    "pausedSwitchRecovered": true,
-    "selectedPapers": 744,
-    "completedJobs": 744,
-    "cachedFacts": 752,
-    "factualSources": 5981,
-    "preferredTagCount": 60,
-    "frozenCoreTags": 60,
-    "supportedCoreTags": 16,
-    "representativePairs": 180,
-    "uniqueSampledSources": 149,
-    "unsampledSources": 5832,
-    "initialVerificationTasks": 3,
-    "verificationRequests": 3,
-    "newGlobalChooserRequests": 0,
-    "maxConcurrent": 2,
-    "maxPromptUTF8Bytes": 78839,
-    "timeToRepresentativeQueueMS": 2349,
-    "totalSimulationMS": 6651,
-    "oldChooserAttempts": 4,
-    "rawChooserHistoryUnchanged": true,
-    "archivedOldWorkExact": true,
-    "legacyCheckpointImmutable": true,
-    "factsQuotesIDsAndProvenanceUnchanged": true,
-    "definitionsDecisionsOwnershipAndNativeDataUnchanged": true,
-    "spentBudgetPreserved": true,
-    "selectedSnapshotOnly": true,
-    "unsampledSourcesUnexamined": true,
-    "sourceCopyExactBytesUnchanged": true,
-    "extractionRequests": 0,
-    "nativeWrites": 0,
-    "liveProviderRequests": 0
-  },
-  "privateChooserRecovery": {
-    "papers": 19,
-    "cachedFacts": 19,
-    "priorProviderRequests": 8,
-    "rawRepliesUnchanged": true,
-    "existingIDsAndMeaningsUnchanged": true,
-    "candidateIDsPreservedOrCanonicalReused": true,
-    "canonicalExistingIdentitiesReused": 8,
-    "examples": 90,
-    "remainingRequests": 2,
-    "maxRequestBytes": 70116,
-    "newProviderCalls": 0,
-    "newExtractionCalls": 0,
-    "nativeWrites": 0,
-    "privateCopyUnchanged": true
-  },
-  "privateReadingReplay": {
-    "status": "passed",
-    "currentPaperCount": 20,
-    "papersRead": 12,
-    "oldCachePapers": 19,
-    "oldCacheTags": 32,
-    "oldCacheExamples": 90,
-    "currentPhase": "reading",
-    "oldSelectionHidden": true,
-    "dormantCachePreservedAcrossRestart": true,
-    "cachedFactsUnchanged": true,
-    "nativeDataUnchanged": true,
-    "providerCalls": 0,
-    "nativeWrites": 0,
-    "privateCopyUnchanged": true
-  },
-  "privateGeneratedNameRecovery": {
-    "status": "recovered",
-    "papers": 20,
-    "cachedFacts": 50,
-    "completedJobs": 20,
-    "priorProviderRequests": 12,
-    "rawRepliesUnchanged": true,
-    "existingIDsAndMeaningsUnchanged": true,
-    "candidateIDsPreservedOrCanonicalReused": true,
-    "spentUSD": 0.044637257999999985,
-    "selectedTags": 131,
-    "deferredCandidates": 34,
-    "totalCheckRequests": 2,
-    "maxRequestBytes": 73713,
-    "progress": {
-      "phase": "mapping",
-      "verificationScope": "representative",
-      "sourceCompleted": 0,
-      "sourceTotal": 167,
-      "completedRequests": 1,
-      "queuedRequests": 2,
-      "correctionsUsed": 3,
-      "correctionAllowance": 3,
-      "semanticRepairsUsed": 3,
-      "semanticRepairAllowance": 3,
-      "mappingCorrectionsUsed": 0,
-      "mappingCorrectionAllowance": 2,
-      "selectedConcepts": 131,
-      "deferredConcepts": 34,
-      "tagsPrepared": 1,
-      "tagsTotal": 131,
-      "examplesChecked": 2,
-      "examplesTotal": 96
+    "nativeTestBootstrapExcluded": true,
+    "productionAndNativeResourceHashesMatch": true,
+    "updateManifestVersionAndSHA256": "passed",
+    "credentialPatternScan": {
+      "status": "passed",
+      "sourceFiles": 142
     },
-    "newChooserRequests": 0,
-    "newExtractionCalls": 0,
-    "nativeWrites": 0,
-    "liveProviderRequests": 0,
-    "simulatedMappingRequests": 2,
-    "privateCopyExactBytesUnchanged": true,
-    "allFactsQuotesIDsAndProvenanceUnchanged": true,
-    "unsampledSourcesRemainUnexamined": true
-  },
-  "privatePreparedExtensionRefresh": {
-    "status": "passed",
-    "cachedFacts": 95,
-    "completedJobs": 48,
-    "originalBaselineVersion": 5,
-    "currentSavedVersion": 6,
-    "removedSavedDefinitionsRespected": 1,
-    "originalSavedDefinitions": 129,
-    "resultingSavedDefinitions": 155,
-    "allLibraryRows": 174,
-    "myTagRows": 164,
-    "legacyShelfRemoved": true,
-    "factsQuotesIDsAndProvenanceUnchanged": true,
-    "currentSavedMeaningsUnchanged": true,
-    "nativeLibraryUnchanged": true,
-    "originalSelectionArchivedExact": true,
-    "spendingPreserved": true,
-    "sourceCopyExactBytesUnchanged": true,
-    "newProviderRequests": 0,
-    "newExtractionRequests": 0,
-    "nativeWrites": 0,
-    "localPDFChecks": 5
-  },
-  "privateShelfCountAudit": {
-    "status": "passed",
-    "scope": "Read-only library-count audit",
-    "allLibraryRows": 199,
-    "allReadyDefinitions": 155,
-    "myLibraryRows": 164,
-    "myReadyDefinitions": 120,
-    "generatedShelfCounts": [
-      40,
-      30,
-      29,
-      29,
-      26
-    ],
-    "generatedMembershipSum": 154,
-    "generatedUniqueDefinitions": 154,
-    "generatedAndMyDefinitionOverlap": 119,
-    "savedDefinitionsOutsideGeneratedShelves": 1,
-    "namesNotAvailableForAIMatching": 44,
-    "undefinedNativeNames": 44,
-    "protectedMarkers": 0,
-    "myUndefinedNativeNames": 44,
-    "myProtectedMarkers": 0,
-    "allEqualsReadyPlusOtherRows": true,
-    "myEqualsReadyPlusOtherRows": true,
-    "naiveGeneratedPlusMyTotal": 318,
-    "unionGeneratedAndMyTotal": 199,
-    "nativeWrites": 0,
-    "providerRequests": 0,
-    "workingProfileWrites": 0,
-    "sourceCopyExactBytesUnchanged": true
-  },
-  "privateNativeMeaningPlan": {
-    "status": "passed",
-    "sourceSchema": 9,
-    "currentSchema": 11,
-    "cachedFacts": 95,
-    "priorPaidRunPreserved": true,
-    "allEvidenceIdentitiesAndQuotesUnchanged": true,
-    "definitionsChoicesSettingsAndNativeDataUnchanged": true,
-    "sourceCopyExactBytesUnchanged": true,
-    "undefinedSelected": 44,
-    "initialDefinitionRequests": 9,
-    "maxInitialRequestUTF8Bytes": 66123,
-    "allDefinitionDispatchesZero": true,
-    "mergedSourceShelves": 5,
-    "mergedUniqueDefinitions": 154,
-    "myShelfPreserved": true,
-    "allTagCountUnchangedByMerge": true,
-    "newProviderRequests": 0,
-    "newExtractionRequests": 0,
-    "nativeWrites": 0,
-    "workingProfileWrites": 0
-  },
-  "privateActionableMeaningReplay": {
-    "status": "passed",
-    "sourceSchema": 10,
-    "currentSchema": 11,
-    "cachedFacts": 95,
-    "completedPaperJobs": 48,
-    "legacyQuestionTags": 1,
-    "affectedPapers": 17,
-    "migrationPreservesPreparationAndProofs": true,
-    "activityRetainsActionableMeaningTask": true,
-    "explicitContinueUsesProtocolTwo": true,
-    "priorSnapshotAndRepliesArchivedExact": true,
-    "allocatedIdentitiesPreserved": true,
-    "completedPaperBuildUnchanged": true,
-    "factsQuotesIDsAndNativeDataUnchanged": true,
-    "spendingPreserved": true,
-    "budgetRejectsBeforeDispatch": true,
-    "sourceCopyExactBytesUnchanged": true,
-    "localPDFReads": 0,
-    "providerRequests": 0,
-    "nativeWrites": 0,
-    "workingProfileWrites": 0
-  },
-  "unchangedBehavior": {
-    "factualExtractorVersion": true,
-    "terminologyVersion": true,
-    "evidenceIdentities": true,
-    "sourceWordingAndProvenance": true,
-    "historicalFingerprintPolicy": true,
-    "providerSelectionAndBudgetControls": true,
-    "nativeAssignmentAndUndo": true,
-    "incomingAutomationGate": true,
-    "navigatorCollectionsAndColumns": true,
-    "separateBuildAndAssignmentGroups": true
-  },
-  "rightItemAndInformationPaneSection": false,
-  "skills": {
-    "deslop": "Focused selection/controller/policy/UI review without unrelated rewrites.",
-    "codebaseDesign": "TagSelection owns conservative graph-reference lookup and bounded cached-reply recovery; AssignmentReview owns confidence triage, completion and topic reports; TagSelection owns independent extension selection. Tests cross these interfaces, public controller actions and accessible native controls."
+    "sourceArchive": {
+      "status": "passed",
+      "allowedFiles": 152,
+      "archiveEntriesMatchSourceBytes": true,
+      "rebuildMatchesInstallerBytes": true
+    }
   },
   "workingNativeLibraryModified": false,
   "workingExtensionCacheModified": false,
-  "workingRunInterrupted": false,
   "liveProviderRequests": 0,
-  "publicArtifactPrivateDataScan": "passed",
   "limits": [
-    "Native interface checks used rendered Zotero controls, focus state and layout measurements.",
-    "No screenshot review or live account authorization was performed.",
-    "Simulated judgments validate scheduling, accounting and persistence, not scientific accuracy or live-provider latency.",
-    "Remote Zotero update-feed discovery was not exercised before publication; native in-place package upgrading and manifest/hash checks passed."
+    "Native tests use synthetic papers and mocked provider replies; they do not measure live provider availability or scientific classification accuracy.",
+    "The current release does not claim a fresh run of historical private replays or the older 259-check native suite.",
+    "Native in-place package upgrade and remote update-feed discovery were not exercised for this release."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-0.13.1.xpi",
-      "bytes": 672047,
-      "sha256": "c674211527df66f97f5fd4e883c8b6167d2c7728c574396ed08c2653b59451e3"
+      "file": "smart-tags-1.0.0.xpi",
+      "bytes": 707204,
+      "sha256": "1bc550644df7b8df52b03f2775f5ccf5bd276f2ff22372da8c36f425d0d65050"
     },
     "source": {
-      "file": "smart-tags-0.13.1-source.zip",
-      "bytes": 793810,
-      "sha256": "7a238f8d88785d37f49b8ada5194bd28c7a7e7b470efe5fbe388f5fb0f3b263b"
+      "file": "smart-tags-1.0.0-source.zip",
+      "bytes": 847040,
+      "sha256": "16639c04f3f6b48d85218e89be542ad5502ee1064dba40c8031778fd8b196aea"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

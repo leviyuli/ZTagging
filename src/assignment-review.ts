@@ -8,6 +8,7 @@ export interface ReviewSuggestion extends Suggestion {
 }
 export interface AssignmentRunRecord {
   id:string;paperIds:string[];vocabularyVersion:number;status:'analysis'|'review'|'finished';suggestionIds:string[];createdAt:string;finishedAt?:string;
+  processingPolicy?:'auto-clear';
 }
 export interface AssignmentReviewJob {paperId:string;status:'pending'|'running'|'completed'|'skipped';error?:string}
 export interface AssignmentReviewProgress {analysisCompleted:number;analysisTotal:number;pending:number;accepted:number;applied:number;rejected:number;canFinish:boolean}
@@ -22,8 +23,8 @@ const approvedVocabularyFingerprint=(definitions:readonly TagDefinition[])=>fing
 const reportTopicNames=new Map(['DRT analysis','distribution of relaxation time','distribution of relaxation times','distribution of relaxation time analysis','distribution of relaxation times analysis'].map(name=>[canonicalTagKey(name),'DRT analysis']));
 const reportTopicName=(name:string)=>reportTopicNames.get(canonicalTagKey(name))??terminologyFor(name)?.name??name;
 
-export function createAssignmentRun(input:{id?:string;paperIds:readonly string[];vocabularyVersion:number;createdAt?:string}):AssignmentRunRecord {
-  return {id:input.id??allocateOpaqueId('assignment'),paperIds:unique(input.paperIds),vocabularyVersion:input.vocabularyVersion,status:'analysis',suggestionIds:[],createdAt:input.createdAt??new Date().toISOString()};
+export function createAssignmentRun(input:{id?:string;paperIds:readonly string[];vocabularyVersion:number;createdAt?:string;processingPolicy?:'auto-clear'}):AssignmentRunRecord {
+  return {id:input.id??allocateOpaqueId('assignment'),paperIds:unique(input.paperIds),vocabularyVersion:input.vocabularyVersion,status:'analysis',suggestionIds:[],createdAt:input.createdAt??new Date().toISOString(),...(input.processingPolicy?{processingPolicy:input.processingPolicy}:{})};
 }
 
 /** Review triage never changes native tags or the persistent manual-decision map. */
@@ -43,7 +44,7 @@ function runSuggestions(run:AssignmentRunRecord,suggestions:readonly ReviewSugge
 }
 export function assignmentRunProgress(run:AssignmentRunRecord,jobs:readonly AssignmentReviewJob[],suggestions:readonly ReviewSuggestion[]):AssignmentReviewProgress {
   const scoped=runSuggestions(run,suggestions),byPaper=new Map(jobs.map(job=>[job.paperId,job])),analysisCompleted=run.paperIds.filter(id=>{const job=byPaper.get(id);return job?.status==='skipped'||job?.status==='completed'&&!job.error;}).length,pending=scoped.filter(suggestion=>suggestion.status==='pending'&&!suggestion.applied).length;
-  return {analysisCompleted,analysisTotal:run.paperIds.length,pending,accepted:scoped.filter(suggestion=>suggestion.status==='accepted'&&!suggestion.applied).length,applied:scoped.filter(suggestion=>suggestion.applied).length,rejected:scoped.filter(suggestion=>suggestion.status==='rejected'&&!suggestion.applied).length,canFinish:analysisCompleted===run.paperIds.length&&pending===0};
+  return {analysisCompleted,analysisTotal:run.paperIds.length,pending,accepted:scoped.filter(suggestion=>suggestion.status==='accepted'&&!suggestion.applied).length,applied:scoped.filter(suggestion=>suggestion.applied).length,rejected:scoped.filter(suggestion=>suggestion.status==='rejected'&&!suggestion.applied).length,canFinish:analysisCompleted===run.paperIds.length&&(run.processingPolicy==='auto-clear'||pending===0)};
 }
 export function updateAssignmentRun(run:AssignmentRunRecord,jobs:readonly AssignmentReviewJob[],suggestions:readonly ReviewSuggestion[]):AssignmentRunRecord {
   if(run.status==='finished')return {...run,paperIds:[...run.paperIds],suggestionIds:[...run.suggestionIds]};const scoped=suggestions.filter(suggestion=>suggestion.runId===run.id&&run.paperIds.includes(suggestion.paperId));const next={...run,suggestionIds:unique([...run.suggestionIds,...scoped.map(suggestion=>suggestion.id)])},progress=assignmentRunProgress(next,jobs,suggestions);return {...next,status:progress.analysisCompleted===progress.analysisTotal?'review':'analysis'};
