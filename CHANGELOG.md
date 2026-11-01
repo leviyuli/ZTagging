@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2 — 2026-11-01
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2-source.zip)
+
+- Fix candidate-provenance validation for explicit information choices. One such question could invalidate the prepared work and block saving every ready meaning. Existing question IDs, fingerprints, human answers, replies, source judgments and spending remain unchanged; scientific, protection and source-support checks remain enforced.
+- Resume locally saved all 15 ready meanings in an offline replay of the affected 44-name preparation, retaining 29 questions and 205 completed tag–paper checks out of 386, with no new AI request or native tag write.
+- Keep state schema 12 and native-definition protocol 2. The affected current generation loads unchanged on restart without falling back to an older backup.
+
 ## 1.0.1 — 2026-11-01
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1-source.zip)

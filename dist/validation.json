@@ -1,15 +1,17 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.0.1",
-  "verifiedAt": "2026-11-01T07:29:14.611433+00:00",
+  "version": "1.0.2",
+  "verifiedAt": "2026-11-01T07:50:43.690217+00:00",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Find papers, Activity and Settings refinement; compatible cached recovery for paused native-meaning checks",
+  "scope": "Fix consistent candidate provenance on information questions so unrelated ready native meanings can save",
   "schemaVersion": 12,
   "nativeDefinitionProtocolVersion": 2,
+  "scientificAndAssignmentPoliciesChanged": false,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 1100,
+    "passed": 1102,
     "managerUITests": 128,
+    "focusedMeaningRecoveryTests": 7,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
@@ -21,7 +23,37 @@
   },
   "inMemoryBundle": "passed",
   "productionBuild": "passed",
+  "newAdmissionRegression": {
+    "coverage": "Node public controller and AtomicStore tests",
+    "nativeNames": 44,
+    "uniquePapers": 283,
+    "tagPaperPairs": 386,
+    "completedJudgments": 205,
+    "readyMeaningsSaved": 15,
+    "questionsRetained": 29,
+    "newAIRequests": 0,
+    "nativeTagWrites": 0,
+    "primaryStateLoadedWithoutFallback": true,
+    "primaryLoadWrites": 0,
+    "wholeWorkObjectPreserved": true,
+    "spendingPreserved": true,
+    "informationChoiceStillRequiresMissingSourceChecks": true,
+    "protectionAndContradictionGuardsPreserved": true
+  },
+  "readOnlyReportedStateReplay": {
+    "readyMeaningsSaved": 15,
+    "questionsRetained": 29,
+    "sourceJudgmentsRetained": 205,
+    "newProviderRequests": 0,
+    "nativeWrites": 0,
+    "wholeWorkObjectPreserved": true,
+    "spendingPreserved": true,
+    "backupReads": 0,
+    "loadWrites": 0,
+    "workingStateBytesUnchanged": true
+  },
   "nativeSmoke": {
+    "scope": "Existing UI, 17-source cached recovery and protection scenario; new 44-name admission regression is Node and immutable-state replay coverage",
     "status": "passed",
     "passed": 158,
     "failed": 0,
@@ -30,9 +62,9 @@
         "status": "passed",
         "passed": 79,
         "failed": 0,
-        "version": "1.0.1",
+        "version": "1.0.2",
         "addonSource": "production-build",
-        "completedAt": "2026-11-01T07:27:30.507Z",
+        "completedAt": "2026-11-01T07:49:12.544Z",
         "checks": [
           "isolatedDataDirectory",
           "isolatedProfile",
@@ -114,18 +146,8 @@
           "nativeMeaningRecoveryLeaveUndefinedCostsNothing",
           "automaticNativeColumnsPreserved"
         ],
-        "syntheticPapers": 20,
-        "mockRequests": 8,
-        "simulatedNativeWrites": 3,
-        "pointerActions": 37,
-        "keyboardActions": 28,
         "keyboardTransport": "Gecko TextInputProcessor",
         "realProviderRequests": 0,
-        "meaningRecovery": {
-          "sources": 17,
-          "cachedReplayRequests": 0,
-          "repeatedQuestionSuppressed": true
-        },
         "screenshots": 25,
         "contentViewports": [
           {
@@ -142,9 +164,9 @@
         "status": "passed",
         "passed": 79,
         "failed": 0,
-        "version": "1.0.1",
+        "version": "1.0.2",
         "addonSource": "production-build",
-        "completedAt": "2026-11-01T07:28:03.411Z",
+        "completedAt": "2026-11-01T07:49:45.025Z",
         "checks": [
           "isolatedDataDirectory",
           "isolatedProfile",
@@ -226,18 +248,8 @@
           "nativeMeaningRecoveryLeaveUndefinedCostsNothing",
           "automaticNativeColumnsPreserved"
         ],
-        "syntheticPapers": 20,
-        "mockRequests": 8,
-        "simulatedNativeWrites": 3,
-        "pointerActions": 37,
-        "keyboardActions": 28,
         "keyboardTransport": "Gecko TextInputProcessor",
         "realProviderRequests": 0,
-        "meaningRecovery": {
-          "sources": 17,
-          "cachedReplayRequests": 0,
-          "repeatedQuestionSuppressed": true
-        },
         "screenshots": 25,
         "contentViewports": [
           {
@@ -251,24 +263,6 @@
         ]
       }
     }
-  },
-  "cachedMeaningRecovery": {
-    "sources": 17,
-    "priorJudgmentsRetained": 16,
-    "cachedReplayRequests": 0,
-    "originalRepliesAndSpendingRetained": true,
-    "scientificConflictRemainsExplicit": true,
-    "unchangedContradictedChoiceSuppressed": true,
-    "foreignRebindingRejected": true,
-    "leaveUndefinedRequiresNoRequest": true
-  },
-  "readOnlyReportedStateReplay": {
-    "sources": 17,
-    "previousJudgmentsRetained": 16,
-    "remainingScientificExceptions": 1,
-    "newProviderRequests": 0,
-    "nativeWrites": 0,
-    "workingStateBytesUnchanged": true
   },
   "packageChecks": {
     "installerFiles": 11,
@@ -292,20 +286,20 @@
   "workingExtensionCacheModified": false,
   "liveProviderRequests": 0,
   "limits": [
-    "Native tests use synthetic papers and mocked provider replies; they do not establish live provider availability or scientific classification accuracy.",
-    "The reported state was replayed read-only; the working profile was not modified.",
+    "Native tests use synthetic papers and mocked provider/native-write adapters; they do not establish live scientific classification accuracy or provider availability.",
+    "The affected actual state was replayed in memory; working profile bytes were unchanged.",
     "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised for this release."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.0.1.xpi",
-      "bytes": 715674,
-      "sha256": "8bbd2d186fc474d083b7d34d40d8b1982686683276fe9ec327f0b71ccf140338"
+      "file": "smart-tags-1.0.2.xpi",
+      "bytes": 715670,
+      "sha256": "80f5104d7aba55e1918a59dfab156692a6a2800c319a89da126e522d16f484b4"
     },
     "source": {
-      "file": "smart-tags-1.0.1-source.zip",
-      "bytes": 863911,
-      "sha256": "15cdca4b43eaceb4f48a8472bac09093afd39d431e2e3c79ea5f16ba9188d903"
+      "file": "smart-tags-1.0.2-source.zip",
+      "bytes": 866837,
+      "sha256": "57ede909cadd6db30de0c67a97747274a75b84d735669cafa3c948c4846f6cee"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

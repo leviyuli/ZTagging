@@ -1,5 +1,15 @@
 # Migration notes
 
+## Version 1.0.2: unblock saving prepared meanings
+
+Install the [v1.0.2 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2.xpi) over your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.2) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2-source.zip). This patch keeps **state schema 12** and **native-definition protocol 2**; no cache reset or schema migration is needed from 1.0.0 or 1.0.1.
+
+Version 1.0.1 could mark an explicit information choice as the same candidate as the frozen meaning, then reject that provenance marker during state validation. A single such question blocked the whole ready-definition batch with **“The saved tag admission is invalid. The previous definitions were preserved.”** Version 1.0.2 accepts this consistent provenance metadata while retaining exact-definition, scientific, source, protection and contradiction checks. It does not treat a human choice as supporting evidence; unresolved or uncertain sources still need their existing checks.
+
+After updating, open Activity and choose **Resume** for the paused preparation. In an offline replay of the affected **44-name** work, **15 meanings were ready**, **29 remained questions**, and **205 of 386 tag–paper checks** were already saved. Resume saved the 15 ready meanings locally with **no new AI request or native tag write**. All question IDs and fingerprints, human answers, judgments, paid replies and spending were preserved, and the 29 questions remained available. The replay used an in-memory copy and left the working profile unchanged.
+
+The affected current state now passes validation and loads unchanged on restart, without falling back to an older backup or rewriting question bindings. Existing paid work stays in place. Genuine scientific conflicts remain questions; **Leave undefined** is available without another request or changing native paper tags.
+
 ## Version 1.0.1: saved meaning-check recovery and simpler secondary pages
 
 Install the [v1.0.1 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1.xpi) over your existing extension through Zotero’s **Tools → Plugins → Install Plugin From File…**. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.1) also includes the [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1-source.zip).

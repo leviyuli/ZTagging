@@ -1,6 +1,6 @@
 {
   "name": "zotero-smart-tags",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "A controlled, evidence-based tagging assistant for Zotero 10",
   "license": "MIT",
