@@ -1,5 +1,17 @@
 # Migration notes
 
+## Version 1.0.3: retain chosen meanings and separate source recovery
+
+Install the [v1.0.3 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi) over your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.3) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3-source.zip). **State schema 12**, **native-definition protocol 2** and the existing evidence policy remain unchanged. No cache reset is needed.
+
+A meaning you already chose stays selected for the same source snapshot. Uncertain or unchecked source results become information exceptions, without offering the identical meaning again. Reopening the review, submitting an already answered choice or saving an unchanged edit preserves the choice and source judgments without a new AI request or additional spending. A genuinely different meaning still requires its affected source checks, and known conflicting results remain explicit.
+
+Open **Activity → Recovery → Source checks** to see the retained meaning, affected paper links and the reasons each source is uncertain or unchecked. Conflicting results remain scientific questions. **Recheck sources** is an explicit AI action using the selected connection and budget; it retries uncertain and unchecked sources while retaining completed supporting judgments and the chosen meaning. Earlier uncertain results remain in history. **Later** keeps an exception deferred when older review questions are normalized. **Leave undefined** remains available without another request or a native tag change.
+
+Older repeated-choice questions are normalized locally on startup or reopening only when the preparation is ready and all its request tasks are completed. Reopening an archived preparation restores its latest saved answers and evidence. Existing human answers, scientific judgments, paid replies and spending remain intact.
+
+In a read-only replay of the reported Carbon capture and storage case, all **17 source judgments** were retained: **13 supported the chosen meaning and four remained uncertain**. The repeated Use choice became an information exception with no pending request or native-alias approval. Repeated choices, reopening and unchanged edits were stable without new requests. An explicit recheck plan included only those four uncertain sources. The replay left the working profile unchanged; a name still needs the existing all-paper support before it becomes an approved native alias.
+
 ## Version 1.0.2: unblock saving prepared meanings
 
 Install the [v1.0.2 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2.xpi) over your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.2) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2-source.zip). This patch keeps **state schema 12** and **native-definition protocol 2**; no cache reset or schema migration is needed from 1.0.0 or 1.0.1.

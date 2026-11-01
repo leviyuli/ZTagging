@@ -6,7 +6,7 @@ import {fingerprint,paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import type {ReconciliationInput} from '../src/tag-reconciliation.ts';
 import {MY_TAGS_SHELF_ID} from '../src/tag-shelves.ts';
-import {acceptNativeTagDefinitionResult,compileNativeTagDefinitions,createNativeTagDefinitionWork,failNativeTagDefinitionTask,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,resolveNativeTagDefinition,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
+import {acceptNativeTagDefinitionResult,compileNativeTagDefinitions,createNativeTagDefinitionWork,failNativeTagDefinitionTask,nativeTagDefinitionMeaningChosen,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,recheckNativeTagDefinitionSources,resolveNativeTagDefinition,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 import type {NativeTagDefinitionRequest,NativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 import {AtomicStore} from '../src/store.ts';
 
@@ -78,12 +78,12 @@ for(const action of ['resume','retry-tag-meanings'])test(`${action} reuses cache
 });
 
 test('an explicit information choice retains candidate provenance without approving missing source support',()=>{
-  const {data,work,last}=fixture(),entry=work.entries[0],response=reply(last,'uncertain');response.questions=[{entryId:entry.id,question:'This source needs more context. Which complete meaning should be checked?',questionKind:'information',choices:[{label:'Check the frozen meaning',...echo(entry),targetTagId:entry.tagId}]}];
+  const {data,work,last}=fixture(),entry=work.entries[0],sources=clone(entry.humanAnswer!.sourceFingerprints),response=reply(last,'uncertain');delete entry.humanAnswer;response.questions=[{entryId:entry.id,question:'This source needs more context. Which complete meaning should be checked?',questionKind:'information',choices:[{label:'Check the frozen meaning',...echo(entry),targetTagId:entry.tagId}]}];
   const question=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(work,last.id),last.id,response),current=question.entries[0],choice=current.questionDetails!.choices[0];
   assert.equal(current.questionDetails!.kind,'information');assert.equal(choice.origin,'candidate');assert.equal(current.status,'question');assert.equal(validNativeTagDefinitionWork(question),true);assert.equal(compileNativeTagDefinitions(question,data).entries.length,0);
   const selected=resolveNativeTagDefinition(question,data,{entryId:entry.id,choiceId:choice.id});assert.equal(selected.entries[0].status,'pending');assert.equal(Object.keys(selected.entries[0].judgments).length,16);assert.equal(input(nextNativeTagDefinitionRequests(selected)[0]).papers.length,1);assert.equal(compileNativeTagDefinitions(selected,data).entries.length,0);
   const contradicted=clone(question);contradicted.entries[0].judgments[input(last).papers[0].paperId].relation='different';assert.equal(validNativeTagDefinitionWork(contradicted),false);
-  const protectedQuestion=clone(question),protectedEntry=protectedQuestion.entries[0],details=protectedEntry.questionDetails!;details.kind='protection';details.fingerprint=fingerprint({entryId:protectedEntry.id,prompt:details.prompt,kind:details.kind,choices:details.choices.map(({id:_,...choice})=>choice),sources:protectedEntry.humanAnswer!.sourceFingerprints,policyVersion:2});assert.equal(validNativeTagDefinitionWork(protectedQuestion),false);
+  const protectedQuestion=clone(question),protectedEntry=protectedQuestion.entries[0],details=protectedEntry.questionDetails!;details.kind='protection';details.fingerprint=fingerprint({entryId:protectedEntry.id,prompt:details.prompt,kind:details.kind,choices:details.choices.map(({id:_,...choice})=>choice),sources,policyVersion:2});assert.equal(validNativeTagDefinitionWork(protectedQuestion),false);
   const noChoice=reply(last,'uncertain');noChoice.questions=[{entryId:entry.id,question:'More source information is needed.',questionKind:'information'}];const information=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(work,last.id),last.id,noChoice);assert.deepEqual(information.entries[0].questionDetails!.choices,[]);assert.equal(validNativeTagDefinitionWork(information),true);
 });
 
@@ -112,4 +112,48 @@ test('a saved 44-meaning preparation loads intact and admits its 15 ready meanin
   assert.equal(store.recovered,false);assert.deepEqual(reads,['state.json']);assert.equal(JSON.stringify(loaded),serialized);assert.deepEqual(loaded.nativeDefinitionPreparation!.work.entries.map(entry=>entry.questionDetails),before.entries.map(entry=>entry.questionDetails));
   await h.app.initialize();assert.equal(h.state.nativeDefinitionPreparation!.appliedEntryIds.length,0);await h.app.invoke('resume');await h.app.waitForIdle();const snapshot=await h.app.snapshot(),after=h.state.nativeDefinitionPreparation!.work;
   assert.equal(snapshot.nativeDefinitionPreparation!.savedCount,15);assert.equal(snapshot.nativeDefinitionPreparation!.questionCount,29);assert.equal(snapshot.nativeDefinitionPreparation!.status,'ready');assert.equal(h.state.tags.length,15);assert.equal(h.task.status,'completed');assert.deepEqual(h.counts(),{requests:0,writes:0});assert.equal(h.task.run.spentUSD,0.37);assert.deepEqual(after,before);assert.equal(validState(h.state),true);
+});
+
+function repeatedScopeQuestion(){
+  const h=fixture();for(const judgment of Object.values(h.work.entries[0].judgments).slice(0,3)){judgment.relation='uncertain';judgment.reason='The available source does not establish this chosen meaning.';}
+  const work=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(h.work,h.last.id),h.last.id,reply(h.last,'uncertain')),entry=work.entries[0];
+  entry.question='The papers do not all establish the same meaning for this tag. Clarify its meaning or leave it undefined.';
+  const choices=[{id:'reminted-scope-choice',label:`Use ${entry.definition!.name}`,definition:clone(entry.definition!),origin:'candidate' as const}];
+  entry.questionDetails={id:'repeated-scope-question',prompt:entry.question,kind:'meaning',choices,fingerprint:fingerprint({entryId:entry.id,prompt:entry.question,kind:'meaning',choices:choices.map(({id:_,...choice})=>choice),sources:entry.humanAnswer!.sourceFingerprints,policyVersion:2})};
+  assert.equal(validNativeTagDefinitionWork(work),true);return {data:h.data,work};
+}
+
+test('a chosen scope with 13 supporting and four uncertain sources resumes as information without a repeated choice',()=>{
+  const {data,work}=repeatedScopeQuestion(),before=clone(work),resumed=resumeNativeTagDefinitionWork(work),entry=resumed.entries[0];
+  assert.equal(nativeTagDefinitionMeaningChosen(resumed,entry),true);assert.equal(entry.questionDetails!.kind,'information');assert.deepEqual(entry.questionDetails!.choices,[]);assert.match(entry.question!,/4 source checks are uncertain/);assert.equal(entry.status,'question');assert.equal(resumed.status,'ready');assert.equal(nextNativeTagDefinitionRequests(resumed).length,0);assert.equal(compileNativeTagDefinitions(resumed,data).entries.length,0);
+  assert.deepEqual(entry.humanAnswer,before.entries[0].humanAnswer);assert.deepEqual(entry.definition,before.entries[0].definition);assert.deepEqual(entry.judgments,before.entries[0].judgments);assert.deepEqual(resumed.tasks,before.tasks);assert.deepEqual(resumed.history,before.history);assert.equal(validNativeTagDefinitionWork(resumed),true);assert.equal(fingerprint(work),fingerprint(before));
+  assert.deepEqual(resumeNativeTagDefinitionWork(resumed),resumed);assert.deepEqual(retryNativeTagDefinitionWork(resumed),resumed);
+});
+
+test('an already selected reminted choice, stale answered choice and unchanged edit do not schedule or repeat source checks',()=>{
+  const {data,work}=repeatedScopeQuestion(),entry=work.entries[0],resolved=resolveNativeTagDefinition(work,data,{entryId:entry.id,choiceId:entry.questionDetails!.choices[0].id});
+  assert.equal(resolved.entries[0].questionDetails!.kind,'information');assert.equal(nextNativeTagDefinitionRequests(resolved).length,0);assert.deepEqual(resolved.entries[0].humanAnswer,entry.humanAnswer);assert.deepEqual(resolved.entries[0].judgments,entry.judgments);assert.deepEqual(resolved.tasks,work.tasks);assert.deepEqual(resolved.history,work.history);
+  const stale=resolveNativeTagDefinition(resolved,data,{entryId:entry.id,choiceId:entry.humanAnswer!.choiceId}),edited=resolveNativeTagDefinition(resolved,data,{entryId:entry.id,definition:clone(entry.definition!)});assert.deepEqual(stale,resolved);assert.deepEqual(edited,resolved);assert.equal(validNativeTagDefinitionWork(edited),true);
+  const changed=clone(data);changed.papers[0].abstract+=' New source information.';assert.throws(()=>resolveNativeTagDefinition(resolved,changed,{entryId:entry.id,choiceId:entry.humanAnswer!.choiceId}),/changed/);
+});
+
+test('explicit source recheck retains the chosen meaning and supporting proofs and archives uncertainty before retrying only four sources',()=>{
+  const {data,work}=repeatedScopeQuestion(),information=resumeNativeTagDefinitionWork(work),entry=information.entries[0],checked=recheckNativeTagDefinitionSources(information,data,entry.id),request=nextNativeTagDefinitionRequests(checked)[0],incoming=input(request);
+  assert.equal(incoming.phase,'check');assert.equal(incoming.papers.length,4);assert.deepEqual(checked.entries[0].humanAnswer,entry.humanAnswer);assert.deepEqual(checked.entries[0].definition,entry.definition);assert.equal(Object.keys(checked.entries[0].judgments).length,13);for(const [id,judgment] of Object.entries(checked.entries[0].judgments))assert.deepEqual(judgment,entry.judgments[id]);assert.deepEqual(checked.history!.at(-1)!.entries[0].judgments,entry.judgments);assert.equal(validNativeTagDefinitionWork(checked),true);
+  const repeated=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(checked,request.id),request.id,reply(request,'uncertain')),again=repeated.entries[0];assert.equal(again.questionDetails!.kind,'information');assert.deepEqual(again.questionDetails!.choices,[]);assert.equal(Object.keys(again.judgments).length,17);assert.deepEqual(again.humanAnswer,entry.humanAnswer);assert.equal(nextNativeTagDefinitionRequests(repeated).length,0);assert.equal(compileNativeTagDefinitions(repeated,data).entries.length,0);assert.equal(validNativeTagDefinitionWork(repeated),true);
+  const completed=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(checked,request.id),request.id,reply(request));assert.equal(completed.entries[0].status,'ready');assert.equal(compileNativeTagDefinitions(completed,data).entries.length,1);assert.deepEqual(completed.entries[0].humanAnswer,entry.humanAnswer);
+});
+
+test('source exceptions distinguish unchecked papers, preserve contradictions and do not recheck protected or changed input',()=>{
+  const {data,work}=repeatedScopeQuestion(),entry=work.entries[0],uncertain=Object.entries(entry.judgments).filter(([,judgment])=>judgment.relation==='uncertain').map(([id])=>id),missing=clone(work);delete missing.entries[0].judgments[uncertain[0]];
+  const normalized=resumeNativeTagDefinitionWork(missing);assert.match(normalized.entries[0].question!,/3 source checks are uncertain; 1 source has not been checked/);assert.equal(input(nextNativeTagDefinitionRequests(recheckNativeTagDefinitionSources(normalized,data,entry.id))[0]).papers.length,4);assert.equal(compileNativeTagDefinitions(normalized,data).entries.length,0);
+  const different=clone(work);different.entries[0].judgments[uncertain[0]].relation='different';const contradiction=resumeNativeTagDefinitionWork(different);assert.equal(contradiction.entries[0].questionDetails!.kind,'meaning');assert.deepEqual(contradiction.entries[0].questionDetails!.choices,[]);assert.throws(()=>recheckNativeTagDefinitionSources(contradiction,data,entry.id),/different meaning/);assert.equal(compileNativeTagDefinitions(contradiction,data).entries.length,0);assert.equal(validNativeTagDefinitionWork(contradiction),true);
+  const changed=clone(data);changed.papers[0].abstract+=' Changed scientific context.';assert.throws(()=>recheckNativeTagDefinitionSources(normalized,changed,entry.id),/changed/);
+  const information=resumeNativeTagDefinitionWork(work),protectedWork=clone(information),protectedEntry=protectedWork.entries[0],question=protectedEntry.questionDetails!;question.kind='protection';question.fingerprint=fingerprint({entryId:entry.id,prompt:question.prompt,kind:question.kind,choices:[],sources:entry.humanAnswer!.sourceFingerprints,policyVersion:2});assert.throws(()=>recheckNativeTagDefinitionSources(protectedWork,data,entry.id),/protects/);
+});
+
+test('a genuinely different scope still requires new proof and new manual locks block explicit rechecks',()=>{
+  const {data,work}=repeatedScopeQuestion(),entry=work.entries[0],choice={id:'different-scope-choice',label:'Use capture cells',definition:clone(other),targetTagId:other.id};entry.questionDetails!.choices.push(choice);entry.questionDetails!.fingerprint=fingerprint({entryId:entry.id,prompt:entry.question,kind:'meaning',choices:entry.questionDetails!.choices.map(({id:_,...choice})=>choice),sources:entry.humanAnswer!.sourceFingerprints,policyVersion:2});assert.equal(validNativeTagDefinitionWork(work),true);
+  const changed=resolveNativeTagDefinition(work,data,{entryId:entry.id,choiceId:choice.id});assert.equal(changed.entries[0].definition!.id,other.id);assert.equal(Object.keys(changed.entries[0].judgments).length,0);assert.equal(changed.tasks.filter(task=>task.status==='pending').flatMap(task=>task.pairs).length,17);assert.equal(compileNativeTagDefinitions(changed,data).entries.length,0);
+  const request=nextNativeTagDefinitionRequests(changed)[0],uncertain=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(changed,request.id),request.id,reply(request,'uncertain')),locked=clone(data);locked.decisions[`${entry.paperIds[0]}|${other.id}`]={locked:true};assert.throws(()=>recheckNativeTagDefinitionSources(uncertain,locked,entry.id),/protects/);assert.equal(validNativeTagDefinitionWork(uncertain),true);
 });

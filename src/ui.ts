@@ -6,6 +6,7 @@ import { canonicalTagKey } from './core';
 import type { WarningRecord } from './warnings';
 
 type Child = Node | string | null | undefined | false;
+type NativeMeaningRow = NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number];
 type MenuAction = { id: string; label: string; run: () => void | Promise<unknown> };
 type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'search' | 'reset-analysis' | 'merge-shelves' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
@@ -83,6 +84,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let activityHistoryQuery = '';
   let activityHistoryPage = 0;
   let deferredReviewOpen = false;
+  let deferredSourceReviewOpen = false;
   let busy = false;
   let signingIn = false;
   let disposed = false;
@@ -481,6 +483,36 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (item.ownerPage === 'vocabulary') openNativeMeanings();
     else { tagView = 'questions';nav(destination?.page || 'cleanup'); }
   }
+  function nativeReviewRow(item: DisplayReviewItem) {
+    const work = currentState().nativeDefinitionPreparation;
+    return work && (work.id === item.taskId || work.id === item.workId) ? work.rows.find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
+  }
+  function isSourceReview(item: DisplayReviewItem) {
+    const row = nativeReviewRow(item);
+    return nativeSourceReview(row);
+  }
+  function nativeSourceReview(row?: NativeMeaningRow) {
+    return !!row?.chosenMeaning && row.questionKind === 'information' && !!row.sourceIssues?.length;
+  }
+  function sourceReviewInbox(items: DisplayReviewItem[]) {
+    const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
+    if (!open.length && !deferred.length) return null;
+    return h('section','source-review-inbox',h('h3','','Source checks'),...open.map(reviewItemBody),deferred.length ? details(`Source checks for later (${deferred.length})`,deferredSourceReviewOpen,value => { deferredSourceReviewOpen = value; },() => h('div','',...deferred.map(reviewItemBody))) : null);
+  }
+  function nativeMeaningSupport(row: NativeMeaningRow) {
+    if (!row.chosenMeaning) return null;
+    const issues = row.sourceIssues || [];
+    const panel = h('details','native-meaning-support',h('summary','',`Selected meaning${issues.length ? ` and ${issues.length} source ${issues.length === 1 ? 'check' : 'checks'}` : ''}`),h('p','',row.chosenMeaning.description));
+    const labels = { uncertain: 'Uncertain match', different: 'Conflicting result', unchecked: 'Not checked' };
+    for (const issue of issues) panel.append(h('div','native-source-issue',paperButton(issue.paperId),h('p','card-description',labels[issue.status]),h('p','',issue.reason)));
+    return h('div','native-meaning-status',h('p','meaning-selected',`Meaning selected: ${row.chosenMeaning.name}`),panel);
+  }
+  function recheckNativeSources(workId: string, row: NativeMeaningRow, disabled = false) {
+    if (!row.canRecheckSources) return null;
+    const retry = button('Recheck sources',() => run('recheck-tag-meaning-sources',{id:workId,entryId:row.id},'Unresolved sources queued. Your meaning choice is kept.'),'small',disabled);
+    retry.id = `recheck-native-sources-${row.id}`;
+    return h('div','native-source-recheck',retry,h('small','','Uses AI to recheck only unresolved sources.'));
+  }
   function reviewItemBody(item: DisplayReviewItem): Node {
     const s = currentState();
     const later = () => run('defer-review-item', { id: item.id }, 'Left for later. Other work can continue.');
@@ -495,13 +527,13 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         button('Reject and remember', () => run('resolve-review-item', { id: item.id, action: 'reject' }, 'Rejection remembered.'), 'small'),button('Later', later, 'quiet small')));
     }
     const work = s.nativeDefinitionPreparation;
-    const native = work && (work.id === item.taskId || work.id === item.workId) ? work.rows.find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
+    const native = nativeReviewRow(item);
     const preparation = s.tagPreparation;
     const question = preparation && (preparation.id === item.taskId || preparation.id === item.workId) ? preparation.questions.find(question => question.reviewId === item.id || question.id === item.questionId) : undefined;
     const choices = native?.choices || question?.choices || [];
     const unsaved = !!native && !!work && nativeMeaningChanged(work.id,native);
     const actions = h('div', 'actions',...choices.map(choice => {
-      const answer = button(choice.label, () => run('resolve-review-item', { id: item.id, choiceId: choice.id }, 'Meaning selected. Supported definitions are saved automatically.'), 'small primary',unsaved);
+      const answer = button(choice.label, () => run('resolve-review-item', { id: item.id, choiceId: choice.id }, 'Meaning selected. Supported definitions are saved automatically.'), 'small primary meaning-choice-option',unsaved);
       answer.setAttribute('aria-label', choice.label);
       if (native) answer.id = `answer-native-meaning-${native.id}-${choice.id}`;
       if (choice.description) answer.append(h('small', '', choice.description));return answer;
@@ -511,7 +543,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (native) { const leave = button('Leave undefined', () => run('resolve-review-item', { id: item.id, action: 'leave' }, 'Name left undefined.'), 'small',unsaved);leave.id = `leave-native-meaning-${native.id}`;actions.append(leave); }
     if (!choices.length && !native) actions.append(button('Open meaning', () => openReviewItem(item), 'small'));
     actions.append(button('Later', later, 'quiet small'));
-    return h('article', 'review-choice',h('strong', '', item.sourceName || item.label),h('p', '', item.message || native?.question || question?.description || ''),actions);
+    return h('article', 'review-choice',h('strong', '', item.sourceName || item.label),native ? nativeMeaningSupport(native) : null,h('p', '', native?.question || item.message || question?.description || ''),actions,native && work ? recheckNativeSources(work.id,native,unsaved) : null);
   }
   function reviewInbox(items: DisplayReviewItem[], title = 'Needs your choice'): Node | null {
     const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
@@ -888,19 +920,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (work.processingPolicy === 'auto-clear') {
       const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id));
       const questions = work.rows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
+      const sourceQuestions = questions.filter(nativeSourceReview).length, meaningQuestions = questions.length - sourceQuestions;
       const deferredCount = items.filter(item => item.state === 'deferred').length;
       const savedCount = work.savedCount ?? 0;
-      const summary = h('div', '',h('p', '', `${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${questions.length ? ` · ${questions.length} need your choice` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
+      const summary = h('div', '',h('p', '', `${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${meaningQuestions ? ` · ${meaningQuestions} need your choice` : ''}${sourceQuestions ? ` · ${sourceQuestions} need evidence` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
         work.status === 'running' || work.status === 'queued' ? h('p', 'card-description',`${work.completed} of ${work.total} names checked. You can keep browsing.`) : null,
         work.error ? h('p', 'notice warning',humanMessage(work.error)) : null);
-      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(questions.length ? 'Choose meanings' : 'Open deferred meanings',openNativeMeanings,'small') : null,
+      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(meaningQuestions ? 'Choose meanings' : sourceQuestions ? 'Review sources' : 'Open deferred meanings',openNativeMeanings,'small') : null,
         !nativeMeaningReviewHidden ? button('Back to tags',() => { browseTags();render(); },'quiet small') : null,
         work.status === 'paused' ? button('Retry meanings',() => run('retry-tag-meanings',{id:work.id}),'small') : null,taskUndo(work.lastChangeId,'undo-native-meaning-change'));
-      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => h('article', 'tag-row',h('strong', '', row.sourceName),h('p', '', row.question || ''),
+      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row),h('p', '', row.question || ''),
         h('div', 'actions',...(row.choices || []).map(choice => button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id}),'small')),
-          button('Edit meaning',() => editNativeMeaning(work.id,row),'small'),button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id}),'quiet small'))))) : null;
+          button('Edit meaning',() => editNativeMeaning(work.id,row),'small'),button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id}),'quiet small')),recheckNativeSources(work.id,row)))) : null;
       return h('div', 'stack',h('section','task-summary',h('h2','',work.status === 'running' || work.status === 'queued' ? 'Defining tag meanings' : 'Tag meanings'),summary,actions),
-        !nativeMeaningReviewHidden ? reviewInbox(items) : null,fallback);
+        !nativeMeaningReviewHidden ? reviewInbox(items.filter(item => !isSourceReview(item))) : null,!nativeMeaningReviewHidden ? sourceReviewInbox(items.filter(isSourceReview)) : null,fallback);
     }
     if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
     if (nativeMeaningReviewHidden) return null;
@@ -922,11 +955,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const explanation = suggestible ? 'This earlier result has no usable draft. Suggest a meaning from the linked papers, write your own, or leave this name undefined.' : row.questionKind === 'protection' ? 'An earlier tag choice is protected. Revise that choice before matching, write a separate meaning, or leave this name undefined.' : row.questionKind === 'information' ? `${row.question || 'The linked papers do not establish a scientific meaning.'} Write the meaning you intend, or leave this name undefined.` : row.question || 'Use a suggested meaning, write your own, or leave this name undefined.';
       const source = row.name && row.name !== row.sourceName ? h('p','card-description',`From: ${row.sourceName}`) : null;
       const heading = row.status === 'ready' ? checkbox(`prepared-native-tag-${row.id}`,!excludedNativeMeaningRows.has(row.id),row.name || row.sourceName,checked => { checked ? excludedNativeMeaningRows.delete(row.id) : excludedNativeMeaningRows.add(row.id);render(); }) : h('strong','',row.sourceName);
-      const article = h('article','tag-row',h('div','inline between',heading,row.status === 'ready' ? badge(row.targetTagId ? 'Use saved tag' : 'New tag','approved') : row.status === 'pending' ? badge('Waiting') : badge(suggestible ? 'Needs a draft' : row.questionKind === 'information' ? 'Needs information' : row.questionKind === 'protection' ? 'Protected choice' : 'Needs your choice','draft')),source,row.description ? h('p','',row.description) : null,row.status === 'question' || row.status === 'failed' ? h('p','card-description',explanation) : null,row.paperIds.length ? h('div','warning-papers',...row.paperIds.slice(0,3).map(id => paperButton(id))) : null);
+      const article = h('article','tag-row',h('div','inline between',heading,row.status === 'ready' ? badge(row.targetTagId ? 'Use saved tag' : 'New tag','approved') : row.status === 'pending' ? badge('Waiting') : badge(suggestible ? 'Needs a draft' : row.questionKind === 'information' ? 'Needs information' : row.questionKind === 'protection' ? 'Protected choice' : 'Needs your choice','draft')),source,nativeMeaningSupport(row),row.description && !row.chosenMeaning ? h('p','',row.description) : null,row.status === 'question' || row.status === 'failed' ? h('p','card-description',row.chosenMeaning ? row.question || '' : explanation) : null,row.paperIds.length && !row.chosenMeaning ? h('div','warning-papers',...row.paperIds.slice(0,3).map(id => paperButton(id))) : null);
       if (row.status === 'question' && row.choices?.length) {
         const choices = h('div','question-choices');
         for (const choice of row.choices) {
-          const answer = button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id},'Choice saved. Checking the linked papers.'),'question-choice',running || unsaved.has(row.id));answer.id = `answer-native-meaning-${row.id}-${choice.id}`;answer.setAttribute('aria-label',choice.label);
+          const answer = button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id},'Choice saved. Checking the linked papers.'),'question-choice meaning-choice-option',running || unsaved.has(row.id));answer.id = `answer-native-meaning-${row.id}-${choice.id}`;answer.setAttribute('aria-label',choice.label);
           if (choice.description) answer.append(h('small','',choice.description));choices.append(answer);
         }
         article.append(choices);
@@ -935,7 +968,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const suggest = suggestible ? button('Suggest a meaning',() => run('continue-tag-meanings',{id:work.id,rowIds:[row.id]},'Preparing a meaning from the linked papers.'),'primary small',running || unsaved.has(row.id)) : null;
       if (suggest) { suggest.id = `suggest-native-meaning-${row.id}`;suggest.setAttribute('aria-label',`Suggest a meaning for ${row.sourceName}`); }
       const leave = button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id},'This name will stay visible without automatic matching.'),'quiet small',running || unsaved.has(row.id));leave.id = `leave-native-meaning-${row.id}`;leave.setAttribute('aria-label',`Leave ${row.sourceName} undefined`);
-      if (row.status !== 'pending') article.append(h('div','actions',suggest,edit,leave));
+      if (row.status !== 'pending') {
+        article.append(h('div','actions',suggest,edit,leave));
+        const recheck = recheckNativeSources(work.id,row,running || unsaved.has(row.id));if (recheck) article.append(recheck);
+      }
       body.append(article);
     }
     if (rows.length > 20) body.append(pagination(rows.length,nativeMeaningPage,next => { nativeMeaningPage = next; },20,'meanings'));
@@ -1595,12 +1631,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const meaningCounts = [task.savedCount === undefined ? '' : `${task.savedCount} meanings saved`,task.leftUndefinedCount === undefined ? '' : `${task.leftUndefinedCount} left undefined`].filter(Boolean).join(' · ');
       return h('article','completed-task',h('strong','',task.label),task.kind === 'meanings' ? meaningCounts ? h('p','card-description',meaningCounts) : null : task.total !== undefined ? h('p','card-description',`${task.completed ?? task.total} of ${task.total} papers`) : null,task.message ? h('p','card-description',humanMessage(task.message)) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
     }))) : null;
-    const inbox = reviewInbox(s.reviewItems || []);
+    const sourceItems = (s.reviewItems || []).filter(isSourceReview);
+    const inbox = reviewInbox((s.reviewItems || []).filter(item => !isSourceReview(item)));
+    const sourceChecks = sourceReviewInbox(sourceItems);
     const hasPaperProblems = s.paperAttention?.papers.some(paper => paper.status === 'needsInformation' || paper.status === 'failed');
     const paperInfo = details('Paper information',activityPaperInfoOpen,value => { activityPaperInfoOpen = value; },paperAttention);paperInfo.id = 'activity-paper-information';
-    const recovery = h('section','activity-recovery',h('h2','','Recovery'),notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
+    const recovery = h('section','activity-recovery',h('h2','','Recovery'),sourceChecks,notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
     const past = details('History',activityHistoryOpen,value => { activityHistoryOpen = value; },() => h('div','activity-history-body',h('section','',h('h3','','Applied changes'),h('p','card-description','Undo checks for later edits before changing a saved batch.'),history),completedWork,warningHistory()));past.id = 'activity-history';
-    const hasRecovery = hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
+    const hasRecovery = sourceChecks || hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
     return h('div', 'stack activity-page',inbox,paperWork,...current,!paperWork && !current.length && !inbox && !hasRecovery ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,hasRecovery ? recovery : paperInfo,past);
   }
 

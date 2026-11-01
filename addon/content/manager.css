@@ -182,6 +182,19 @@ input[aria-invalid="true"] { border-color:var(--danger); }
 .review-choice .actions { margin-top:10px; }
 .review-choice details { margin-top:10px; }
 .review-choice summary { cursor:pointer; font-size:12px; }
+.meaning-choice-option { max-width:100%; text-align:left; white-space:normal; }
+.meaning-choice-option small { display:block; margin-top:4px; color:inherit; font-weight:400; line-height:1.5; }
+.native-meaning-status { margin-top:8px; }
+.meaning-selected { font-size:12px; font-weight:500; }
+.native-meaning-support { margin-top:8px; font-size:12px; }
+.native-meaning-support > summary { cursor:pointer; }
+.native-meaning-support > p { margin-top:10px; max-width:75ch; }
+.native-source-issue { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.native-source-issue > p { max-width:75ch; overflow-wrap:anywhere; }
+.native-source-issue > .paper-title-button { font-size:12px; }
+.native-source-recheck { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.native-source-recheck > small { font-size:11px; }
+.source-review-inbox > .review-choice { border-bottom:1px solid var(--line); }
 .between { justify-content:space-between; }
 .notice { padding:11px 13px; border:1px solid var(--line); border-radius:4px; background:var(--surface-2); color:var(--muted); font-size:12px; line-height:1.6; }
 .notice.warning { color:var(--warn); background:color-mix(in srgb,var(--warn) 5%,var(--surface)); border-color:color-mix(in srgb,var(--warn) 18%,var(--line)); }

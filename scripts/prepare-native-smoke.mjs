@@ -37,7 +37,13 @@ if (automaticWorkflow && !builtAddon) await build({ entryPoints: [path.join(root
 await build({ entryPoints: [path.join(root, 'scripts', 'native-smoke.js')], outfile: path.join(nativeAddon, 'content', 'native-smoke.js'), bundle: true, format: 'iife', platform: 'browser', target: 'firefox140', legalComments: 'none' });
 const configuration = { root, data, profile, reportPath, port: automaticWorkflow ? 23159 : 23149, openManager: process.argv.includes('--open-manager'), theme, ...(automaticWorkflow ? { scenario: 'automatic-workflow' } : {}), ...(builtAddon ? { addonSource: 'production-build', addonVersion: manifest.version } : {}), ...(process.argv.includes('--secondary-baseline') ? { secondaryBaseline: true } : {}), ...(process.argv.includes('--secondary-workflow') ? { secondaryWorkflow: true } : {}) };
 if (process.argv.includes('--meaning-recovery')) configuration.meaningRecovery = true;
-if (process.argv.includes('--preview-xpi')) Object.assign(configuration,{ previewXpi: path.join(root,'build','smart-tags-1.0.1-preview.xpi'), previewVersion: '1.0.1pre' });
+if (process.argv.includes('--preview-xpi')) {
+  const requestedVersion = process.argv.find(value => value.startsWith('--preview-version='))?.slice('--preview-version='.length);
+  const previewVersion = requestedVersion ?? '1.0.1pre';
+  if (!/^\d+\.\d+\.\d+pre$/.test(previewVersion)) throw new Error('Use a preview version such as 1.0.3pre.');
+  const previewStableVersion = previewVersion.replace(/pre$/, '');
+  Object.assign(configuration,{ previewXpi: path.join(root,'build',`smart-tags-${previewStableVersion}-preview.xpi`), previewVersion, previewPreviousVersion: requestedVersion ? manifest.version : '1.0.0', previewStableVersion });
+}
 const bootstrapPath = path.join(nativeAddon, 'bootstrap.js');
 const bootstrap = await readFile(bootstrapPath, 'utf8');
 const needle = 'await smartTagsScope.SmartTags.startup({ id, version, rootURI });';

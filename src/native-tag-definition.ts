@@ -138,10 +138,21 @@ function frozenDefinitionEcho(entry:NativeTagDefinitionEntry,item:Record<string,
 function sourceFingerprints(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry):Record<string,string> {
   return Object.fromEntries(entry.paperIds.map(id=>[id,sourceFingerprint(work.snapshot,entry.sourceName,id)]));
 }
+export function nativeTagDefinitionMeaningChosen(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry):boolean {
+  const answer=entry.humanAnswer;
+  return !!answer&&answer.origin!=='leave'&&!!entry.definition&&answer.meaningFingerprint===fingerprint(entry.definition)&&fingerprint(answer.sourceFingerprints)===fingerprint(sourceFingerprints(work,entry));
+}
+function unresolvedSourceQuestion(entry:NativeTagDefinitionEntry):string {
+  const uncertain=entry.paperIds.filter(id=>entry.judgments[id]?.relation==='uncertain').length,unchecked=entry.paperIds.filter(id=>!entry.judgments[id]).length;
+  const issues=[uncertain?`${uncertain} ${uncertain===1?'source check is':'source checks are'} uncertain`:'',unchecked?`${unchecked} ${unchecked===1?'source has':'sources have'} not been checked`:''].filter(Boolean).join('; ');
+  return `Your chosen meaning is retained. ${issues}. Check the source information or leave this tag undefined.`;
+}
 function setQuestion(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry,prompt:string,kind:NativeTagDefinitionQuestion['kind']='meaning',choices:NativeTagDefinitionChoice[]=[]) {
   entry.status='question';entry.question=prompt;
   if(work.protocolVersion===1)return;
-  if(!choices.length&&kind==='meaning'&&entry.definition&&!scientificQuestion(entry,entry.definition)&&!protectedTarget(work,entry)&&!Object.values(entry.judgments).some(judgment=>judgment.relation==='different'))choices=[{id:'',label:`Use ${entry.definition.name}`,definition:clone(entry.definition),...(entry.targetTagId?{targetTagId:entry.targetTagId}:{}),origin:'candidate'}];
+  const chosen=nativeTagDefinitionMeaningChosen(work,entry);
+  if(chosen){choices=choices.filter(choice=>fingerprint(choice.definition)!==fingerprint(entry.definition));if(kind==='meaning'&&!Object.values(entry.judgments).some(judgment=>judgment.relation==='different')&&entry.paperIds.some(id=>!entry.judgments[id]||entry.judgments[id].relation==='uncertain'))kind='information';if(kind==='information'&&prompt.startsWith('The papers do not all establish the same meaning'))entry.question=prompt=unresolvedSourceQuestion(entry);}
+  if(!choices.length&&kind==='meaning'&&!chosen&&entry.definition&&!scientificQuestion(entry,entry.definition)&&!protectedTarget(work,entry)&&!Object.values(entry.judgments).some(judgment=>judgment.relation==='different'))choices=[{id:'',label:`Use ${entry.definition.name}`,definition:clone(entry.definition),...(entry.targetTagId?{targetTagId:entry.targetTagId}:{}),origin:'candidate'}];
   const binding=fingerprint({entryId:entry.id,prompt,kind,choices:choices.map(({id:_,...choice})=>choice),sources:sourceFingerprints(work,entry),policyVersion:2});
   if(entry.questionDetails?.fingerprint===binding)return;
   entry.questionDetails={id:allocateOpaqueId('native-definition-question'),prompt,kind,fingerprint:binding,choices:choices.map(choice=>({...choice,id:choice.id||allocateOpaqueId('native-definition-choice')}))};
@@ -187,8 +198,14 @@ function groundedJudgment(work:NativeTagDefinitionWork,entry:NativeTagDefinition
   return {relation:checkedRelation,reason:checkedReason,evidence:[...new Map(evidence.map(quote=>[fingerprint(quote),quote])).values()],supportFactConceptIds:factIds,sourceFingerprint:expected,definitionFingerprint:fingerprint(entry.definition)};
 }
 function updateWork(work:NativeTagDefinitionWork) {
+  for(const entry of work.entries)if(entry.status==='question'&&nativeTagDefinitionMeaningChosen(work,entry)&&entry.questionDetails?.kind!=='protection'){
+    const different=Object.values(entry.judgments).some(judgment=>judgment.relation==='different'),unresolved=entry.paperIds.some(id=>!entry.judgments[id]||entry.judgments[id].relation==='uncertain'),choices=entry.questionDetails?.choices??[],retained=choices.filter(choice=>fingerprint(choice.definition)!==fingerprint(entry.definition));
+    if(different&&entry.questionDetails?.kind==='information')setQuestion(work,entry,entry.question?.startsWith('Your chosen meaning is retained.')?'A checked source establishes a different meaning from your chosen scope. Clarify this conflict or leave the name undefined.':entry.question!,'meaning',retained);
+    else if(!different&&unresolved&&(entry.questionDetails?.kind!=='information'||entry.question?.startsWith('Your chosen meaning is retained.')&&entry.question!==unresolvedSourceQuestion(entry)))setQuestion(work,entry,entry.question?.startsWith('The papers do not all establish the same meaning')||entry.question?.startsWith('Your chosen meaning is retained.')?unresolvedSourceQuestion(entry):entry.question!,'information',retained);
+    else if(retained.length!==choices.length)setQuestion(work,entry,entry.question!,entry.questionDetails?.kind??'meaning',retained);
+  }
   for(const entry of work.entries)if(entry.status==='question'&&entry.questionDetails?.choices.some(choice=>choice.origin==='candidate')&&(!entry.definition||scientificQuestion(entry,entry.definition)||protectedTarget(work,entry)||Object.values(entry.judgments).some(judgment=>judgment.relation==='different')))setQuestion(work,entry,entry.question!,entry.questionDetails.kind,entry.questionDetails.choices.filter(choice=>choice.origin!=='candidate'));
-  for(const entry of work.entries){if(entry.status==='question'||entry.status==='left-undefined')continue;const judgments=entry.paperIds.map(id=>entry.judgments[id]);if(entry.definition&&judgments.some(judgment=>judgment&&judgment.relation!=='same-meaning'))setQuestion(work,entry,'The papers do not all establish the same meaning for this tag. Clarify its meaning or leave it undefined.');else if(entry.definition&&judgments.every(Boolean))entry.status='ready';}
+  for(const entry of work.entries){if(entry.status==='question'||entry.status==='left-undefined')continue;const judgments=entry.paperIds.map(id=>entry.judgments[id]);if(entry.definition&&judgments.some(judgment=>judgment&&judgment.relation!=='same-meaning')){const information=nativeTagDefinitionMeaningChosen(work,entry)&&!judgments.some(judgment=>judgment?.relation==='different');setQuestion(work,entry,information?unresolvedSourceQuestion(entry):'The papers do not all establish the same meaning for this tag. Clarify its meaning or leave it undefined.',information?'information':'meaning');}else if(entry.definition&&judgments.every(Boolean))entry.status='ready';}
   for(const task of work.tasks)if(task.status==='pending'){task.pairs=task.pairs.filter(pair=>work.entries.find(entry=>entry.id===pair.entryId)?.status==='pending');task.entryIds=[...new Set(task.pairs.map(pair=>pair.entryId))];if(!task.pairs.length)task.status='completed';}
   work.status=work.tasks.some(task=>task.status==='failed')?'failed':work.tasks.some(task=>task.status==='running')?'running':work.tasks.some(task=>task.status==='pending')?'pending':'ready';
 }
@@ -260,6 +277,12 @@ export function resolveNativeTagDefinition(work:NativeTagDefinitionWork,currentI
   const source=work.entries.find(entry=>entry.id===answer.entryId);if(!source||!['question','ready'].includes(source.status)||answer.choiceId&&source.status!=='question')throw new Error('This tag no longer has a meaning available to edit or answer.');
   if([!!answer.choiceId,!!answer.definition,answer.leaveUndefined===true].filter(Boolean).length!==1)throw new Error('Choose one meaning, edit its definition, or leave this tag undefined.');
   if(!answer.leaveUndefined&&!unchangedSources(work,source,currentInput))throw new Error('This tag’s papers or information changed. Prepare its meaning again before answering.');
+  const repeatedChoice=answer.choiceId&&(answer.choiceId===source.humanAnswer?.choiceId||source.questionDetails?.choices.some(choice=>choice.id===answer.choiceId&&fingerprint(choice.definition)===fingerprint(source.definition)&&choice.targetTagId===source.targetTagId)),repeatedEdit=answer.definition&&source.definition&&editableMeaning(answer.definition)===editableMeaning(source.definition);
+  if(nativeTagDefinitionMeaningChosen(work,source)&&(repeatedChoice||repeatedEdit)){
+    if(source.targetTagId&&fingerprint(currentInput.definitions.find(tag=>tag.id===source.targetTagId))!==fingerprint(source.definition))throw new Error('The saved meaning changed. Prepare this question again before choosing it.');
+    if(protectedTarget(work,source)||source.targetTagId&&source.paperIds.some(paperId=>{const decision=currentInput.decisions[`${paperId}|${source.targetTagId}`];return decision?.locked||decision?.rejected;}))throw new Error('An earlier lock or rejection protects this saved tag choice. Leave this name undefined or revise that choice first.');
+    const next=clone(work);updateWork(next);return next;
+  }
   const next=clone(work);archiveRevision(next,'answer');next.protocolVersion=2;const entry=next.entries.find(entry=>entry.id===source.id)!;
   const binding=answerBinding(work,source);
   if(answer.leaveUndefined){entry.status='left-undefined';entry.humanAnswer={origin:'leave',questionFingerprint:binding,sourceFingerprints:sourceFingerprints(next,entry),policyVersion:2};delete entry.question;delete entry.questionDetails;retireEntryTasks(next,new Set([entry.id]));updateWork(next);return next;}
@@ -274,6 +297,18 @@ export function resolveNativeTagDefinition(work:NativeTagDefinitionWork,currentI
   entry.humanAnswer={origin:answer.choiceId?'choice':'edit',questionFingerprint:binding,meaningFingerprint:fingerprint(entry.definition),...(answer.choiceId?{choiceId:answer.choiceId}:{}),sourceFingerprints:sourceFingerprints(next,entry),policyVersion:2};entry.status='pending';delete entry.question;delete entry.questionDetails;
   retireEntryTasks(next,new Set([entry.id]));updateWork(next);
   if(entry.status==='pending')addTasks(next,'check',[{entryId:entry.id,paperIds:entry.paperIds.filter(id=>!entry.judgments[id])}]);updateWork(next);return next;
+}
+export function recheckNativeTagDefinitionSources(work:NativeTagDefinitionWork,currentInput:ReconciliationInput,entryId:string):NativeTagDefinitionWork {
+  assertSettled(work);const source=work.entries.find(entry=>entry.id===entryId);
+  if(!source||source.status!=='question'||!nativeTagDefinitionMeaningChosen(work,source))throw new Error('Choose a current meaning before rechecking its sources.');
+  if(!unchangedSources(work,source,currentInput))throw new Error('This tag’s papers or information changed. Prepare its meaning again before checking sources.');
+  if(source.targetTagId&&fingerprint(currentInput.definitions.find(tag=>tag.id===source.targetTagId))!==fingerprint(source.definition))throw new Error('The saved meaning changed. Prepare this question again before checking sources.');
+  if(source.questionDetails?.kind==='protection'||protectedTarget(work,source)||source.targetTagId&&source.paperIds.some(paperId=>{const decision=currentInput.decisions[`${paperId}|${source.targetTagId}`];return decision?.locked||decision?.rejected;}))throw new Error('An earlier lock or rejection protects this saved tag choice. Leave this name undefined or revise that choice first.');
+  if(Object.values(source.judgments).some(judgment=>judgment.relation==='different'))throw new Error('A checked source establishes a different meaning. Clarify this conflict or leave the name undefined.');
+  if(source.paperIds.every(id=>source.judgments[id]?.relation==='same-meaning'))throw new Error('No uncertain or unchecked sources remain for this chosen meaning.');
+  const next=clone(work);archiveRevision(next,'continue');const entry=next.entries.find(entry=>entry.id===entryId)!;
+  entry.judgments=Object.fromEntries(Object.entries(entry.judgments).filter(([,judgment])=>judgment.relation!=='uncertain'));entry.status='pending';delete entry.question;delete entry.questionDetails;
+  retireEntryTasks(next,new Set([entryId]));addTasks(next,'check',[{entryId,paperIds:entry.paperIds.filter(id=>!entry.judgments[id])}]);updateWork(next);return next;
 }
 export function continueNativeTagDefinitionWork(work:NativeTagDefinitionWork,currentInput:ReconciliationInput,entryIds:readonly string[]=work.entries.filter(entry=>entry.status==='question').map(entry=>entry.id)):NativeTagDefinitionWork {
   assertSettled(work);

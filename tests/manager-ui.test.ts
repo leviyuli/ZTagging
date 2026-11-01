@@ -1016,6 +1016,38 @@ test('background automatic completions update counts without moving the current 
   const data=snapshot();data.reviewItems=[];const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());data.tagPreparation={...preparation(),processingPolicy:'auto-clear',savedCount:4};data.assignmentReview=assignmentReview('background',{processingPolicy:'auto-clear',appliedCount:3});await h.emitUpdate();assert.equal(h.doc.getElementById('nav-vocabulary').getAttribute('aria-current'),'page');assert.equal(h.doc.getElementById('start-assignment'),null);assert.doesNotMatch(h.app.textContent,/Review before applying/);assert.match(h.app.textContent,/New papers: automatic tagging off/);assert.equal(h.actions.length,0);
 });
 
+function selectedNativeMeaningSnapshot():ManagerSnapshot {
+  const data=snapshot();
+  data.queue={ownerPage:'vocabulary',status:'idle',total:0,completed:0,failed:0};
+  data.nativeDefinitionPreparation={id:'chosen-ccs-work',processingPolicy:'auto-clear',status:'ready',completed:1,total:1,canApply:false,savedCount:0,questionCount:1,rows:[{id:'chosen-ccs-entry',reviewId:'chosen-ccs-review',sourceName:'Carbon capture and storage',name:'Carbon capture and storage',description:'Capture and geological storage of carbon dioxide.',facet:'system',paperIds:['a','b'],status:'question',questionKind:'information',question:'Your meaning is retained. One source check is uncertain.',choices:[],chosenMeaning:{name:'Carbon capture and storage',description:'Capture and geological storage of carbon dioxide.'},sourceIssues:[{paperId:'b',status:'uncertain',reason:'The supplied abstract does not establish the storage context.'}],canRecheckSources:true}]};
+  data.reviewItems=[{id:'chosen-ccs-review',kind:'definition',taskId:'chosen-ccs-task',workId:'chosen-ccs-work',questionId:'chosen-ccs-entry',label:'Carbon capture and storage',sourceName:'Carbon capture and storage',ownerPage:'vocabulary',state:'open',message:'Your meaning is retained. One source check is uncertain.'}];
+  data.activityTasks=[{id:'chosen-ccs-task',workId:'chosen-ccs-work',kind:'meanings',state:'needs-choice',label:'Tag meanings',ownerPage:'vocabulary',questionCount:1}];
+  return data;
+}
+
+test('chosen native meanings keep source uncertainty in Recovery and recheck only on an explicit action',async t=>{
+  const data=selectedNativeMeaningSnapshot();
+  const h=await harness(data,{page:'activity',onInvoke(action,payload,current){if(action==='defer-review-item')current.reviewItems![0].state='deferred';if(action==='reopen-review-item')current.reviewItems![0].state='open';}});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/Meaning selected: Carbon capture and storage/);
+  assert.equal(h.button('Use carbon capture and storage'),undefined);
+  assert.doesNotMatch(h.app.textContent,/Needs your choice/);
+  assert.equal(h.button('Open meanings'),undefined);
+  const recovery=h.doc.getElementById('activity-recovery');assert.ok(recovery);assert.ok(recovery.contains(h.doc.getElementById('recheck-native-sources-chosen-ccs-entry')));
+  h.expand('Selected meaning and 1 source check');assert.match(h.app.textContent,/does not establish the storage context/);assert.deepEqual(recovery.querySelectorAll('.paper-title-button').map(node=>node.textContent),['Detail elsewhere']);
+  await h.emitUpdate();assert.equal(h.actions.length,0);assert.match(h.app.textContent,/Meaning selected:/);
+  await h.click('Recheck sources');assert.deepEqual(h.actions,[{action:'recheck-tag-meaning-sources',payload:{id:'chosen-ccs-work',entryId:'chosen-ccs-entry'}}]);
+  await h.click('Later');assert.equal(h.button('Recheck sources'),undefined);h.expand('Source checks for later (1)');await h.click('Reopen');assert.ok(h.button('Recheck sources'));
+  assert.deepEqual(data.nativeDefinitionPreparation!.rows[0].chosenMeaning,{name:'Carbon capture and storage',description:'Capture and geological storage of carbon dioxide.'});
+});
+
+test('Tag library distinguishes a chosen meaning needing evidence from an unanswered scope',async t=>{
+  const h=await harness(selectedNativeMeaningSnapshot(),{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/0 meanings saved · 1 need evidence/);assert.doesNotMatch(h.app.textContent,/1 need your choice/);
+  assert.ok(h.button('Review sources'));assert.equal(h.button('Choose meanings'),undefined);assert.equal(h.button('Recheck sources'),undefined);
+  await h.click('Review sources');assert.match(h.app.textContent,/Meaning selected: Carbon capture and storage/);assert.ok(h.button('Recheck sources'));assert.equal(h.button('Use carbon capture and storage'),undefined);
+  await h.emitUpdate();assert.equal(h.actions.length,0);
+});
+
 test('editor Save is a form-associated submit and submits only once',async t=>{
   const h=await harness(snapshot(),{page:'vocabulary'});t.after(()=>h.ui.destroy());await h.click('Add tag');assert.equal(h.doc.activeElement.id,'tag-name');
   const save=h.doc.getElementById('save-tag');assert.equal(save.type,'submit');assert.equal(save.getAttribute('form'),'tag-editor-form');assert.equal(save.listeners.get('click')?.size||0,0);

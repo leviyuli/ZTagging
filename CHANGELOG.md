@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.3 — 2026-11-01
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3-source.zip)
+
+- Keep a chosen native-tag meaning when source checks remain uncertain. Reopening, submitting the same choice again, or saving an unchanged edit preserves completed checks without another AI request; only explicit source rechecking schedules unresolved sources again.
+- Show retained meanings and source-specific results under Recovery, with clear paper links and an explicit Recheck sources action. Restore the latest archived answers and evidence, and keep deferred reviews deferred when normalizing older repeated-choice questions.
+- Normalize older repeated-choice questions locally only when preparation is ready and every request task is completed. Preserve selected meanings, judgments, paid replies and history; known contradictions and the all-paper native-alias approval gate remain enforced.
+- Keep state schema 12, native-definition protocol 2 and the existing evidence policy unchanged.
+
 ## 1.0.2 — 2026-11-01
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.2/smart-tags-1.0.2-source.zip)
