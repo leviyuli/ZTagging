@@ -1,5 +1,11 @@
 # Migration notes
 
+## Version 1.0.4: keep meaning editing usable
+
+Install the [v1.0.4 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi) over your existing extension, then reopen Smart Tags. The meaning editor uses the existing full-height drawer when a long review list leaves too little room. Save and Close stay visible, drafts survive resizing and refresh, and reopening a deeply scrolled draft reveals its focused field without moving the page.
+
+This UI patch retains **state schema 12**, **native-definition protocol 2**, selected meanings, paid progress and the existing scientific evidence rules. No cache reset or schema migration is needed. Opening or resizing an editor makes no AI request or native tag write.
+
 ## Version 1.0.3: retain chosen meanings and separate source recovery
 
 Install the [v1.0.3 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi) over your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.3) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3-source.zip). **State schema 12**, **native-definition protocol 2** and the existing evidence policy remain unchanged. No cache reset is needed.

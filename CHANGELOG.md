@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 — 2026-11-01
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4-source.zip)
+
+- Keep the tag meaning editor usable below long review lists by opening the existing full-height drawer when there is too little space. Keep Save and Close visible while resizing, retain drafts and keyboard focus, and reveal focused fields by scrolling only the editor body.
+
 ## 1.0.3 — 2026-11-01
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3-source.zip)

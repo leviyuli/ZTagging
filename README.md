@@ -2,11 +2,11 @@
 
 A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It learns useful tag meanings from your papers, saves clear definitions, and applies supported paper tags. Scientific choices that need your judgment remain available without blocking completed work. Your existing item-list columns and collections stay in place.
 
-**Version 1.0.3** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.3). It keeps your chosen tag meaning and shows uncertain source checks in Recovery, without asking you to choose the same meaning again.
+**Version 1.0.4** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.4). It keeps the meaning editor usable below long review lists, with Save and Close visible and drafts preserved while resizing.
 
 ## Install and start
 
-1. Download [smart-tags-1.0.3.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi).
+1. Download [smart-tags-1.0.4.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi).
 2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version.
 3. Open **Tools → Smart Tags…**, then **Settings → AI connection and budget**, or use **Connect AI** on a task page. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; choose a text-capable model and click **Save and test** (or **Test connection** for saved settings).
 4. Open **Build tags**, choose papers or collections, and click **Build tags** or **Extend tags**. A 50-paper sample is available for a small first run. Clear, checked meanings save automatically; questions stay on the page and in Activity. Building definitions does not write paper tags.
@@ -20,11 +20,13 @@ The classifier usually proposes up to five direct tags from the chosen shelf; it
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.3/smart-tags-1.0.3-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
 **Find papers** leads with results; tag filters and related papers are available when needed. **Activity** puts unfinished choices and recovery first, with completed work, notices and older Undo actions in searchable History. **Settings** shows connection and incoming-tagging status first; optional preferences stay collapsed, and **Ctrl/Cmd+S** saves changes.
 
 ## Earlier releases
+
+Version **1.0.3** keeps chosen tag meanings selected and shows uncertain source checks in Recovery, without repeating the same choice. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.3) remains available.
 
 Version **1.0.2** fixed a validation error that could block saving ready meanings when another name had an information question. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.2) remains available.
 
@@ -186,7 +188,7 @@ After a new assignment finishes analysis, **Topics outside your saved list** is 
 
 Definitions, source metadata, selected PDF passages, proposals, decisions, queue checkpoints, and change journals live in `smart-tags/state.json` inside the current Zotero profile. Atomic writes keep a previous `.bak` generation. Interrupted native changes are reconciled against their recorded tag or metadata snapshots on startup. Definition changes are journaled with affected IDs; recovery and undo preserve unrelated definitions and refuse conflicting later edits.
 
-Version **1.0.3** keeps **state schema 12**, native-definition protocol 2 and the existing evidence policy. Version **1.0.0** introduced schema 12 with an exact-byte **state.json.pre-v12.json** backup. Different existing bytes receive numbered suffixes; older backups remain untouched. Migration retains facts, sources, paid replies, spending, manual choices, settings and history, and makes no provider request or native write. Older unfinished work keeps its existing review and selection policies. New requests opt into automatic clear results and nonblocking exceptions. Compatible completed new work can finish local admission after restart without another model call. Older applications refuse to overwrite schema-12 data; see [migration notes](MIGRATION.md).
+Version **1.0.4** keeps **state schema 12**, native-definition protocol 2 and the existing evidence policy. Version **1.0.0** introduced schema 12 with an exact-byte **state.json.pre-v12.json** backup. Different existing bytes receive numbered suffixes; older backups remain untouched. Migration retains facts, sources, paid replies, spending, manual choices, settings and history, and makes no provider request or native write. Older unfinished work keeps its existing review and selection policies. New requests opt into automatic clear results and nonblocking exceptions. Compatible completed new work can finish local admission after restart without another model call. Older applications refuse to overwrite schema-12 data; see [migration notes](MIGRATION.md).
 
 Unused legacy generated drafts are removed from extension definitions only when an original backup proves their definitions are unchanged and no active or historical references need them. Researcher-authored, edited, approved, and referenced definitions remain. If that baseline is unavailable, definitions are kept. This cleanup creates no separate legacy archive and removes no native paper tags. Regular approved vocabulary history and undo journals remain available. The store refuses newer state schemas rather than overwriting them through an older backup.
 

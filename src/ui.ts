@@ -538,7 +538,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (native) answer.id = `answer-native-meaning-${native.id}-${choice.id}`;
       if (choice.description) answer.append(h('small', '', choice.description));return answer;
     }));
-    if (native && work) { const edit = button('Edit meaning', () => { nav('vocabulary', true);editNativeMeaning(work.id,native); }, 'small');edit.id = `edit-native-meaning-${native.id}`;actions.append(edit); }
+    if (native && work) { const edit = button('Edit meaning', () => { if (page !== 'vocabulary') nav('vocabulary', true);editNativeMeaning(work.id,native); }, 'small');edit.id = `edit-native-meaning-${native.id}`;actions.append(edit); }
     else if (item.tagId && preparation?.tags.some(tag => tag.id === item.tagId)) actions.append(button('Edit meaning', () => { nav('cleanup');editTag(preparation.tags.find(tag => tag.id === item.tagId)!,preparation.id); }, 'small'));
     if (native) { const leave = button('Leave undefined', () => run('resolve-review-item', { id: item.id, action: 'leave' }, 'Name left undefined.'), 'small',unsaved);leave.id = `leave-native-meaning-${native.id}`;actions.append(leave); }
     if (!choices.length && !native) actions.append(button('Open meaning', () => openReviewItem(item), 'small'));
@@ -687,7 +687,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     relationQueries.clear();
     openRelationshipPickers.clear();
     editorTag = copyTag(editorDrafts.get(':new') || { id: '', name: '', description: '', facet: 'phenomenon', aliases: [], inclusions: [], exclusions: [], examples: [], custom, status: 'draft', broaderIds: [], relatedIds: contextId ? [contextId] : [], matchingMode: custom ? 'suggest' : 'auto' });
-    if (shouldRender) { render();doc.getElementById('tag-name')?.focus(); }
+    if (shouldRender) { render();focusTagEditorField('tag-name'); }
+  }
+  function focusTagEditorField(id: string) {
+    const field = doc.getElementById(id), body = doc.getElementById('tag-editor-form');
+    field?.focus({preventScroll:true});
+    if (!field || !body) return;
+    const control = field.getBoundingClientRect(), viewport = body.getBoundingClientRect();
+    if (control.top < viewport.top || control.bottom > viewport.bottom) body.scrollTop += control.top - viewport.top;
   }
   function copyTag(tag: DisplayTag): DisplayTag { return { ...tag, aliases: [...tag.aliases], inclusions: [...tag.inclusions], exclusions: [...tag.exclusions], examples: [...tag.examples], broaderIds: [...tag.broaderIds], relatedIds: [...(tag.relatedIds || [])] }; }
   function editorDraftKey(tag: DisplayTag, preparationId = editorPreparationId, nativeEntry = editorNativeEntry) { return nativeEntry ? `native:${nativeEntry.workId}:${nativeEntry.entryId}` : `${preparationId}:${tag.id || 'new'}`; }
@@ -701,7 +708,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     relationQueries.clear();
     openRelationshipPickers.clear();
     editorTag = copyTag(editorDrafts.get(`${preparationId}:${tag.id}`) || tag);
-    if (shouldRender) { render(); doc.getElementById('tag-name')?.focus(); }
+    if (shouldRender) { render();focusTagEditorField('tag-name'); }
   }
   function navigate(next: ManagerUIOptions, shouldRender = true) {
     if (disposed) return;
@@ -881,7 +888,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     buildMode = 'extend';buildScope = 'selected';assignmentView = 'setup';nav('assignment');
   }
   function addNativeMeaning(name: string) {
-    newTag(true, undefined, false);editorTag!.name = name;editorTag!.fullName = name;editorTag!.aliases = [name];render();doc.getElementById('tag-description')?.focus();
+    newTag(true, undefined, false);editorTag!.name = name;editorTag!.fullName = name;editorTag!.aliases = [name];render();focusTagEditorField('tag-description');
   }
   function nativeMeaningTag(row: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number]): DisplayTag {
     return {id:row.tagId || row.id,name:row.name || row.sourceName,fullName:row.fullName || row.name || row.sourceName,description:row.description || '',facet:row.facet || 'phenomenon',aliases:[...new Set([...(row.aliases || []),row.sourceName])],inclusions:[...(row.inclusions || [])],exclusions:[...(row.exclusions || [])],examples:[...(row.examples || [])],broaderIds:[...(row.broaderIds || [])],relatedIds:[...(row.relatedIds || [])],matchingMode:row.matchingMode || 'suggest',custom:false,status:'approved'};
@@ -911,7 +918,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     rememberEditorOrigin(`edit-native-meaning-${row.id}`);
     rememberEditorDraft();editorPreparationId = '';editorNativeEntry = {workId,entryId:row.id};
     const proposed = nativeMeaningTag(row);
-    editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();doc.getElementById('tag-description')?.focus();
+    editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();focusTagEditorField('tag-description');
   }
   function openNativeMeanings() { nav('vocabulary',true); }
   function nativeMeaningsReview() {
@@ -1959,9 +1966,18 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
   }
   function fitTagWorkspace() {
-    for (const selector of ['.tag-editor', '.tag-workspace-list', '.native-meaning-panel']) {
+    const editor = doc.querySelector<HTMLElement>('.tag-editor');
+    if (editor) {
+      const top = doc.querySelector<HTMLElement>('.tag-workspace-columns')?.getBoundingClientRect().top ?? editor.getBoundingClientRect().top;
+      const available = win.innerHeight - Math.max(16, top) - 16;
+      const drawer = win.innerWidth <= 900 || win.innerHeight <= 600 || available < 420;
+      if (drawer) editor.classList.add('editor-drawer');else editor.classList.remove('editor-drawer');
+      editor.style.height = drawer ? '' : `${available}px`;
+      editor.style.maxHeight = drawer ? '' : `${available}px`;
+    }
+    for (const selector of ['.tag-workspace-list', '.native-meaning-panel']) {
       const panel = doc.querySelector<HTMLElement>(selector);
-      if (!panel || (selector === '.tag-editor' && (win.innerWidth <= 900 || win.innerHeight <= 600))) continue;
+      if (!panel) continue;
       const available = Math.max(100, win.innerHeight - Math.max(16, panel.getBoundingClientRect().top) - 16);
       panel.style.maxHeight = `${available}px`;
       if (selector !== '.tag-workspace-list') panel.style.height = `${available}px`;

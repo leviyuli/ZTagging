@@ -12,6 +12,7 @@ const settle = () => new Promise<void>(resolve=>setImmediate(resolve));
 
 /** XML chrome DOM with real control handlers, sufficient for complete manager flows. */
 function managerDOM() {
+  const rectangles=new Map<string,Partial<{left:number;top:number;width:number;height:number}>>(),focusScroll=new Map<string,number>();
   class Target {
     listeners = new Map<string,Set<(event:any)=>void>>();
     addEventListener(name:string,callback:(event:any)=>void) {const list=this.listeners.get(name)||new Set();list.add(callback);this.listeners.set(name,list);}
@@ -34,10 +35,10 @@ function managerDOM() {
     getAttribute(name:string){return this.attributes.get(name)??null;}
     removeAttribute(name:string){this.attributes.delete(name);}
     contains(node:any):boolean{return node===this||this.children.some(child=>child.contains(node));}
-    focus(){doc.activeElement=this;}
+    focus(options?:{preventScroll?:boolean}){doc.activeElement=this;const next=focusScroll.get(this.id);if(next!==undefined&&!options?.preventScroll)win.scrollTo(0,next);}
     querySelectorAll(selector:string){return descendants(this).filter(node=>matches(node,selector));}
     querySelector(selector:string){return this.querySelectorAll(selector)[0]||null;}
-    getBoundingClientRect(){return {left:10,top:10,width:260,height:34,right:270,bottom:44};}
+    getBoundingClientRect(){const override=[...rectangles].find(([selector])=>matches(this,selector))?.[1]??{}, {left=10,top=10,width=260,height=34}=override;return {left,top,width,height,right:left+width,bottom:top+height};}
     get offsetTop(){return 0;}get offsetHeight(){return 34;}get clientHeight(){return 250;}get scrollHeight(){return this.children.length*34;}
   }
   const doc:any=new Target();
@@ -54,7 +55,7 @@ function managerDOM() {
   const win:any=new Target();Object.assign(win,{document:doc,innerWidth:1100,innerHeight:800,scrollY:0,scrollTo(_x:number,y:number){win.scrollY=y;},confirm:()=>true,setTimeout(callback:()=>void,delay:number){const id=++nextTimer;timers.set(id,callback);timerDelays.set(id,delay);return id;},clearTimeout(id:number){timers.delete(id);timerDelays.delete(id);}});
   function descendants(root:Element):Element[]{return root.children.flatMap(child=>[child,...descendants(child)]);}
   function matches(node:Element,selector:string){return selector.split(',').some(part=>{const simple=part.trim();if(simple.startsWith('.'))return node.classList.contains(simple.slice(1));if(simple.startsWith('#'))return node.id===simple.slice(1);return node.localName===simple;});}
-  return {win,doc,app,timers,timerDelays,all:()=>descendants(app),button:(label:string)=>descendants(doc.body).find(node=>node.localName==='button'&&(node.textContent===label||node.getAttribute('aria-label')===label))!};
+  return {win,doc,app,timers,timerDelays,rectangles,focusScroll,all:()=>descendants(app),button:(label:string)=>descendants(doc.body).find(node=>node.localName==='button'&&(node.textContent===label||node.getAttribute('aria-label')===label))!};
 }
 function tag(id:string,name:string,extra:Partial<DisplayTag>={}):DisplayTag{return {id,name,description:`Definition of ${name}`,facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto',...extra};}
 function snapshot():ManagerSnapshot {
@@ -322,8 +323,8 @@ test('large tag and question lists stay bounded and maintain independent list/ed
   await h.click('Questions (25)');assert.equal(h.all().filter(node=>node.classList.contains('tag-question')).length,10);await h.click('Next questions');assert.match(h.app.textContent,/Question 10/);
 });
 
-test('editor CSS keeps a scroll body and visible footer, with a narrow-window drawer',async()=>{
-  const css=await readFile('addon/content/manager.css','utf8');assert.match(css,/\.tag-editor\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\) auto/);assert.match(css,/\.editor-scroll\s*\{[^}]*overflow:auto/);assert.match(css,/@media \(max-width:900px\), \(max-height:600px\)/);assert.match(css,/\.tag-workspace\.has-editor \.tag-editor\s*\{[^}]*position:fixed/);
+test('editor CSS keeps a scroll body and visible footer, with a viewport drawer',async()=>{
+  const css=await readFile('addon/content/manager.css','utf8');assert.match(css,/\.tag-editor\s*\{[^}]*grid-template-rows:auto minmax\(0,1fr\) auto/);assert.match(css,/\.editor-scroll\s*\{[^}]*overflow:auto/);assert.match(css,/@media \(max-width:900px\), \(max-height:600px\)/);assert.match(css,/\.tag-editor\.editor-drawer\s*\{[^}]*position:fixed/);
 });
 
 test('Explore Any keeps detail contexts together in a saved search',async t=>{
@@ -864,6 +865,44 @@ test('legacy meaning questions can continue and the shelf toolbar remains outsid
 
 test('native meaning editor preserves separate entry drafts and scroll and Cancel does not save a partial answer',async t=>{
   const data=snapshot();data.nativeDefinitionPreparation={id:'draft-work',status:'ready',completed:2,total:2,canApply:false,rows:[{id:'one',sourceName:'Batteries',name:'battery',description:'Battery systems.',facet:'system',paperIds:['a'],status:'question',question:'Choose the scope.'},{id:'two',sourceName:'AC',name:'AC',description:'Alternating-current measurements.',facet:'method',paperIds:['b'],status:'question',question:'Choose the meaning.'}]};const h=await harness(data,{page:'vocabulary',reviewMeanings:true});t.after(()=>h.ui.destroy());await h.click('Edit meaning for Batteries');h.change('tag-description','An unfinished broad battery meaning.');h.doc.getElementById('tag-editor-form').scrollTop=145;await h.click('Edit meaning for AC');h.change('tag-description','An unfinished AC meaning.');h.doc.getElementById('tag-editor-form').scrollTop=90;await h.emitUpdate();assert.equal(h.doc.getElementById('tag-editor-form').scrollTop,90);await h.click('Edit meaning for Batteries');assert.equal(h.doc.getElementById('tag-description').value,'An unfinished broad battery meaning.');assert.equal(h.doc.getElementById('tag-editor-form').scrollTop,145);await h.click('Discard changes');assert.equal(h.doc.getElementById('tag-editor-form'),null);await h.click('Edit meaning for AC');assert.equal(h.doc.getElementById('tag-description').value,'An unfinished AC meaning.');assert.equal(h.doc.getElementById('tag-editor-form').scrollTop,90);await h.click('Discard changes');await h.click('Edit meaning for Batteries');assert.equal(h.doc.getElementById('tag-description').value,'Battery systems.');assert.equal(h.actions.length,0);
+});
+
+test('native editors use a viewport drawer below tall reviews and retain drafts while resizing',async t=>{
+  for(const automatic of [false,true]){
+    const data=snapshot(),rows:NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows']=Array.from({length:25},(_,index)=>({id:`native-${index}`,sourceName:index===0?'Heterogeneous catalysis':`Native topic ${index}`,name:index===0?'heterogeneous catalysis':`scientific topic ${index}`,description:index===0?'Catalysis at an interface between distinct phases.':`The scientific meaning of topic ${index}.`,facet:'phenomenon',paperIds:['a'],status:'question',questionKind:'meaning',question:'Choose the scientific scope represented by this native name.'}));
+    data.nativeDefinitionPreparation={id:'tall-native-review',...(automatic?{processingPolicy:'auto-clear' as const}:{}),status:'ready',completed:25,total:25,canApply:false,rows};
+    if(automatic)data.reviewItems=rows.map(row=>({id:`review-${row.id}`,kind:'definition',state:'open',taskId:'native-maintenance',workId:'tall-native-review',ownerPage:'vocabulary',questionId:row.id,sourceName:row.sourceName,label:row.sourceName}));
+    const h=await harness(data,{page:'vocabulary',reviewMeanings:!automatic});t.after(()=>h.ui.destroy());if(automatic)await h.click('Choose meanings');
+    h.rectangles.set('.tag-workspace-columns',{top:720});h.rectangles.set('.tag-editor',{top:720});h.focusScroll.set('tag-description',720);h.win.scrollY=120;
+    const open=async()=>{const trigger=h.doc.getElementById('edit-native-meaning-native-0');assert.ok(trigger);trigger.focus();trigger.emit('click');await settle();};
+    const editor=()=>h.all().find(node=>node.classList.contains('tag-editor'))!;
+    await open();assert.equal(h.doc.activeElement.id,'tag-description');assert.equal(h.win.scrollY,120,'Opening the editor must not move the outer page');
+    assert.equal(editor().classList.contains('editor-drawer'),true);assert.ok(!editor().style.height&&!editor().style.maxHeight,'The drawer must not retain a tiny inline height');
+    h.rectangles.set('.tag-editor',{top:12});h.win.emit('resize');assert.equal(editor().classList.contains('editor-drawer'),true,'A floating editor must still use its natural workspace position when fitting');
+    assert.ok(editor().contains(h.button('Save')));assert.ok(editor().contains(h.button('Close editor')));
+    h.change('tag-description','My unfinished definition of heterogeneous catalysis.');h.expand('More options');h.change('tag-aliases','heterogeneous catalyst\nsurface catalysis');h.doc.getElementById('tag-editor-form').scrollTop=155;await h.emitUpdate();
+    const assertDraft=(scroll=155)=>{assert.equal(h.doc.getElementById('tag-description').value,'My unfinished definition of heterogeneous catalysis.');assert.equal(h.doc.getElementById('tag-aliases').value,'heterogeneous catalyst\nsurface catalysis');assert.equal(editor().querySelector('.editor-advanced').open,true);assert.equal(h.doc.getElementById('tag-editor-form').scrollTop,scroll);assert.equal(h.win.scrollY,120);};
+    assertDraft();h.win.innerHeight=1400;h.win.emit('resize');
+    assert.equal(editor().classList.contains('editor-drawer'),false);assert.ok(Number.parseFloat(editor().style.height)>400,'Available desktop space should give the editor a usable height');assert.ok(Number.parseFloat(editor().style.height)<=h.win.innerHeight-720,'Desktop allocation must fit below the natural workspace position');assertDraft();
+    h.win.innerWidth=806;h.win.innerHeight=582;h.win.emit('resize');assert.equal(editor().classList.contains('editor-drawer'),true);assert.ok(!editor().style.height&&!editor().style.maxHeight);assertDraft();
+    h.win.innerWidth=1100;h.win.innerHeight=1400;h.win.emit('resize');assert.equal(editor().classList.contains('editor-drawer'),false);assertDraft();
+    await h.click('Close editor');assert.equal(!!h.doc.getElementById('tag-editor-form'),false);assert.equal(h.doc.activeElement.id,'edit-native-meaning-native-0');await open();assertDraft();assert.equal(h.doc.activeElement.id,'tag-description');assert.equal(h.actions.length,0);
+    await h.click('Close editor');h.rectangles.set('#tag-editor-form',{top:100,height:400});h.rectangles.set('#tag-description',{get top(){return 170-(h.doc.getElementById('tag-editor-form')?.scrollTop??0);},height:80});await open();
+    const innerScroll=h.doc.getElementById('tag-editor-form').scrollTop,field=h.doc.getElementById('tag-description').getBoundingClientRect(),viewport=h.doc.getElementById('tag-editor-form').getBoundingClientRect();
+    assert.notEqual(innerScroll,155,'Reopening must reveal an offscreen Meaning field inside the form');assertDraft(innerScroll);assert.equal(h.doc.activeElement.id,'tag-description');assert.ok(field.top>=viewport.top&&field.bottom<=viewport.bottom);
+    h.change('tag-description','A newly typed definition after revealing the field.');assert.equal(h.doc.getElementById('tag-description').value,'A newly typed definition after revealing the field.');assert.equal(h.win.scrollY,120);assert.equal(h.actions.length,0);
+  }
+});
+
+test('reopening a saved tag reveals an offscreen Name without moving the outer page or losing its draft',async t=>{
+  const h=await harness(snapshot(),{page:'vocabulary'});t.after(()=>h.ui.destroy());h.win.scrollY=120;h.focusScroll.set('tag-name',900);
+  h.rectangles.set('#tag-editor-form',{top:100,height:400});h.rectangles.set('#tag-name',{get top(){return 124-(h.doc.getElementById('tag-editor-form')?.scrollTop??0);},height:34});
+  await h.click('Edit tag FC');h.change('tag-name','Fuel cell draft');h.change('tag-description','My unfinished fuel cell meaning.');h.expand('More options');h.doc.getElementById('tag-editor-form').scrollTop=300;
+  await h.click('Close editor');await h.click('Edit tag FC');
+  const form=h.doc.getElementById('tag-editor-form'),field=h.doc.getElementById('tag-name'),rect=field.getBoundingClientRect(),viewport=form.getBoundingClientRect();
+  assert.equal(h.doc.activeElement.id,'tag-name');assert.notEqual(form.scrollTop,300);assert.ok(rect.top>=viewport.top&&rect.bottom<=viewport.bottom);assert.equal(h.win.scrollY,120);
+  assert.equal(field.value,'Fuel cell draft');assert.equal(h.doc.getElementById('tag-description').value,'My unfinished fuel cell meaning.');assert.equal(h.all().find(node=>node.classList.contains('editor-advanced'))!.open,true);
+  h.change('tag-name','Fuel cell draft typed');assert.equal(h.doc.getElementById('tag-name').value,'Fuel cell draft typed');assert.equal(h.actions.length,0);
 });
 
 test('Activity shows the current meaning choice and collapses the previous completed build without work controls',async t=>{
