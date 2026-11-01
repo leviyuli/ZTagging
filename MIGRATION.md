@@ -1,5 +1,19 @@
 # Migration notes
 
+## Version 1.0.1: saved meaning-check recovery and simpler secondary pages
+
+Install the [v1.0.1 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1.xpi) over your existing extension through Zotero’s **Tools → Plugins → Install Plugin From File…**. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.1) also includes the [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1-source.zip).
+
+This patch keeps **state schema 12** and **native-definition protocol 2**. Updating from 1.0.0 requires no schema migration, cache reset or new account setup. Cached analysis, paid replies, source judgments, selected meanings, settings, spending and history remain available. Earlier-schema upgrades retain the exact-byte backup process below.
+
+If **Preparing tag meanings** paused after you chose a meaning, use **Resume** in Activity or **Retry meanings** in Tag library. The extension first revalidates compatible saved replies locally. An exact repeat of the frozen candidate can be recognized without changing its definition or treating an unsaved candidate ID as an existing saved tag. A changed meaning or unrelated saved target remains invalid; source fingerprints, quotations and scientific support still have to pass their checks.
+
+When the saved replies complete the remaining checks, recovery sends no new AI request and retains the original replies, dispatch history, completed judgments, human choice and spending. Progress now reports **Sources checked** rather than restarting at zero papers read. A read-only offline replay of the reported 17-source Batteries case retained all 16 completed checks and recovered the last cached check without a provider request, native write or change to the working profile.
+
+A real conflict remains a question after processing completes. For example, a source judged to describe a CO₂ capture cell rather than the chosen battery meaning cannot approve the Batteries alias for every paper. The already contradicted meaning is not offered again. Choose **Leave undefined** to finish that name without another request or changing native tags, or edit/choose a different meaning and check its affected sources. Updating does not automatically approve conflicting evidence or enable incoming tagging.
+
+Find papers now starts with results and keeps filters and related papers optional. Activity prioritizes choices and recovery, with completed work and older Undo actions in searchable History. Settings groups optional preferences below connection and incoming-tagging status, supports **Ctrl/Cmd+S**, and allows explicit draft discard. These page changes preserve the existing task, assignment and undo controls.
+
 ## Version 1.0.0: schema 12 and a simpler workflow
 
 Install the [v1.0.0 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0.xpi) through Zotero’s **Tools → Plugins → Install Plugin From File…** without uninstalling your existing extension. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.0) includes the installer and source archive.

@@ -19,9 +19,9 @@ const pageTitles: Record<ManagerPage, [string, string]> = {
   vocabulary: ['Tag library', 'Edit saved tags and add topics you want to follow.'],
   'existing-tags': ['Existing tags', 'Bring useful library tags into Smart Tags and review any paper changes.'],
   review: ['Review suggestions', 'Check the evidence, keep useful tags, and teach Smart Tags your preferences.'],
-  library: ['Explore your library', 'Combine approved tags and discover papers with related content.'],
-  activity: ['Queue & history', 'Follow analysis progress and review changes that have been applied.'],
-  settings: ['Settings', 'Manage tag preferences, library navigation, imports, and updates.'],
+  library: ['Find papers', 'Search your papers or narrow the results by tag.'],
+  activity: ['Activity', 'Follow progress, resolve choices, and undo changes.'],
+  settings: ['Settings', 'Manage your AI connection, tag defaults, and saved data.'],
 };
 const pageNames: Record<ManagerPage, string> = { overview: 'Overview', connection: 'Connect AI', build: 'Build tags', cleanup: 'Build tags', assignment: 'Assign tags', vocabulary: 'Tag library', 'existing-tags': 'Earlier tag tools', review: 'Paper suggestions', library: 'Find papers', activity: 'Activity', settings: 'Settings' };
 const iconPaths = {
@@ -78,6 +78,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let dataDetailsOpen = false;
   let queueDetailsOpen = false;
   let completedActivityOpen = false;
+  let activityHistoryOpen = false;
+  let activityPaperInfoOpen = false;
+  let activityHistoryQuery = '';
+  let activityHistoryPage = 0;
   let deferredReviewOpen = false;
   let busy = false;
   let signingIn = false;
@@ -136,6 +140,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let metadataIdentifier = '';
   let modalPage = 0;
   let paperQuery = '';
+  let libraryFiltersOpen = false;
   let selectedPaper = '';
   let editorTag: DisplayTag | null = null;
   let editorPreparationId = '';
@@ -153,6 +158,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let conceptQuery = '';
   let settingsDraft: ManagerSettings | null = null;
   let settingsDirty = false;
+  let settingsTagsOpen = false;
+  let settingsNavigationOpen = false;
+  let settingsTransfersOpen = false;
+  let settingsValidation: { key: keyof ManagerSettings; message: string } | null = null;
   let customModelInput: boolean | null = null;
   const apiKeyDrafts: Record<'api' | 'deepseek', string> = { api: '', deepseek: '' };
   let searchName = '';
@@ -1253,7 +1262,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const selectPage = checkbox('attention-select-page', visible.every(paper => selectedAttentionPapers.has(paper.id)), 'Select this page', checked => { for (const paper of visible) checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); });
     selectPage.querySelector('input')!.indeterminate = visible.some(paper => selectedAttentionPapers.has(paper.id)) && !visible.every(paper => selectedAttentionPapers.has(paper.id));
-    list.append(h('div', 'inline between attention-select-page', selectPage, h('span', 'muted', `${papers.length} papers`)));
+    list.append(h('div', 'inline between attention-select-page', selectPage, h('span', 'muted', `${papers.length} ${papers.length === 1 ? 'paper' : 'papers'}`)));
     if (selected.length) {
       const eligible = (predicate: (paper: typeof all[number]) => boolean) => selected.filter(predicate).map(paper => paper.id);
       const retryIds = eligible(paper => paper.canRetry && paper.status !== 'excluded');
@@ -1427,81 +1436,102 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function renderLibrary() {
     const s = currentState();
     const tags = approvedTags();
-    const coreTags = tags;
-    const details = tags.filter(tag => (tag.relatedIds || []).length > 0);
     const query = paperQuery.toLocaleLowerCase();
     const matches = matchingPaperIds(conceptFilter);
     const papers = s.papers.filter(paper => matches.has(paper.id) && (!query || searchable(paper).includes(query)));
     libraryPage = Math.min(libraryPage, Math.max(0, Math.ceil(papers.length / PAGE_SIZE) - 1));
-    const toolbar = h('div', 'toolbar', input('paper-search', paperQuery, value => { paperQuery = value; libraryPage = 0; render(); }, 'Search titles, abstracts, and summaries…', 'search'), button('Save tag search…', () => { modal = { kind: 'search' }; searchName = conceptFilter.selections.map(selection => `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`).join(conceptFilter.mode === 'all' ? ' + ' : ' or '); render(); }, '', !conceptFilter.selections.length), h('span', 'search-results', `${papers.length} papers`));
-    const filters = h('div', '', h('div', 'toolbar', input('concept-search', conceptQuery, value => { conceptQuery = value; render(); }, 'Find a tag, abbreviation, other name, or meaning…', 'search'), select('concept-filter-mode', conceptFilter.mode, [['all', 'All · every selection'], ['any', 'Any · at least one selection']], value => { conceptFilter = { ...conceptFilter, mode: value }; libraryPage = 0; render(); }, 'Combine selected tags')));
-    const counts = new Map<string, number>();
-    const count = (conceptId: string, contextId?: string) => {
-      const key = filterSelectionKey(conceptId, contextId);
-      if (!counts.has(key)) counts.set(key, matchingPaperIds({ mode: 'all', selections: [{ conceptId, ...(contextId ? { contextId } : {}) }] }).size);
-      return counts.get(key)!;
-    };
-    const conceptQueryKey = conceptQuery.toLocaleLowerCase();
-    const visible = (tag: DisplayTag) => !conceptQueryKey || conceptText(tag).includes(conceptQueryKey);
-    const detailRow = (tag: DisplayTag, contextId?: string, location = 'global') => h('div', 'concept-tree-row detail-node', checkbox(`explore-detail-${encodeURIComponent(tag.id)}-${encodeURIComponent(contextId || 'global')}-${encodeURIComponent(location)}`, isConceptSelected(tag.id, contextId), conceptLabel(tag), () => toggleConcept(tag.id, contextId)), h('span', 'concept-count', String(count(tag.id, contextId))));
-    const children = new Map<string, DisplayTag[]>();
-    for (const tag of coreTags) for (const parent of tag.broaderIds) {
-      if (!coreTags.some(other => other.id === parent)) continue;
-      const group = children.get(parent) || []; group.push(tag); children.set(parent, group);
-    }
-    const associatedDetails = (id: string) => details.filter(tag => (tag.relatedIds || []).includes(id) || (tagById(id)?.relatedIds || []).includes(tag.id) || tag.broaderIds.includes(id));
-    const treeVisible = (tag: DisplayTag) => visible(tag) || descendantIds(tag.id, tags).some(id => { const other = tagById(id); return other ? visible(other) || associatedDetails(id).some(visible) : false; });
-    const renderNode = (tag: DisplayTag, path: Set<string>): Node => {
-      if (path.has(tag.id)) return h('span');
-      const nextPath = new Set([...path, tag.id]);
-      const subtypes = (children.get(tag.id) || []).filter(treeVisible);
-      const sharedDetails = associatedDetails(tag.id).filter(visible);
-      const row = h('div', 'concept-tree-row', checkbox(`explore-core-${[...path, tag.id].join('-')}`, isConceptSelected(tag.id), conceptLabel(tag), () => toggleConcept(tag.id)), h('span', 'concept-count', String(count(tag.id))), button('Add tag', () => { page = 'vocabulary'; newTag(true, tag.id); }, 'quiet small'));
-      row.title = tag.description;
-      if (!subtypes.length && !sharedDetails.length) return h('div', 'concept-tree-node', row);
-      const branch = h('details', 'concept-tree-branch', h('summary', '', h('span', 'branch-label', conceptLabel(tag)), h('span', 'concept-count', String(count(tag.id)))));
-      branch.open = !!conceptQueryKey || expandedConcepts.has(tag.id);
-      branch.addEventListener('toggle', () => { if (branch.isConnected) branch.open ? expandedConcepts.add(tag.id) : expandedConcepts.delete(tag.id); });
-      const nested = h('div', 'concept-tree-children', row);
-      for (const child of subtypes) nested.append(renderNode(child, nextPath));
-      if (sharedDetails.length) {
-        nested.append(h('p', 'context-caption', `Related tags · matched together with ${tag.name}`));
-        for (const detail of sharedDetails.slice(0, 100)) nested.append(detailRow(detail, tag.id, [...nextPath].join('/')));
-        if (sharedDetails.length > 100) nested.append(h('p', 'muted', 'Refine the tag search to see more topics.'));
+    const search = input('paper-search', paperQuery, value => { paperQuery = value; libraryPage = 0; render(); }, 'Search titles, abstracts, and summaries…', 'search');
+    const focusResults = () => doc.getElementById('find-result-count')?.focus();
+    search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault();focusResults(); } });
+    const reset = button('Clear search', () => { paperQuery = '';conceptQuery = '';conceptFilter = { ...conceptFilter, selections: [] };libraryPage = 0;render();doc.getElementById('paper-search')?.focus(); }, 'quiet small');reset.id = 'reset-find-filters';
+    const toolbar = h('form', 'find-search-form',field('Search papers',search),paperQuery || conceptQuery || conceptFilter.selections.length ? reset : null);
+    toolbar.id = 'find-papers-form';toolbar.setAttribute('role','search');toolbar.addEventListener('submit',event => { event.preventDefault();focusResults(); });
+    const filterContent = () => {
+      const coreTags = tags;
+      const relatedTags = tags.filter(tag => (tag.relatedIds || []).length > 0);
+      const tagSearch = input('concept-search', conceptQuery, value => { conceptQuery = value; render(); }, 'Find a tag, abbreviation, other name, or meaning…', 'search');tagSearch.setAttribute('aria-label','Search tags');
+      const filters = h('div', '', h('div', 'toolbar',tagSearch, select('concept-filter-mode', conceptFilter.mode, [['all', 'All · every selection'], ['any', 'Any · at least one selection']], value => { conceptFilter = { ...conceptFilter, mode: value }; libraryPage = 0; render(); }, 'Combine selected tags')));
+      const counts = new Map<string, number>();
+      const count = (conceptId: string, contextId?: string) => {
+        const key = filterSelectionKey(conceptId, contextId);
+        if (!counts.has(key)) counts.set(key, matchingPaperIds({ mode: 'all', selections: [{ conceptId, ...(contextId ? { contextId } : {}) }] }).size);
+        return counts.get(key)!;
+      };
+      const conceptQueryKey = conceptQuery.toLocaleLowerCase();
+      const visible = (tag: DisplayTag) => !conceptQueryKey || conceptText(tag).includes(conceptQueryKey);
+      const detailRow = (tag: DisplayTag, contextId?: string, location = 'global') => h('div', 'concept-tree-row detail-node', checkbox(`explore-detail-${encodeURIComponent(tag.id)}-${encodeURIComponent(contextId || 'global')}-${encodeURIComponent(location)}`, isConceptSelected(tag.id, contextId), conceptLabel(tag), () => toggleConcept(tag.id, contextId)), h('span', 'concept-count', String(count(tag.id, contextId))));
+      const children = new Map<string, DisplayTag[]>();
+      for (const tag of coreTags) for (const parent of tag.broaderIds) {
+        if (!coreTags.some(other => other.id === parent)) continue;
+        const group = children.get(parent) || []; group.push(tag); children.set(parent, group);
       }
-      branch.append(nested);
-      return branch;
+      const associatedDetails = (id: string) => relatedTags.filter(tag => (tag.relatedIds || []).includes(id) || (tagById(id)?.relatedIds || []).includes(tag.id) || tag.broaderIds.includes(id));
+      const treeVisible = (tag: DisplayTag) => visible(tag) || descendantIds(tag.id, tags).some(id => { const other = tagById(id); return other ? visible(other) || associatedDetails(id).some(visible) : false; });
+      const renderNode = (tag: DisplayTag, path: Set<string>): Node => {
+        if (path.has(tag.id)) return h('span');
+        const nextPath = new Set([...path, tag.id]);
+        const subtypes = (children.get(tag.id) || []).filter(treeVisible);
+        const sharedDetails = associatedDetails(tag.id).filter(visible);
+        const row = h('div', 'concept-tree-row', checkbox(`explore-core-${[...path, tag.id].join('-')}`, isConceptSelected(tag.id), conceptLabel(tag), () => toggleConcept(tag.id)), h('span', 'concept-count', String(count(tag.id))), button('Add tag', () => { page = 'vocabulary'; newTag(true, tag.id); }, 'quiet small'));
+        row.title = tag.description;
+        if (!subtypes.length && !sharedDetails.length) return h('div', 'concept-tree-node', row);
+        const branch = h('details', 'concept-tree-branch', h('summary', '', h('span', 'branch-label', conceptLabel(tag)), h('span', 'concept-count', String(count(tag.id)))));
+        branch.open = !!conceptQueryKey || expandedConcepts.has(tag.id);
+        branch.addEventListener('toggle', () => { if (branch.isConnected) branch.open ? expandedConcepts.add(tag.id) : expandedConcepts.delete(tag.id); });
+        const nested = h('div', 'concept-tree-children', row);
+        for (const child of subtypes) nested.append(renderNode(child, nextPath));
+        if (sharedDetails.length) {
+          nested.append(h('p', 'context-caption', `Related tags · matched together with ${tag.name}`));
+          for (const detail of sharedDetails.slice(0, 100)) nested.append(detailRow(detail, tag.id, [...nextPath].join('/')));
+          if (sharedDetails.length > 100) nested.append(h('p', 'muted', 'Refine the tag search to see more topics.'));
+        }
+        branch.append(nested);
+        return branch;
+      };
+      for (const facet of facets) {
+        const grouped = coreTags.filter(tag => tag.facet === facet && !tag.broaderIds.some(id => coreTags.some(other => other.id === id)) && treeVisible(tag));
+        if (!grouped.length) continue;
+        filters.append(h('h3', 'facet-heading', facetNames[facet]));
+        const tree = h('div', 'concept-tree');
+        for (const tag of grouped) tree.append(renderNode(tag, new Set()));
+        filters.append(tree);
+      }
+      if (!coreTags.length && !relatedTags.length) filters.append(empty('No tags ready yet', 'Prepare a tag list, or add a topic of your own.'));
+      const noTag = s.tags.find(tag => tag.builtin === 'no_tag');
+      if (noTag) filters.append(h('div', 'section-gap', h('h3', '', 'Excluded from tagging'), h('div', 'concept-tree-row', checkbox('explore-builtin-no-tag', isConceptSelected(noTag.id), 'no_tag', () => toggleConcept(noTag.id)), h('span', 'concept-count', String(count(noTag.id))))));
+      return h('div','find-tag-filter-body',h('p','card-description','A broader tag includes its narrower topics. A related tag chosen inside another tag requires both. Match all your selections or any selection.'),filters,button('Clear filters', () => { conceptFilter = { ...conceptFilter, selections: [] };conceptQuery = '';libraryPage = 0;render(); }, 'quiet small', !conceptFilter.selections.length && !conceptQuery));
     };
-    for (const facet of facets) {
-      const grouped = coreTags.filter(tag => tag.facet === facet && !tag.broaderIds.some(id => coreTags.some(other => other.id === id)) && treeVisible(tag));
-      if (!grouped.length) continue;
-      filters.append(h('h3', 'facet-heading', facetNames[facet]));
-      const tree = h('div', 'concept-tree');
-      for (const tag of grouped) tree.append(renderNode(tag, new Set()));
-      filters.append(tree);
-    }
-    if (!coreTags.length && !details.length) filters.append(empty('No tags ready yet', 'Prepare a tag list, or add a topic of your own.'));
-    const noTag = s.tags.find(tag => tag.builtin === 'no_tag');
-    if (noTag) filters.append(h('div', 'section-gap', h('h3', '', 'Excluded from tagging'), h('div', 'concept-tree-row', checkbox('explore-builtin-no-tag', isConceptSelected(noTag.id), 'no_tag', () => toggleConcept(noTag.id)), h('span', 'concept-count', String(count(noTag.id))))));
     const selections = h('div', 'selected-concepts');
-    for (const selection of conceptFilter.selections) selections.append(h('div', 'selected-concept', h('span', '', `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`), button('Remove', () => toggleConcept(selection.conceptId, selection.contextId), 'quiet small')));
-    const filterCard = card('Browse tags', 'A broader tag includes its narrower topics. A related tag chosen inside another tag requires both. Match all your selections or any selection.', h('div', '', filters, selections), button('Clear filters', () => { conceptFilter = { ...conceptFilter, selections: [] }; libraryPage = 0; render(); }, 'quiet small', !conceptFilter.selections.length));
-    const list = h('section', 'card');
+    for (const selection of conceptFilter.selections) {
+      const label = `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`;
+      const remove = button('Remove', () => toggleConcept(selection.conceptId, selection.contextId), 'quiet small');remove.setAttribute('aria-label',`Remove ${label} filter`);
+      selections.append(h('div', 'selected-concept', h('span', '', label),remove));
+    }
+    const filterPanel = details('Filter by tags',libraryFiltersOpen,value => { libraryFiltersOpen = value; },filterContent);
+    filterPanel.id = 'find-tag-filters';filterPanel.classList.add('find-tag-filters');
+    const countLabel = h('h2', '', `${papers.length} ${papers.length === 1 ? 'paper' : 'papers'}`);countLabel.id = 'find-result-count';countLabel.tabIndex = -1;countLabel.setAttribute('aria-live','polite');
+    const saveSearch = conceptFilter.selections.length ? button('Save tag search…', () => { modal = { kind: 'search' };searchName = conceptFilter.selections.map(selection => `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`).join(conceptFilter.mode === 'all' ? ' + ' : ' or ');render(); }) : null;
+    const resultHeader = h('div','inline between find-result-header',countLabel,saveSearch);
+    const list = h('section', 'paper-results');list.setAttribute('aria-label','Matching papers');
     if (!papers.length) list.append(empty('No papers match', s.papers.length ? 'Try fewer tags or a broader search.' : 'Analyze a pilot or your library to create a local content index.'));
     for (const paper of papers.slice(libraryPage * PAGE_SIZE, (libraryPage + 1) * PAGE_SIZE)) {
       const chips = h('div', 'chips');
       for (const tag of (paper.tags || []).slice(0, 12)) chips.append(h('span', 'tag-chip', tag));
-      list.append(h('article', 'paper-card', paperButton(paper.id), paper.summary ? h('p', 'muted', paper.summary) : null, chips, paper.evidenceStatus ? h('p', 'muted', paper.evidenceStatus) : null, h('div', 'actions', button('Related papers', () => { selectedPaper = paper.id; render(); }, 'quiet small'))));
+      const triggerId = `related-papers-${encodeURIComponent(paper.id)}`,panelId = `related-paper-results-${encodeURIComponent(paper.id)}`;
+      const closeRelated = () => { selectedPaper = '';render();doc.getElementById(triggerId)?.focus(); };
+      const trigger = button('Related papers', () => { selectedPaper = selectedPaper === paper.id ? '' : paper.id;render(); }, 'quiet small');trigger.id = triggerId;trigger.setAttribute('aria-label',`Related papers for ${paper.title}`);trigger.setAttribute('aria-expanded',String(selectedPaper === paper.id));trigger.setAttribute('aria-controls',panelId);
+      const row = h('article', 'paper-card', paperButton(paper.id), paper.summary ? h('p', 'muted', paper.summary) : null, chips, paper.evidenceStatus ? h('p', 'muted', paper.evidenceStatus) : null, h('div', 'actions',trigger));
+      if (selectedPaper === paper.id) {
+        const related = h('section','related-paper-results',h('div','inline between',h('h3','','Related papers'),button('Close related papers',closeRelated,'quiet small')),h('p','card-description','Content similarity suggests related reading, not citation relationships.'));
+        related.id = panelId;related.setAttribute('aria-label',`Related papers for ${paper.title}`);
+        const neighbors = s.neighbors[paper.id] || [];
+        if (!neighbors.length) related.append(h('p','muted','No content neighbors are available yet. Analyze more papers to expand the index.'));
+        for (const neighbor of neighbors.slice(0,10)) related.append(h('div','related-paper-row',paperButton(neighbor.paperId),h('span','muted',`Content similarity · ${Math.round(neighbor.score * 100)}%`)));
+        row.addEventListener('keydown',event => { if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();closeRelated(); } });row.append(related);
+      }
+      list.append(row);
     }
-    const selected = paperById(selectedPaper);
-    const related = h('div', '');
-    if (selected) {
-      related.append(h('p', 'paper-title', selected.title), h('div', 'divider'));
-      const neighbors = s.neighbors[selected.id] || [];
-      if (!neighbors.length) related.append(h('p', 'muted', 'No content neighbors are available yet. Analyze more papers to expand the index.'));
-      for (const neighbor of neighbors.slice(0, 10)) related.append(h('div', 'paper-card', paperButton(neighbor.paperId), h('p', 'muted', `Content similarity · ${Math.round(neighbor.score * 100)}%`)));
-    } else related.append(h('p', 'muted', 'Choose “Related papers” on a paper to see its nearest content neighbors. These are similarity suggestions, not citation relationships.'));
-    return h('div', 'stack', toolbar, filterCard, h('div', 'split', h('div', 'stack', list, pagination(papers.length, libraryPage, next => { libraryPage = next; })), h('div', 'editor', card('Related papers', '', related))));
+    return h('div', 'stack find-papers',toolbar,filterPanel,conceptFilter.selections.length ? selections : null,resultHeader,list,papers.length > PAGE_SIZE ? pagination(papers.length, libraryPage, next => { libraryPage = next; }) : null);
   }
 
   function renderActivity() {
@@ -1521,31 +1551,44 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       ? !q.taskLabel && currentProgress.total > 0 ? h('p', '', `Papers read: ${currentProgress.completed} of ${currentProgress.total}`) : null
       : selectionProgress || (q.phaseProgress && q.phaseProgress.total > 0 ? h('p', '', `${q.phaseProgress.label}: ${q.phaseProgress.completed} of ${q.phaseProgress.total}`) : null);
     const progress = h('div', '', h('div', 'inline between', badge(queuePhaseLabel(), q.status === 'running' ? 'approved' : q.status === 'paused' ? 'draft' : ''), !q.taskLabel ? h('span', 'muted', `${q.completed} papers read · ${q.failed} failed · ${q.needsInformation ?? 0} need information · ${q.skipped ?? 0} skipped`) : null), stageProgress, q.message ? h('p', 'card-description', humanMessage(q.message)) : null,
-      h('div', 'actions', fasterBuildButton('primary'), resumeQueueButton(q.canUseFasterBuild || q.switchingToFasterBuild && q.status !== 'paused' ? '' : 'primary', q.status !== 'paused'), button('Pause', () => run('pause'), '', q.status !== 'running'), button('Cancel remaining', () => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.'), 'danger', q.status === 'idle')),
+      h('div', 'actions', fasterBuildButton('primary'), q.status === 'paused' ? resumeQueueButton(q.canUseFasterBuild ? '' : 'primary') : null, q.status === 'running' ? button('Pause', () => run('pause')) : null, ['running','paused'].includes(q.status) ? actionMenu('queue-more-actions','More','More task actions',[{id:'cancel',label:'Cancel remaining',run:() => run('cancel', undefined, 'Remaining jobs canceled. Completed analysis is kept.')}]) : null),
       h('p', 'card-description', runProvider !== 'chatgpt' ? apiCost : 'This work uses your ChatGPT allowance. It pauses when the allowance is reached.'));
     if (s.tagPreparation) progress.append(h('div', 'section-gap', h('h3', '', s.tagPreparation.status === 'ready' ? 'Your tag list is ready' : s.tagPreparation.status === 'questions' ? 'A few tag choices are waiting' : 'Your tag list is saved'), button('Open tags', () => nav('cleanup'), 'small')));
     const history = h('div', '');
     if (!s.history.length) history.append(empty('No applied changes yet', 'Approved tag assignments and cleanup batches will appear here with their undo status.'));
     else {
+      const query = activityHistoryQuery.toLocaleLowerCase();
+      const records = s.history.filter(record => !query || `${record.label} ${record.status || ''}`.toLocaleLowerCase().includes(query));
+      activityHistoryPage = Math.min(activityHistoryPage,Math.max(0,Math.ceil(records.length / PAGE_SIZE) - 1));
+      const search = input('history-search',activityHistoryQuery,value => { activityHistoryQuery = value;activityHistoryPage = 0;render(); },'Find a change…','search');search.setAttribute('aria-label','Search applied changes');history.append(search);
       const table = h('table', '', h('thead', '', h('tr', '', h('th', '', 'Change'), h('th', '', 'Date'), h('th', '', 'Items'), h('th', '', 'Action'))));
       const tbody = h('tbody');
-      for (const record of s.history.slice(0, 100)) {
+      for (const record of records.slice(activityHistoryPage * PAGE_SIZE,(activityHistoryPage + 1) * PAGE_SIZE)) {
         const date = new Date(record.date);
         tbody.append(h('tr', '', h('td', '', h('strong', '', record.label), record.status ? h('span', 'muted', record.status) : null), h('td', '', Number.isNaN(date.getTime()) ? record.date : date.toLocaleString()), h('td', '', String(record.count)), h('td', '', button('Undo', () => run('undo', { id: record.id }, 'Undo completed. Later manual edits are preserved.'), 'small', !record.canUndo))));
       }
-      table.append(tbody); history.append(h('div', 'table-wrap', table));
+      table.append(tbody);history.append(records.length ? h('div', 'table-wrap', table) : empty('No matching changes','Try a different name or clear the search.'));
+      if (records.length > PAGE_SIZE) history.append(pagination(records.length,activityHistoryPage,next => { activityHistoryPage = next; },PAGE_SIZE,'changes'));
     }
     const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && !['evidence-gap', 'unapproved-topics'].includes(warning.code));
-    const notices = active.length ? card('Needs attention', '', h('div', '', ...active.map(warning => warningEntry(warning, true)))) : null;
+    const notices = active.length ? h('section','activity-notices',h('div','inline between',h('h3','','Notices'),button('Dismiss all',() => run('dismiss-warnings',undefined,'Notices dismissed.'),'quiet small')),...active.map(warning => warningEntry(warning, true))) : null;
     const tasks = s.activityTasks;
-    const paperWork = !tasks || (q.status === 'running' || q.status === 'paused') && q.ownerPage !== 'vocabulary' ? card(q.taskLabel || 'Paper analysis', 'Completed work is kept if you pause or close Zotero.', progress) : null;
-    const currentTasks = tasks?.filter(task => task.state !== 'completed' && !(task.state === 'needs-choice' && s.reviewItems?.some(item => item.taskId === task.workId && item.state !== 'resolved')) && (task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
+    const paperWork = !tasks && (!!s.tagPreparation || q.total > 0) || (q.status === 'running' || q.status === 'paused') && q.ownerPage !== 'vocabulary' ? h('section','activity-task',h('h2','',q.taskLabel || 'Paper analysis'),h('p','card-description','Completed work is kept if you pause or close Zotero.'),progress) : null;
+    const currentTasks = tasks?.filter(task => task.state !== 'completed' && !(task.state === 'needs-choice' && s.reviewItems?.some(item => item.state !== 'resolved' && (item.taskId === task.id || !!task.workId && (item.taskId === task.workId || item.workId === task.workId)))) && (task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
     const current = currentTasks.map(task => {
       const meaning = task.kind === 'meanings';
       const title = meaning ? task.state === 'needs-choice' ? `${task.questionCount ?? 1} ${(task.questionCount ?? 1) === 1 ? 'tag meaning needs' : 'tag meanings need'} your choice` : task.state === 'ready-to-save' ? `${task.readyCount ?? 0} ${(task.readyCount ?? 0) === 1 ? 'meaning ready' : 'meanings ready'} to save` : task.state === 'queued' ? 'Meanings queued' : task.state === 'paused' ? 'Meaning preparation paused' : 'Preparing meanings…' : task.label;
-      const body = h('div','',task.message ? h('p','',humanMessage(task.message)) : null,meaning && task.total !== undefined && ['running','queued'].includes(task.state) ? h('p','card-description',`${task.completed ?? 0} of ${task.total} names prepared`) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
-      const open = button(meaning ? 'Open meanings' : task.ownerPage === 'assignment' ? 'Open assignment' : 'Open tags',() => meaning ? openNativeMeanings() : nav(task.ownerPage === 'activity' ? 'activity' : task.ownerPage),'primary small');
-      return card(title,meaning ? 'Tag library' : pageNames[task.ownerPage],body,open,'activity-task');
+      const currentMeanings = meaning && (!task.workId || task.workId === s.nativeDefinitionPreparation?.id);
+      const sourceProgress = currentMeanings && q.ownerPage === 'vocabulary' && ['running','queued','paused'].includes(task.state) && q.phaseProgress && q.phaseProgress.total > 0 ? q.phaseProgress : null;
+      const body = h('div','',task.message ? h('p','',humanMessage(task.message)) : null,sourceProgress ? h('p','card-description',`${sourceProgress.label}: ${sourceProgress.completed} of ${sourceProgress.total}`) : meaning && task.total !== undefined && ['running','queued'].includes(task.state) ? h('p','card-description',`${task.completed ?? 0} of ${task.total} names prepared`) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
+      const ownsQueue = currentMeanings && q.ownerPage === 'vocabulary' && ['running','paused'].includes(q.status) && ['running','paused'].includes(task.state);
+      const open = button(meaning ? 'Open meanings' : task.ownerPage === 'assignment' ? 'Open assignment' : 'Open tags',() => {
+        if (meaning) openNativeMeanings();
+        else if (task.ownerPage === 'assignment') { assignmentRunSelection = task.workId || null;assignmentView = 'suggestions';nav('assignment'); }
+        else nav(task.ownerPage === 'activity' ? 'activity' : task.ownerPage);
+      },ownsQueue ? 'small' : 'primary small');
+      const actions = h('div','inline',ownsQueue && q.status === 'paused' ? resumeQueueButton('primary small') : null,open,ownsQueue && q.status === 'running' ? button('Pause',() => run('pause'),'small') : null,ownsQueue ? actionMenu('meaning-queue-actions','More','More meaning task actions',[{id:'cancel',label:'Cancel remaining',run:() => run('cancel',undefined,'Remaining jobs canceled. Completed analysis is kept.')}]) : null);
+      return h('article','activity-task',h('div','inline between',h('div','',h('h2','',title),h('p','card-description',meaning ? 'Tag library' : pageNames[task.ownerPage])),actions),body);
     });
     const completed = tasks?.filter(task => task.state === 'completed') || [];
     const completedWork = completed.length ? details('Completed work',completedActivityOpen,value => { completedActivityOpen = value; },() => h('div','completed-task-list',...completed.map(task => {
@@ -1553,14 +1596,23 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       return h('article','completed-task',h('strong','',task.label),task.kind === 'meanings' ? meaningCounts ? h('p','card-description',meaningCounts) : null : task.total !== undefined ? h('p','card-description',`${task.completed ?? task.total} of ${task.total} papers`) : null,task.message ? h('p','card-description',humanMessage(task.message)) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
     }))) : null;
     const inbox = reviewInbox(s.reviewItems || []);
-    return h('div', 'stack',inbox,paperWork,...current,tasks && !paperWork && !current.length && !inbox ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,completedWork,notices, card('Papers that need attention', s.paperAttention?.queued ? `${s.paperAttention.queued} papers queued` : '', paperAttention()), paperExclusionReview(), metadataReview(), warningHistory(), h('section', 'card', h('div', 'card-header', h('h2', '', 'Applied changes')), history));
+    const hasPaperProblems = s.paperAttention?.papers.some(paper => paper.status === 'needsInformation' || paper.status === 'failed');
+    const paperInfo = details('Paper information',activityPaperInfoOpen,value => { activityPaperInfoOpen = value; },paperAttention);paperInfo.id = 'activity-paper-information';
+    const recovery = h('section','activity-recovery',h('h2','','Recovery'),notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
+    const past = details('History',activityHistoryOpen,value => { activityHistoryOpen = value; },() => h('div','activity-history-body',h('section','',h('h3','','Applied changes'),h('p','card-description','Undo checks for later edits before changing a saved batch.'),history),completedWork,warningHistory()));past.id = 'activity-history';
+    const hasRecovery = hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
+    return h('div', 'stack activity-page',inbox,paperWork,...current,!paperWork && !current.length && !inbox && !hasRecovery ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,hasRecovery ? recovery : paperInfo,past);
   }
 
   function renderSettings(connectionOnly = false) {
     const s = currentState();
     const draft = settingsDraft || { ...s.settings };
     settingsDraft = draft;
-    const mark = <K extends keyof ManagerSettings>(key: K, value: ManagerSettings[K]) => { draft[key] = value; settingsDirty = true; };
+    const mark = <K extends keyof ManagerSettings>(key: K, value: ManagerSettings[K]) => {
+      const wasDirty = settingsDirty, hadError = settingsValidation?.key === key;
+      draft[key] = value;settingsDirty = true;if (hadError) settingsValidation = null;
+      if (!wasDirty || hadError) render();
+    };
     const providerName = draft.provider === 'deepseek' ? 'DeepSeek' : draft.provider === 'api' ? 'OpenAI' : 'ChatGPT';
     const availableModels = draft.provider === s.settings.provider ? s.models : [];
     const connection = h('div', '',
@@ -1616,29 +1668,53 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const control = input(`settings-${key}`, String(draft[key] ?? (key === 'extensionTagTarget' ? 30 : 60)), value => { const n = Number(value); if (Number.isFinite(n)) mark(key, n); }, '', 'number');
       control.min = key === 'maxOutputTokens' || key === 'coreConceptLimit' || key === 'extensionTagTarget' ? '1' : '0'; control.step = step;
       if (key === 'coreConceptLimit' || key === 'extensionTagTarget') control.max = '500';
-      return field(label, control, note);
+      const error = settingsValidation?.key === key ? settingsValidation.message : '';
+      if (error) { control.setAttribute('aria-invalid','true');control.setAttribute('aria-describedby',`settings-${key}-error`); }
+      const row = field(label, control, note);
+      if (error) { const message = h('p','field-error',error);message.id = `settings-${key}-error`;row.append(message); }
+      return row;
     };
     const budgets = h('div', '',
       h('div', 'notice', 'Budget controls apply to the selected API provider. Set its published model rates before analysis; cost estimates use those rates. Model discovery is available while rates are unset.'),
       h('div', 'section-gap', numberField('budgetUSD', 'Per-run API budget · USD', 'The queue pauses before dispatching requests that would exceed its remaining estimate.', '0.01')),
       h('div', 'field-grid', numberField('inputPricePerMillion', 'Input · USD / million tokens', 'Use the standard input rate.', '0.001'), numberField('outputPricePerMillion', 'Output · USD / million tokens', 'Use the standard output rate.', '0.001')),
       h('div', 'section-gap', numberField('maxOutputTokens', 'API output-token limit', 'This request limit is used for API-key requests.', '1')));
-    const vocabulary = h('div', '', numberField('coreConceptLimit', 'Maximum tags for an initial build', 'An upper limit, not a quota. Compact vocabularies keep supported, distinct topics.', '1'), numberField('extensionTagTarget', 'Maximum new tags per build', 'Extensions keep saved definitions and add up to this many supported topics.', '1'));
-    const transfers = h('details', 'section-gap', h('summary', '', 'Import, export, and previous tag lists'), h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null);
-    for (const archive of s.taxonomyArchives || []) transfers.append(h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')));
+    const vocabulary = h('div', 'field-grid', numberField('coreConceptLimit', 'Maximum tags for an initial build', 'An upper limit, not a quota. Compact vocabularies keep supported, distinct topics.', '1'), numberField('extensionTagTarget', 'Maximum new tags per build', 'Extensions keep saved definitions and add up to this many supported topics.', '1'));
+    const transfers = details('Import, export, and previous tag lists',settingsTransfersOpen,value => { settingsTransfersOpen = value; },() => h('div','',h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null,...(s.taxonomyArchives || []).map(archive => h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')))));
     const navigationLabels = { starting: 'Starting', ready: 'Available', hidden: 'Sidebar hidden', unavailable: 'Unavailable in this window' };
     const navigation = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('p', '', `Library navigation: ${s.navigation ? navigationLabels[s.navigation.status] : 'Open Zotero to check'}`), s.navigation?.message ? h('p', 'card-description', humanMessage(s.navigation.message)) : null, h('div', 'actions', button('Show tag navigation', () => run('show-tag-navigation')), button('Restore navigation', () => run('show-tag-navigation', { restore: true })), button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
-    const save = h('div', 'inline', button('Save settings', () => saveSettings(), connectionOnly ? 'quiet' : 'primary'), settingsDirty ? h('span', 'muted', 'Unsaved changes') : h('span', 'muted', 'Settings saved'));
-    if (connectionOnly) return h('div', 'connection-form',h('section','task-setup',connection),draft.provider !== 'chatgpt' ? h('section','task-setup',h('h2','',`${providerName} API budget`),budgets) : null,settingsDirty ? save : null,canAnalyze() && !settingsDirty ? h('div', 'task-actions', button('Continue to Build tags', () => nav('build'))) : null);
-    return h('div', 'stack', card('Smart Tags in Zotero', 'Use Smart Tags or Collections in Zotero’s left library pane.', navigation), card('Tags', 'Choose a starting point for tag preparation.', vocabulary), save, h('div', 'workflow-section-links', button('AI connection and budget', () => nav('connection')), button('Routine assignment', () => { assignmentView = 'setup';nav('assignment'); })), transfers, details('Data', dataDetailsOpen, value => { dataDetailsOpen = value; }, () => h('div', 'section-gap', button('Reset paper analysis…', () => { modal = { kind: 'reset-analysis' };render(); }, 'quiet'))));
+    const saveButton = h('button',connectionOnly ? 'quiet' : 'primary','Save settings');saveButton.type = 'submit';saveButton.id = 'save-settings';saveButton.disabled = busy;
+    const discard = button('Discard changes',() => { settingsDraft = { ...currentState().settings };settingsDirty = false;settingsValidation = null;customModelInput = null;render();doc.getElementById(connectionOnly ? 'settings-provider' : 'details-tag-limits')?.focus(); },'quiet');discard.id = 'discard-settings-changes';
+    const dirty = h('span','muted','Unsaved changes');dirty.setAttribute('role','status');
+    const save = settingsDirty ? h('div','settings-save-bar',dirty,h('div','inline',discard,saveButton)) : null;
+    const form = h('form',connectionOnly ? 'connection-form' : 'settings-form');form.id = 'settings-form';form.noValidate = true;
+    const feedback = h('div','settings-feedback');feedback.id = 'settings-feedback';
+    const submit = () => { if (!busy && settingsDirty) void saveSettings().catch(showError); };
+    form.addEventListener('submit',event => { event.preventDefault();submit(); });
+    form.addEventListener('keydown',event => { if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 's') { event.preventDefault();submit(); } });
+    if (connectionOnly) { form.append(h('section','task-setup',connection));if (draft.provider !== 'chatgpt') form.append(h('section','task-setup',h('h2','',`${providerName} API budget`),budgets));form.append(feedback);if (save) form.append(save);if (canAnalyze() && !settingsDirty) form.append(h('div', 'task-actions', button('Continue to Build tags', () => nav('build'))));return form; }
+    const savedProviderName = s.settings.provider === 'deepseek' ? 'DeepSeek' : s.settings.provider === 'api' ? 'OpenAI' : 'ChatGPT';
+    const connectionSummary = h('section','settings-row',h('div','',h('h2','','AI connection'),h('p','card-description',`${savedProviderName} · ${s.settings.model || 'Choose a model'}`),h('p','card-description',connectionReady(s) ? 'Connected' : 'Connection needed')),button('AI connection and budget',() => nav('connection'),connectionReady(s) ? '' : 'primary'));
+    const incoming = h('section','settings-row',h('div','',h('h2','','New papers'),h('p','card-description',s.settings.autoAssign ? 'Automatic tagging is on.' : 'Automatic tagging is off.')),button('Routine assignment',() => { assignmentView = 'setup';nav('assignment'); }));
+    const tags = details('Tag limits',settingsTagsOpen,value => { settingsTagsOpen = value; },() => vocabulary);tags.id = 'settings-tags';
+    const integration = details('Zotero integration',settingsNavigationOpen,value => { settingsNavigationOpen = value; },() => navigation);integration.id = 'settings-navigation';
+    const data = details('Data',dataDetailsOpen,value => { dataDetailsOpen = value; },() => h('div','section-gap',button('Reset paper analysis…',() => { modal = { kind: 'reset-analysis' };render(); },'quiet')));data.id = 'settings-data';
+    form.append(connectionSummary,incoming,tags,integration,transfers,data,feedback);if (save) form.append(save);return form;
   }
   async function saveSettings() {
     if (!settingsDraft) return;
-    if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) throw new Error('Set the initial tag limit to a whole number from 1 to 500.');
-    if (!Number.isInteger(settingsDraft.extensionTagTarget ?? 30) || (settingsDraft.extensionTagTarget ?? 30) < 1 || (settingsDraft.extensionTagTarget ?? 30) > 500) throw new Error('Set the new-tag limit to a whole number from 1 to 500.');
-    if (settingsDraft.provider !== 'chatgpt' && (settingsDraft.budgetUSD <= 0 || settingsDraft.inputPricePerMillion < 0 || settingsDraft.outputPricePerMillion < 0 || settingsDraft.maxOutputTokens < 1)) throw new Error('Set a positive API budget and output-token limit. Model rates must be zero or greater.');
+    const invalid = (key: keyof ManagerSettings,message: string): never => { settingsValidation = { key,message };if (key === 'coreConceptLimit' || key === 'extensionTagTarget') settingsTagsOpen = true;else page = 'connection';render();doc.getElementById(`settings-${key}`)?.focus();throw new Error(message); };
+    if (!Number.isInteger(settingsDraft.coreConceptLimit ?? 60) || (settingsDraft.coreConceptLimit ?? 60) < 1 || (settingsDraft.coreConceptLimit ?? 60) > 500) invalid('coreConceptLimit','Set the initial tag limit to a whole number from 1 to 500.');
+    if (!Number.isInteger(settingsDraft.extensionTagTarget ?? 30) || (settingsDraft.extensionTagTarget ?? 30) < 1 || (settingsDraft.extensionTagTarget ?? 30) > 500) invalid('extensionTagTarget','Set the new-tag limit to a whole number from 1 to 500.');
+    if (settingsDraft.provider !== 'chatgpt') {
+      if (settingsDraft.budgetUSD <= 0) invalid('budgetUSD','Set an API budget greater than zero.');
+      if (settingsDraft.inputPricePerMillion < 0) invalid('inputPricePerMillion','Set an input model rate of zero or greater.');
+      if (settingsDraft.outputPricePerMillion < 0) invalid('outputPricePerMillion','Set an output model rate of zero or greater.');
+      if (settingsDraft.maxOutputTokens < 1) invalid('maxOutputTokens','Set an API output-token limit of at least 1.');
+    }
     const result = await run('save-settings', { settings: { ...settingsDraft, autoAssign: currentState().settings.autoAssign } }, 'Settings saved.');
     settingsDirty = false;
+    settingsValidation = null;
     settingsDraft = { ...currentState().settings };
     render();
     return result;
@@ -1774,7 +1850,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       cancel.disabled = false;
       workspace.append(h('div', 'notice info inline between', h('span', '', 'Complete sign-in in your browser, or cancel this attempt.'), cancel));
     }
-    const warnings = activeWarnings();
+    const warnings = page === 'activity' ? null : activeWarnings();
     if (warnings) workspace.append(warnings);
     const renderers: Record<ManagerPage, () => Node> = {
       overview: renderOverview,
@@ -1794,7 +1870,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (toast) {
       const toastElement = h('div', `toast ${toastError ? 'error' : ''}`, toast);
       toastElement.setAttribute('role', toastError ? 'alert' : 'status');
-      shell.append(toastElement);
+      const feedback = workspace.querySelector('#settings-feedback');
+      if (feedback) feedback.append(toastElement);else shell.append(toastElement);
     }
     const modalElement = renderModal();
     if (modalElement) shell.append(modalElement);

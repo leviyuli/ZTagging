@@ -1,16 +1,15 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.0.0",
-  "verifiedAt": "2026-11-01T06:57:02.833280+00:00",
+  "version": "1.0.1",
+  "verifiedAt": "2026-11-01T07:29:14.611433+00:00",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Automatic clear tagging results, exceptional choices, simpler keyboard-driven task pages and reversible corrections",
+  "scope": "Find papers, Activity and Settings refinement; compatible cached recovery for paused native-meaning checks",
   "schemaVersion": 12,
-  "assignmentAnalysisPolicyVersion": 2,
-  "adaptiveVocabularyPolicyVersion": 1,
   "nativeDefinitionProtocolVersion": 2,
   "automatedTests": {
     "command": "npm run verify",
-    "passed": 1084,
+    "passed": 1100,
+    "managerUITests": 128,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
@@ -24,16 +23,16 @@
   "productionBuild": "passed",
   "nativeSmoke": {
     "status": "passed",
-    "passed": 92,
+    "passed": 158,
     "failed": 0,
     "themes": {
       "light": {
         "status": "passed",
-        "passed": 46,
+        "passed": 79,
         "failed": 0,
-        "version": "1.0.0",
+        "version": "1.0.1",
         "addonSource": "production-build",
-        "completedAt": "2026-11-01T06:55:25.620Z",
+        "completedAt": "2026-11-01T07:27:30.507Z",
         "checks": [
           "isolatedDataDirectory",
           "isolatedProfile",
@@ -80,16 +79,54 @@
           "automaticNarrowconnectionPrimaryReachable",
           "automaticNarrowEditorSaveAndCloseReachable",
           "automaticNarrowSidebarClosesEditorSafely",
+          "secondaryFindStartsWithQuietTagFilters",
+          "secondaryFindEnterFocusesLiveResults",
+          "secondaryFindCombinesQueryAndTag",
+          "secondaryFindClearResetsQueriesAndSelections",
+          "secondaryRelatedPapersAppearOnlyOnRequest",
+          "secondaryRelatedEscapeRestoresFocus",
+          "secondaryFindUsesNoProviderOrNativeChanges",
+          "secondaryActivityHistoryStartsCollapsed",
+          "secondaryActivityHistoryAndUndoReachable",
+          "secondaryActivitySurfacesActualRecovery",
+          "secondaryRecoveryRecheckIsLocalAndPreservesTags",
+          "secondaryActivityKeepsNoIssueInformationQuiet",
+          "secondarySettingsGroupsStartClosed",
+          "secondarySettingsInvalidLimitStaysUnsavedAndFocused",
+          "secondarySettingsDraftIsNotAppliedBeforeSave",
+          "secondarySettingsControlSSavesOnlySettings",
+          "secondarySettingsDiscardRestoresSavedValues",
+          "secondarySettingssettings-navigationKeyboardReachable",
+          "secondarySettingssettings-dataKeyboardReachable",
+          "secondarySettingsConnectionRouteKeepsSavedModel",
+          "secondaryNarrowfindFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowactivityFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowsettingsFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowDirtySettingsActionsRemainVisible",
+          "secondaryNarrowInvalidSettingsFocusDoesNotSave",
+          "nativeMeaningRecoveryShows16of17CheckedSources",
+          "nativeMeaningRecoveryRetains17ScientificJudgments",
+          "nativeMeaningRecoveryDoesNotRepeatContradictedChoice",
+          "nativeMeaningRecoveryPausedProgressKeeps16Sources",
+          "nativeMeaningRecoveryReplaysPaidReplyWithoutRequests",
+          "nativeMeaningRecoveryRejectsForeignRebinding",
+          "nativeMeaningRecoveryQuestionIsNotDuplicated",
+          "nativeMeaningRecoveryLeaveUndefinedCostsNothing",
           "automaticNativeColumnsPreserved"
         ],
-        "syntheticPapers": 3,
-        "mockRequests": 5,
-        "isolatedNativeWrites": 3,
-        "pointerActions": 28,
-        "keyboardActions": 10,
+        "syntheticPapers": 20,
+        "mockRequests": 8,
+        "simulatedNativeWrites": 3,
+        "pointerActions": 37,
+        "keyboardActions": 28,
         "keyboardTransport": "Gecko TextInputProcessor",
         "realProviderRequests": 0,
-        "screenshots": 10,
+        "meaningRecovery": {
+          "sources": 17,
+          "cachedReplayRequests": 0,
+          "repeatedQuestionSuppressed": true
+        },
+        "screenshots": 25,
         "contentViewports": [
           {
             "width": 1266,
@@ -103,11 +140,11 @@
       },
       "dark": {
         "status": "passed",
-        "passed": 46,
+        "passed": 79,
         "failed": 0,
-        "version": "1.0.0",
+        "version": "1.0.1",
         "addonSource": "production-build",
-        "completedAt": "2026-11-01T06:56:10.744Z",
+        "completedAt": "2026-11-01T07:28:03.411Z",
         "checks": [
           "isolatedDataDirectory",
           "isolatedProfile",
@@ -154,16 +191,54 @@
           "automaticNarrowconnectionPrimaryReachable",
           "automaticNarrowEditorSaveAndCloseReachable",
           "automaticNarrowSidebarClosesEditorSafely",
+          "secondaryFindStartsWithQuietTagFilters",
+          "secondaryFindEnterFocusesLiveResults",
+          "secondaryFindCombinesQueryAndTag",
+          "secondaryFindClearResetsQueriesAndSelections",
+          "secondaryRelatedPapersAppearOnlyOnRequest",
+          "secondaryRelatedEscapeRestoresFocus",
+          "secondaryFindUsesNoProviderOrNativeChanges",
+          "secondaryActivityHistoryStartsCollapsed",
+          "secondaryActivityHistoryAndUndoReachable",
+          "secondaryActivitySurfacesActualRecovery",
+          "secondaryRecoveryRecheckIsLocalAndPreservesTags",
+          "secondaryActivityKeepsNoIssueInformationQuiet",
+          "secondarySettingsGroupsStartClosed",
+          "secondarySettingsInvalidLimitStaysUnsavedAndFocused",
+          "secondarySettingsDraftIsNotAppliedBeforeSave",
+          "secondarySettingsControlSSavesOnlySettings",
+          "secondarySettingsDiscardRestoresSavedValues",
+          "secondarySettingssettings-navigationKeyboardReachable",
+          "secondarySettingssettings-dataKeyboardReachable",
+          "secondarySettingsConnectionRouteKeepsSavedModel",
+          "secondaryNarrowfindFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowactivityFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowsettingsFitsAndKeepsPrimaryReachable",
+          "secondaryNarrowDirtySettingsActionsRemainVisible",
+          "secondaryNarrowInvalidSettingsFocusDoesNotSave",
+          "nativeMeaningRecoveryShows16of17CheckedSources",
+          "nativeMeaningRecoveryRetains17ScientificJudgments",
+          "nativeMeaningRecoveryDoesNotRepeatContradictedChoice",
+          "nativeMeaningRecoveryPausedProgressKeeps16Sources",
+          "nativeMeaningRecoveryReplaysPaidReplyWithoutRequests",
+          "nativeMeaningRecoveryRejectsForeignRebinding",
+          "nativeMeaningRecoveryQuestionIsNotDuplicated",
+          "nativeMeaningRecoveryLeaveUndefinedCostsNothing",
           "automaticNativeColumnsPreserved"
         ],
-        "syntheticPapers": 3,
-        "mockRequests": 5,
-        "isolatedNativeWrites": 3,
-        "pointerActions": 28,
-        "keyboardActions": 10,
+        "syntheticPapers": 20,
+        "mockRequests": 8,
+        "simulatedNativeWrites": 3,
+        "pointerActions": 37,
+        "keyboardActions": 28,
         "keyboardTransport": "Gecko TextInputProcessor",
         "realProviderRequests": 0,
-        "screenshots": 10,
+        "meaningRecovery": {
+          "sources": 17,
+          "cachedReplayRequests": 0,
+          "repeatedQuestionSuppressed": true
+        },
+        "screenshots": 25,
         "contentViewports": [
           {
             "width": 1266,
@@ -177,20 +252,38 @@
       }
     }
   },
+  "cachedMeaningRecovery": {
+    "sources": 17,
+    "priorJudgmentsRetained": 16,
+    "cachedReplayRequests": 0,
+    "originalRepliesAndSpendingRetained": true,
+    "scientificConflictRemainsExplicit": true,
+    "unchangedContradictedChoiceSuppressed": true,
+    "foreignRebindingRejected": true,
+    "leaveUndefinedRequiresNoRequest": true
+  },
+  "readOnlyReportedStateReplay": {
+    "sources": 17,
+    "previousJudgmentsRetained": 16,
+    "remainingScientificExceptions": 1,
+    "newProviderRequests": 0,
+    "nativeWrites": 0,
+    "workingStateBytesUnchanged": true
+  },
   "packageChecks": {
     "installerFiles": 11,
     "stableExtensionId": "smart-tags@zotero-local.org",
     "versionedManagerResources": true,
     "nativeTestBootstrapExcluded": true,
-    "productionAndNativeResourceHashesMatch": true,
+    "productionAndNativeResourcesMatch": true,
     "updateManifestVersionAndSHA256": "passed",
     "credentialPatternScan": {
       "status": "passed",
-      "sourceFiles": 142
+      "allowedSourceFiles": 143
     },
     "sourceArchive": {
       "status": "passed",
-      "allowedFiles": 152,
+      "allowedFiles": 153,
       "archiveEntriesMatchSourceBytes": true,
       "rebuildMatchesInstallerBytes": true
     }
@@ -199,20 +292,20 @@
   "workingExtensionCacheModified": false,
   "liveProviderRequests": 0,
   "limits": [
-    "Native tests use synthetic papers and mocked provider replies; they do not measure live provider availability or scientific classification accuracy.",
-    "The current release does not claim a fresh run of historical private replays or the older 259-check native suite.",
-    "Native in-place package upgrade and remote update-feed discovery were not exercised for this release."
+    "Native tests use synthetic papers and mocked provider replies; they do not establish live provider availability or scientific classification accuracy.",
+    "The reported state was replayed read-only; the working profile was not modified.",
+    "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised for this release."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.0.0.xpi",
-      "bytes": 707204,
-      "sha256": "1bc550644df7b8df52b03f2775f5ccf5bd276f2ff22372da8c36f425d0d65050"
+      "file": "smart-tags-1.0.1.xpi",
+      "bytes": 715674,
+      "sha256": "8bbd2d186fc474d083b7d34d40d8b1982686683276fe9ec327f0b71ccf140338"
     },
     "source": {
-      "file": "smart-tags-1.0.0-source.zip",
-      "bytes": 847040,
-      "sha256": "16639c04f3f6b48d85218e89be542ad5502ee1064dba40c8031778fd8b196aea"
+      "file": "smart-tags-1.0.1-source.zip",
+      "bytes": 863911,
+      "sha256": "15cdca4b43eaceb4f48a8472bac09093afd39d431e2e3c79ea5f16ba9188d903"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

@@ -103,7 +103,7 @@ async function harness(data=snapshot(),options:HarnessOptions={}) {
   const ui=context.ManagerUI.mountManager(dom.win,api,uiOptions);await settle();
   if(reviewMeanings){assert.ok(dom.button('Review meanings'));dom.button('Review meanings').emit('click');await settle();}
   assert.equal(dom.app.getAttribute('data-smart-tags-state'),'ready',dom.app.textContent);
-  async function click(label:string){const button=dom.button(label)||dom.all().find(node=>node.localName==='button'&&node.getAttribute('aria-label')===label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');if(button.type==='submit'){const form=dom.doc.getElementById(button.getAttribute('form'));assert.ok(form,'Submit button has an associated form');form.emit('submit');}await settle();}
+  async function click(label:string){const button=dom.button(label)||dom.all().find(node=>node.localName==='button'&&node.getAttribute('aria-label')===label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');if(button.type==='submit'){const formId=button.getAttribute('form');let form=formId?dom.doc.getElementById(formId):button.parentNode;while(form&&form.localName!=='form')form=form.parentNode;assert.ok(form,'Submit button has an associated form');form.emit('submit');}await settle();}
   function expand(label:string){const details=dom.all().find(node=>node.localName==='details'&&node.children[0]?.textContent===label);assert.ok(details,`Missing details ${label}`);details.open=true;details.emit('toggle');return details;}
   function change(id:string,value:string|boolean){const control=dom.doc.getElementById(id);assert.ok(control,`Missing control ${id}`);if(typeof value==='boolean'){control.checked=value;control.emit('change');}else{control.value=value;control.emit('input');}}
   function choose(id:string,index:number){const control=dom.doc.getElementById(id);assert.ok(control);control.emit('click');const option=dom.doc.getElementById(`${id}-option-${index}`);assert.ok(option);option.emit('click');}
@@ -307,7 +307,7 @@ test('Activity gives the next useful step without repeating tag questions or tec
 
 test('private analysis export stays in Settings without promoting old cleanup tools',async t=>{
   const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup'});t.after(()=>h.ui.destroy());assert.equal(h.button('Export analysis with paper text…'),undefined);
-  h.ui.navigate({page:'settings'});await h.click('Export analysis with paper text…');assert.deepEqual(h.actions,[{action:'export-tag-analysis',payload:{id:'prepared'}}]);assert.equal(h.button('Manage existing tags'),undefined);assert.equal(h.doc.getElementById('nav-existing-tags'),null);
+  h.ui.navigate({page:'settings'});h.expand('Import, export, and previous tag lists');await h.click('Export analysis with paper text…');assert.deepEqual(h.actions,[{action:'export-tag-analysis',payload:{id:'prepared'}}]);assert.equal(h.button('Manage existing tags'),undefined);assert.equal(h.doc.getElementById('nav-existing-tags'),null);
 });
 
 test('successful messages expire after four seconds through the same notification lifecycle',async t=>{
@@ -327,17 +327,121 @@ test('editor CSS keeps a scroll body and visible footer, with a narrow-window dr
 });
 
 test('Explore Any keeps detail contexts together in a saved search',async t=>{
-  const h=await harness(snapshot(),{page:'library'});t.after(()=>h.ui.destroy());h.change('explore-detail-rcl-fc-fc',true);h.change('explore-core-eis',true);h.choose('concept-filter-mode',1);
+  const h=await harness(snapshot(),{page:'library'});t.after(()=>h.ui.destroy());h.expand('Filter by tags');h.change('explore-detail-rcl-fc-fc',true);h.change('explore-core-eis',true);h.choose('concept-filter-mode',1);
   assert.deepEqual(h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent),['Context match','Method only']);await h.click('Save tag search…');await h.click('Create saved search');assert.deepEqual(h.actions[0].payload.filter,{mode:'any',selections:[{conceptId:'rcl',contextId:'fc'},{conceptId:'eis'}]});
 });
 
 test('Explore search respects full names and Co/CO distinctions',async t=>{
-  const data=snapshot();data.tags.push(tag('co','Co',{facet:'component'}),tag('CO','CO',{facet:'component'}));data.papers.push({id:'cobalt',title:'Cobalt paper',tags:['Co']},{id:'monoxide',title:'Carbon monoxide paper',tags:['CO']});const h=await harness(data,{page:'library'});t.after(()=>h.ui.destroy());h.change('concept-search','catalyst-layer resistance');assert.ok(h.doc.getElementById('explore-detail-rcl-fc-fc'));h.change('concept-search','');h.change('explore-core-co',true);assert.deepEqual(h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent),['Cobalt paper']);
+  const data=snapshot();data.tags.push(tag('co','Co',{facet:'component'}),tag('CO','CO',{facet:'component'}));data.papers.push({id:'cobalt',title:'Cobalt paper',tags:['Co']},{id:'monoxide',title:'Carbon monoxide paper',tags:['CO']});const h=await harness(data,{page:'library'});t.after(()=>h.ui.destroy());h.expand('Filter by tags');h.change('concept-search','catalyst-layer resistance');assert.ok(h.doc.getElementById('explore-detail-rcl-fc-fc'));h.change('concept-search','');h.change('explore-core-co',true);assert.deepEqual(h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent),['Cobalt paper']);
+});
+
+test('Find papers retains collapsed tag selections and search drafts, and Clear search resets both queries',async t=>{
+  const h=await harness(snapshot(),{page:'library'});t.after(()=>h.ui.destroy());
+  const titles=()=>h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent);
+  assert.equal(h.doc.getElementById('details-filter-by-tags').parentNode.open,false);
+  assert.equal(h.doc.getElementById('concept-search'),null);
+  assert.equal(titles().length,4);
+  h.expand('Filter by tags');h.change('explore-detail-rcl-fc-fc',true);h.change('explore-core-eis',true);
+  const mode=h.doc.getElementById('concept-filter-mode');mode.focus();mode.emit('keydown',{key:'End'});mode.emit('keydown',{key:'Enter'});await settle();
+  assert.equal(h.doc.activeElement.id,'concept-filter-mode');
+  const selectedMode=h.doc.getElementById('concept-filter-mode');selectedMode.emit('keydown',{key:'Home'});selectedMode.emit('keydown',{key:'Escape'});
+  assert.match(selectedMode.textContent,/Any/);assert.equal(selectedMode.getAttribute('aria-expanded'),'false');
+  h.change('paper-search','Context');h.change('concept-search','impedance');
+  assert.deepEqual(titles(),['Context match']);assert.equal(h.doc.getElementById('find-result-count').getAttribute('aria-live'),'polite');
+  h.doc.getElementById('details-filter-by-tags').emit('click');
+  const filter=h.doc.getElementById('details-filter-by-tags').parentNode;
+  const selections=h.all().filter(node=>node.className==='selected-concept');
+  assert.equal(filter.open,false);assert.equal(selections.length,2);
+  assert.equal(selections.every(node=>!filter.contains(node)),true);
+  assert.match(selections.map(node=>node.textContent).join(' '),/RCL in FC/);
+  await h.emitUpdate();h.ui.navigate({page:'settings'});h.ui.navigate({page:'library'});
+  assert.equal(h.doc.getElementById('paper-search').value,'Context');
+  assert.equal(h.doc.getElementById('details-filter-by-tags').parentNode.open,false);
+  assert.deepEqual(titles(),['Context match']);
+  h.expand('Filter by tags');assert.equal(h.doc.getElementById('concept-search').value,'impedance');
+  assert.match(h.doc.getElementById('concept-filter-mode').textContent,/Any/);
+  await h.click('Clear search');
+  assert.equal(h.doc.getElementById('paper-search').value,'');assert.equal(h.doc.getElementById('concept-search').value,'');
+  assert.match(h.doc.getElementById('concept-filter-mode').textContent,/Any/);
+  assert.equal(h.all().filter(node=>node.className==='selected-concept').length,0);
+  assert.deepEqual(titles(),['Context match','Detail elsewhere','Method only','Fuel cell only']);
+  assert.equal(h.button('Save tag search…'),undefined);assert.equal(h.actions.length,0);
+});
+
+test('related papers opens only for the selected paper and Escape restores its exact trigger',async t=>{
+  const data=snapshot(),paperId='paper / 1';data.papers[0].id=paperId;data.neighbors[paperId]=[{paperId:'c',score:0.91}];
+  const h=await harness(data,{page:'library'});t.after(()=>h.ui.destroy());
+  const triggerId=`related-papers-${encodeURIComponent(paperId)}`,panelId=`related-paper-results-${encodeURIComponent(paperId)}`;
+  assert.equal(h.button('Close related papers'),undefined);assert.equal(!!h.doc.getElementById(panelId),false);
+  h.doc.getElementById(triggerId).focus();h.doc.getElementById(triggerId).emit('click');await settle();
+  assert.equal(h.doc.getElementById(triggerId).getAttribute('aria-expanded'),'true');
+  assert.equal(h.doc.getElementById(triggerId).getAttribute('aria-controls'),panelId);
+  const related=h.doc.getElementById(panelId);assert.ok(related);assert.match(related.textContent,/Method only/);
+  related.parentNode.emit('keydown',{key:'Escape',target:h.button('Close related papers')});await settle();
+  assert.equal(!!h.doc.getElementById(panelId),false);assert.equal(h.doc.activeElement.id,triggerId);
+  assert.equal(h.doc.getElementById(triggerId).getAttribute('aria-expanded'),'false');
+  await h.click('Related papers for Context match');h.doc.getElementById(panelId).parentNode.emit('keydown',{key:'Escape',target:h.doc.getElementById(triggerId)});await settle();
+  assert.equal(!!h.doc.getElementById(panelId),false);assert.equal(h.doc.activeElement.id,triggerId);
+  await h.click('Related papers for Context match');await h.click('Close related papers');
+  assert.equal(!!h.doc.getElementById(panelId),false);assert.equal(h.doc.activeElement.id,triggerId);assert.equal(h.actions.length,0);
 });
 
 test('settings accepts a preferred count without a size blocker and protects provider keys',async t=>{
-  const h=await harness(snapshot(),{page:'settings'});t.after(()=>h.ui.destroy());h.change('settings-coreConceptLimit','501');await h.click('Save settings');assert.equal(h.actions.length,0);h.change('settings-coreConceptLimit','500');await h.click('Save settings');assert.equal(h.actions[0].payload.settings.coreConceptLimit,500);
+  const h=await harness(snapshot(),{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Tag limits');h.change('settings-coreConceptLimit','501');await h.click('Save settings');assert.equal(h.actions.length,0);h.change('settings-coreConceptLimit','500');await h.click('Save settings');assert.equal(h.actions[0].payload.settings.coreConceptLimit,500);
   await h.click('AI connection and budget');h.choose('settings-provider',2);assert.equal(h.doc.getElementById('settings-model').value,'');assert.equal(h.doc.getElementById('settings-inputPricePerMillion').value,'0');assert.equal(h.doc.getElementById('settings-deepseek-key').type,'password');h.change('settings-deepseek-key','test-private-key');await h.click('Save DeepSeek key');assert.deepEqual(h.actions[1],{action:'save-api-key',payload:{key:'test-private-key',provider:'deepseek'}});assert.equal(h.doc.getElementById('settings-deepseek-key').value,'');assert.equal(JSON.stringify(h.data).includes('test-private-key'),false);
+});
+
+test('Settings keyboard save preserves both limits and the latest incoming choice without testing AI',async t=>{
+  for(const modifier of ['ctrlKey','metaKey']){
+    const data=snapshot(),expected={...data.settings,coreConceptLimit:75,extensionTagTarget:17,autoAssign:true};
+    const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+    assert.equal(h.button('Save settings'),undefined);assert.equal(h.doc.getElementById('discard-settings-changes'),null);
+    assert.equal(h.doc.getElementById('settings-coreConceptLimit'),null);assert.ok(h.button('AI connection and budget'));assert.ok(h.button('Routine assignment'));
+    h.expand('Tag limits');h.change('settings-coreConceptLimit','75');h.change('settings-extensionTagTarget','17');
+    data.settings.autoAssign=true;await h.emitUpdate();assert.equal(h.doc.getElementById('settings-coreConceptLimit').value,'75');
+    let prevented=false;
+    h.doc.getElementById('settings-form').emit('keydown',{key:'s',[modifier]:true,target:h.doc.getElementById('settings-extensionTagTarget'),preventDefault(){prevented=true;}});await settle();
+    assert.equal(prevented,true);assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:expected}}]);
+    assert.equal(h.button('Save settings'),undefined);assert.equal(h.doc.getElementById('discard-settings-changes'),null);
+    h.doc.getElementById('settings-form').emit('keydown',{key:'S',[modifier]:true});await settle();assert.equal(h.actions.length,1);
+  }
+});
+
+test('discarding Settings drafts restores the latest persisted values and incoming preference',async t=>{
+  const data=snapshot();const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());
+  h.expand('Tag limits');h.change('settings-coreConceptLimit','75');h.change('settings-extensionTagTarget','17');
+  data.settings={...data.settings,provider:'deepseek',model:'latest-model',coreConceptLimit:88,extensionTagTarget:21,autoAssign:true};await h.emitUpdate();
+  assert.equal(h.doc.getElementById('settings-coreConceptLimit').value,'75');
+  await h.click('Discard changes');
+  assert.equal(h.doc.getElementById('settings-coreConceptLimit').value,'88');assert.equal(h.doc.getElementById('settings-extensionTagTarget').value,'21');
+  assert.equal(h.doc.activeElement.id,'details-tag-limits');assert.equal(h.button('Save settings'),undefined);
+  assert.match(h.app.textContent,/Automatic tagging is on/);await h.click('AI connection and budget');
+  assert.match(h.doc.getElementById('settings-provider').textContent,/DeepSeek/);assert.equal(h.doc.getElementById('settings-model').value,'latest-model');
+  assert.equal(h.actions.length,0);assert.equal(data.settings.autoAssign,true);
+});
+
+test('invalid Settings limits identify and focus the field while retaining the other draft',async t=>{
+  const h=await harness(snapshot(),{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Tag limits');
+  h.change('settings-coreConceptLimit','501');h.change('settings-extensionTagTarget','17');await h.click('Save settings');
+  const initial=h.doc.getElementById('settings-coreConceptLimit');assert.equal(initial.getAttribute('aria-invalid'),'true');assert.equal(h.doc.activeElement,initial);
+  assert.ok(h.doc.getElementById(initial.getAttribute('aria-describedby')));assert.equal(h.actions.length,0);
+  const form=h.doc.getElementById('settings-form'),feedback=h.doc.getElementById('settings-feedback');
+  assert.ok(form.contains(feedback)&&feedback.children.some((node:any)=>node.getAttribute('role')==='alert'),'Validation feedback stays inside the settings form');
+  for(const id of ['save-settings','discard-settings-changes']){const control=h.doc.getElementById(id);assert.ok(control&&form.contains(control)&&!control.disabled,`${id} remains available with validation feedback`);}
+  h.change('settings-coreConceptLimit','75');assert.equal(h.doc.getElementById('settings-coreConceptLimit').getAttribute('aria-invalid'),null);
+  h.change('settings-extensionTagTarget','0');await h.click('Save settings');
+  assert.equal(h.doc.getElementById('settings-extensionTagTarget').getAttribute('aria-invalid'),'true');assert.equal(h.doc.activeElement.id,'settings-extensionTagTarget');
+  assert.equal(h.doc.getElementById('settings-coreConceptLimit').value,'75');assert.equal(h.actions.length,0);
+  h.change('settings-extensionTagTarget','17');await h.click('Save settings');
+  assert.equal(h.actions.length,1);assert.equal(h.actions[0].payload.settings.coreConceptLimit,75);assert.equal(h.actions[0].payload.settings.extensionTagTarget,17);
+});
+
+test('failed settings saves retain the draft and prevent the paid connection test',async t=>{
+  const data=snapshot();const h=await harness(data,{page:'connection',failAction:'save-settings'});t.after(()=>h.ui.destroy());
+  h.choose('settings-discovered-model',1);h.change('settings-model','my-draft-model');await h.click('Save and test');
+  assert.deepEqual(h.actions.map(item=>item.action),['save-settings']);assert.equal(data.settings.model,'openai-model');
+  assert.equal(h.doc.getElementById('settings-model').value,'my-draft-model');assert.ok(h.button('Save and test'));assert.ok(h.doc.getElementById('discard-settings-changes'));
+  await h.click('Discard changes');assert.equal(h.button('Save and test'),undefined);assert.ok(h.button('Test connection'));assert.equal(h.actions.length,1);
 });
 
 test('ChatGPT offers a fresh account or workspace sign-in without saved accounts',async t=>{
@@ -373,7 +477,7 @@ test('action notifications share one final refresh and later external changes re
 
 test('Settings shows the installed version and explicit native navigation/update controls',async t=>{
   const data=snapshot();data.pluginVersion='0.5.0';data.navigation={status:'hidden',mode:'collections',message:'The library sidebar is hidden.'};
-  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Installed version 0\.5\.0/);assert.match(h.app.textContent,/Library navigation: Sidebar hidden/);
+  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Zotero integration');assert.match(h.app.textContent,/Installed version 0\.5\.0/);assert.match(h.app.textContent,/Library navigation: Sidebar hidden/);
   await h.click('Show tag navigation');await h.click('Restore navigation');await h.click('Check for updates');
   assert.deepEqual(h.actions,[{action:'show-tag-navigation',payload:undefined},{action:'show-tag-navigation',payload:{restore:true}},{action:'check-plugin-updates',payload:undefined}]);
 });
@@ -453,8 +557,8 @@ test('finished paper reading does not present tag organization as complete',asyn
 
 test('automatic repairs stay in progress and uncertain remaining API work is not shown as a completed total',async t=>{
   const data=snapshot();data.queue={status:'running',phase:'organizing',phaseProgress:{completed:1,total:29,label:'Parts organized'},completed:744,total:744,failed:0,message:'Repairing part 2 of 29…',provider:'deepseek',spentUSD:0.628,estimatedUSD:0.628,estimatePending:true};
-  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Repairing part 2 of 29/);assert.match(h.app.textContent,/Estimated cost so far: \$0\.6280\. Remaining work is still being estimated\./);assert.doesNotMatch(h.app.textContent,/estimated total|estimated remaining: \$0\.0000|Resume to request/);assert.equal(h.button('Resume').disabled,true);assert.equal(h.button('Retry'),undefined);
-  data.queue.message='Reducing batch size and continuing automatically…';data.queue.estimatePending=false;data.queue.estimatedUSD=1.128;await h.emitUpdate();assert.match(h.app.textContent,/Reducing batch size and continuing automatically/);assert.match(h.app.textContent,/estimated remaining: \$0\.5000/);assert.equal(h.button('Resume').disabled,true);
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Repairing part 2 of 29/);assert.match(h.app.textContent,/Estimated cost so far: \$0\.6280\. Remaining work is still being estimated\./);assert.doesNotMatch(h.app.textContent,/estimated total|estimated remaining: \$0\.0000|Resume to request/);assert.equal(h.button('Resume'),undefined);assert.equal(h.button('Retry'),undefined);
+  data.queue.message='Reducing batch size and continuing automatically…';data.queue.estimatePending=false;data.queue.estimatedUSD=1.128;await h.emitUpdate();assert.match(h.app.textContent,/Reducing batch size and continuing automatically/);assert.match(h.app.textContent,/estimated remaining: \$0\.5000/);assert.equal(h.button('Resume'),undefined);
   data.queue.status='paused';data.queue.message='The next request exceeds the remaining estimated API budget.';await h.emitUpdate();assert.equal(h.button('Resume').disabled,false);assert.match(h.app.textContent,/usage or spending limit/);
 });
 
@@ -518,7 +622,7 @@ test('Exclude and Include again require a reviewed exact native tag preview',asy
   const data=snapshot(),entry={id:'a',title:'Outside my tagging scope',status:'needsInformation' as const,message:'Information is missing.',phase:'facts',canLookupMetadata:true,canRecheck:true,canRetry:true,canSkip:false};data.paperAttention={queued:0,papers:[entry]};const before=structuredClone(data.papers);const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
   await h.click('More actions for Outside my tagging scope');await h.click('Exclude from tagging');assert.deepEqual(h.actions,[{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:true}}]);assert.deepEqual(data.papers,before);assert.equal(h.button('Apply no_tag and exclude'),undefined);
   data.paperExclusionPreview={id:'exclude-review',exclude:true,changes:[{paperId:'a',title:entry.title,before:['Manual project','FC'],after:['Manual project','FC','no_tag']}]};await h.emitUpdate();assert.match(h.app.textContent,/Before: Manual project, FC/);assert.match(h.app.textContent,/After: Manual project, FC, no_tag/);await h.click('Apply no_tag and exclude');assert.deepEqual(h.actions.at(-1),{action:'apply-paper-exclusion',payload:{previewId:'exclude-review'}});
-  data.paperAttention.papers=[{...entry,status:'excluded',canDismiss:false,canLookupMetadata:false,canRecheck:false,canRetry:false}];delete data.paperExclusionPreview;await h.emitUpdate();assert.equal(h.doc.getElementById('attention-a'),null);h.choose('attention-status',6);assert.ok(h.doc.getElementById('attention-a'));assert.equal(h.button('Retry analysis'),undefined);await h.click('Include again');assert.deepEqual(h.actions.at(-1),{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:false}});
+  data.paperAttention.papers=[{...entry,status:'excluded',canDismiss:false,canLookupMetadata:false,canRecheck:false,canRetry:false}];delete data.paperExclusionPreview;await h.emitUpdate();assert.equal(h.doc.getElementById('attention-a'),null);h.expand('Paper information');h.choose('attention-status',6);assert.ok(h.doc.getElementById('attention-a'));assert.equal(h.button('Retry analysis'),undefined);await h.click('Include again');assert.deepEqual(h.actions.at(-1),{action:'preview-paper-exclusion',payload:{ids:['a'],exclude:false}});
   data.paperExclusionPreview={id:'include-review',exclude:false,changes:[{paperId:'a',title:entry.title,before:['Manual project','FC','no_tag'],after:['Manual project','FC']}]};await h.emitUpdate();await h.click('Apply inclusion');assert.deepEqual(h.actions.at(-1),{action:'apply-paper-exclusion',payload:{previewId:'include-review'}});assert.deepEqual(data.papers,before);
 });
 
@@ -528,6 +632,7 @@ test('batch exclusion and manually selected Zotero papers work without an AI con
 
 test('an empty attention panel keeps only its search and header menu without selection controls or pagination',async t=>{
   const data=snapshot();data.paperAttention={queued:0,papers:[]};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.equal(h.doc.getElementById('details-paper-information').parentNode.open,false);assert.equal(h.doc.getElementById('attention-search'),null);h.expand('Paper information');
   assert.match(h.app.textContent,/No papers need attention/);assert.ok(h.doc.getElementById('attention-search'));assert.ok(h.doc.getElementById('attention-status'));assert.ok(h.button('More paper actions'));
   assert.equal(h.doc.getElementById('attention-select-page'),null);
   for(const label of ['Clear','Retry selected','Actions for selected papers','Previous papers','Next papers','Exclude selected Zotero items…'])assert.equal(h.button(label),undefined,label);
@@ -573,7 +678,7 @@ test('attention action menus support keyboard focus, scroll within a short popup
 
 test('the builtin no_tag stays outside editable tags and DIY counts while Find papers can filter it',async t=>{
   const data=snapshot();data.tags.push(tag('smart-tags:no-tag','no_tag',{builtin:'no_tag',custom:true,matchingMode:'manual'}));data.papers[0].tags!.push('no_tag');const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());assert.equal(h.button('Edit tag no_tag'),undefined);assert.equal(h.button('Remove tag no_tag'),undefined);assert.equal(h.all().filter(node=>node.localName==='article'&&node.classList.contains('tag-row')).length,4);
-  h.ui.navigate({page:'overview'});assert.doesNotMatch(h.app.textContent,/your topics|DIY|core vocabulary/);h.ui.navigate({page:'library'});assert.ok(h.doc.getElementById('explore-builtin-no-tag'));h.change('explore-builtin-no-tag',true);assert.deepEqual(h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent),['Context match']);
+  h.ui.navigate({page:'overview'});assert.doesNotMatch(h.app.textContent,/your topics|DIY|core vocabulary/);h.ui.navigate({page:'library'});h.expand('Filter by tags');assert.ok(h.doc.getElementById('explore-builtin-no-tag'));h.change('explore-builtin-no-tag',true);assert.deepEqual(h.all().filter(node=>node.className==='paper-title-button').map(node=>node.textContent),['Context match']);
 });
 
 test('suggested no_tag remains a reviewed paper change with a clear future-exclusion label',async t=>{
@@ -653,7 +758,7 @@ test('extension targets count additions separately and review shows the cumulati
 });
 
 test('old topic notices remain in history without active warning banners',async t=>{
-  const data=snapshot();data.warnings=[warning('topic',{code:'unapproved-topics',message:'Earlier unmatched topic names.'})];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.equal(h.all().some(node=>node.classList.contains('active-warning-summary')),false);assert.match(h.app.textContent,/Earlier notice/);assert.match(h.app.textContent,/Earlier unmatched topic names/);assert.equal(h.actions.length,0);
+  const data=snapshot();data.warnings=[warning('topic',{code:'unapproved-topics',message:'Earlier unmatched topic names.'})];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.equal(h.all().some(node=>node.classList.contains('active-warning-summary')),false);h.expand('History');assert.match(h.app.textContent,/Earlier notice/);assert.match(h.app.textContent,/Earlier unmatched topic names/);assert.equal(h.actions.length,0);
 });
 
 test('saved tag shelves filter equal tags and keep stable membership when renamed',async t=>{
@@ -763,11 +868,62 @@ test('native meaning editor preserves separate entry drafts and scroll and Cance
 
 test('Activity shows the current meaning choice and collapses the previous completed build without work controls',async t=>{
   const data=snapshot();data.queue={kind:'rebuild',ownerPage:'cleanup',phase:'ready',status:'idle',total:48,completed:48,failed:0,message:'The previous tag list is saved.'};data.nativeDefinitionPreparation={id:'current-meaning',status:'ready',completed:1,total:1,canApply:false,rows:[{id:'battery',sourceName:'Batteries',paperIds:['a'],status:'question',question:'Use a broad battery scope?',choices:[{id:'broad',label:'Use a broad battery tag',description:'All battery chemistries.'}]}]};data.activityTasks=[{id:'meaning-task',workId:'current-meaning',kind:'meanings',state:'needs-choice',label:'Suggest meanings',ownerPage:'vocabulary',questionCount:1,completed:1,total:1},{id:'old-build',kind:'rebuild',state:'completed',label:'Earlier tag build',ownerPage:'cleanup',completed:48,total:48,message:'The previous tag list is saved.'}];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
-  assert.match(h.app.textContent,/1 tag meaning needs your choice/);assert.doesNotMatch(h.app.textContent,/48 papers|48 of 48|Paper analysis|Previous tag list/);assert.equal(h.all().some(node=>['run-strip','progress-bar'].includes(node.className)),false);for(const name of ['Resume','Pause','Cancel remaining'])assert.equal(h.button(name),undefined);await h.click('Open meanings');assert.ok(h.button('Use a broad battery tag'));h.ui.navigate({page:'activity'});h.expand('Completed work');assert.match(h.app.textContent,/Earlier tag build/);assert.match(h.app.textContent,/48 of 48 papers/);assert.equal(h.actions.length,0);
+  assert.match(h.app.textContent,/1 tag meaning needs your choice/);assert.doesNotMatch(h.app.textContent,/48 papers|48 of 48|Paper analysis|Previous tag list/);assert.equal(h.all().some(node=>['run-strip','progress-bar'].includes(node.className)),false);for(const name of ['Resume','Pause','Cancel remaining'])assert.equal(h.button(name),undefined);await h.click('Open meanings');assert.ok(h.button('Use a broad battery tag'));h.ui.navigate({page:'activity'});h.expand('History');h.expand('Completed work');assert.match(h.app.textContent,/Earlier tag build/);assert.match(h.app.textContent,/48 of 48 papers/);assert.equal(h.actions.length,0);
+});
+
+test('Activity shows a native meaning choice once without hiding unrelated work with missing optional identities',async t=>{
+  const data=snapshot();data.nativeDefinitionPreparation={id:'meaning-work',processingPolicy:'auto-clear',status:'ready',completed:1,total:1,canApply:false,rows:[{id:'battery',sourceName:'Batteries',paperIds:['a'],status:'question',question:'Choose the battery scope.',choices:[{id:'broad',label:'All battery chemistries',description:'A broad battery meaning.'}]}]};
+  data.reviewItems=[{id:'battery-choice',kind:'definition',state:'open',taskId:'maintenance-task',workId:'meaning-work',ownerPage:'vocabulary',questionId:'battery',sourceName:'Batteries',label:'Battery scope'}];
+  data.activityTasks=[{id:'meaning-activity',workId:'meaning-work',kind:'meanings',state:'needs-choice',label:'Suggest meanings',ownerPage:'vocabulary',questionCount:1}];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.ok(h.button('All battery chemistries'));assert.equal(h.button('Open meanings'),undefined);
+  assert.equal(h.all().filter(node=>node.classList.contains('activity-task')).length,0);
+  data.activityTasks.push({id:'unrelated-activity',kind:'meanings',state:'needs-choice',label:'Other meaning work',ownerPage:'vocabulary',questionCount:2,message:'An unrelated task still needs attention.'});
+  data.reviewItems.push({id:'other-deferred-choice',kind:'definition',state:'deferred',taskId:'other-maintenance-task',ownerPage:'cleanup',label:'A different choice left for later'});await h.emitUpdate();
+  const tasks=h.all().filter(node=>node.classList.contains('activity-task'));
+  assert.equal(tasks.length,1);assert.match(tasks[0].textContent,/An unrelated task still needs attention/);
+  assert.equal(h.all().filter(node=>node.localName==='button'&&node.textContent==='Open meanings').length,1);
+  assert.ok(h.button('All battery chemistries'));assert.equal(h.actions.length,0);
 });
 
 test('Activity keeps an active paper run distinct from queued meaning work without duplicate progress',async t=>{
   const data=snapshot();data.queue={kind:'tag',ownerPage:'assignment',phase:'reading',status:'running',total:4,completed:2,failed:0,message:'Reading the current assignment group.'};data.activityTasks=[{id:'assignment',kind:'assignment',state:'running',label:'Assign tags',ownerPage:'assignment',completed:2,total:4},{id:'meanings',kind:'meanings',state:'queued',label:'Suggest meanings',ownerPage:'vocabulary',completed:0,total:3}];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Reading the current assignment group/);assert.match(h.app.textContent,/Meanings queued/);assert.match(h.app.textContent,/0 of 3 names prepared/);assert.equal(h.all().filter(node=>node.className==='run-strip').length,0);assert.equal(h.all().filter(node=>node.textContent==='Paper analysis'&&node.localName==='h2').length,1);assert.equal(h.all().filter(node=>node.localName==='button'&&node.textContent==='Pause').length,1);assert.ok(h.button('Open meanings'));assert.equal(h.actions.length,0);
+});
+
+test('a paused current meaning task shows checked sources and resumes directly, including legacy task records',async t=>{
+  for(const workId of ['current-meaning',undefined]){
+    const data=snapshot();data.queue={ownerPage:'vocabulary',taskLabel:'Checking tag meanings',status:'paused',total:17,completed:0,failed:0,phaseProgress:{completed:16,total:17,label:'Sources checked'}};
+    data.nativeDefinitionPreparation={id:'current-meaning',status:'paused',completed:0,total:1,canApply:false,rows:[]};
+    data.activityTasks=[{id:'meaning-task',...(workId?{workId}:{}),kind:'meanings',state:'paused',label:'Suggest meanings',ownerPage:'vocabulary',completed:0,total:1}];
+    const h=await harness(data,{page:'activity',onInvoke(action,_payload,current){
+      if(action==='resume'||action==='pause'){
+        current.queue.status=action==='resume'?'running':'paused';current.activityTasks![0].state=current.queue.status;current.nativeDefinitionPreparation!.status=current.queue.status;
+      }
+    }});t.after(()=>h.ui.destroy());
+    assert.match(h.app.textContent,/Sources checked: 16 of 17/);assert.doesNotMatch(h.app.textContent,/Papers read: 0|0 papers read|0 of 17|0 of 1 names prepared|Paper analysis/);
+    assert.equal(h.all().filter(node=>node.localName==='button'&&node.textContent==='Resume').length,1);assert.equal(h.button('Cancel remaining'),undefined);
+    await h.click('Resume');assert.deepEqual(h.actions,[{action:'resume',payload:undefined}]);
+    assert.equal(h.button('Resume'),undefined);assert.ok(h.button('Pause'));assert.ok(h.button('More meaning task actions'));assert.match(h.app.textContent,/Sources checked: 16 of 17/);
+    await h.click('Pause');assert.deepEqual(h.actions.at(-1),{action:'pause',payload:undefined});assert.ok(h.button('Resume'));
+  }
+});
+
+test('an archived paused meaning task cannot display or control another meaning task queue',async t=>{
+  const data=snapshot();data.queue={ownerPage:'vocabulary',taskLabel:'Checking current meanings',status:'paused',total:17,completed:0,failed:0,phaseProgress:{completed:16,total:17,label:'Sources checked'}};
+  data.nativeDefinitionPreparation={id:'current-meaning',status:'paused',completed:0,total:1,canApply:false,rows:[]};
+  data.activityTasks=[{id:'archived-task',workId:'archived-meaning',kind:'meanings',state:'paused',label:'Earlier tag meanings',ownerPage:'vocabulary',completed:0,total:1}];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.match(h.app.textContent,/Meaning preparation paused/);assert.doesNotMatch(h.app.textContent,/Sources checked|16 of 17|Papers read|0 papers read/);
+  for(const label of ['Resume','Pause','More meaning task actions','Cancel remaining'])assert.equal(h.button(label),undefined,label);
+  assert.ok(h.button('Open meanings'));assert.equal(h.actions.length,0);
+});
+
+test('Activity opens the chosen assignment task instead of the latest unrelated result',async t=>{
+  const data=snapshot();data.assignmentReviews=[assignmentReview('latest',{processingPolicy:'auto-clear',appliedCount:8}),assignmentReview('requested',{processingPolicy:'auto-clear',appliedCount:2})];data.assignmentReview=data.assignmentReviews[0];
+  data.activityTasks=[{id:'requested-task',workId:'requested',kind:'assignment',state:'needs-choice',label:'Earlier assignment choices',ownerPage:'assignment',questionCount:1}];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());await h.click('Open assignment');
+  assert.equal(h.doc.getElementById('nav-assignment').getAttribute('aria-current'),'page');assert.equal(h.doc.getElementById('assignment-result').textContent,'Result requested');
+  assert.match(h.app.textContent,/2 tag changes applied/);assert.doesNotMatch(h.app.textContent,/8 tag changes applied/);assert.equal(h.actions.length,0);
 });
 
 test('unsaved native meaning edits block only their own answers and selected batch save',async t=>{
@@ -775,7 +931,24 @@ test('unsaved native meaning edits block only their own answers and selected bat
 });
 
 test('completed meaning history never invents missing saved or undefined counts',async t=>{
-  const data=snapshot();data.activityTasks=[{id:'old',kind:'meanings',state:'completed',label:'Earlier tag meanings',ownerPage:'vocabulary',message:'Earlier preparation'},{id:'known',kind:'meanings',state:'completed',label:'Saved tag meanings',ownerPage:'vocabulary',savedCount:2,leftUndefinedCount:1}];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());h.expand('Completed work');assert.match(h.app.textContent,/2 meanings saved · 1 left undefined/);assert.doesNotMatch(h.app.textContent,/0 meanings saved|0 left undefined/);assert.equal(h.button('Open meanings'),undefined);assert.equal(h.actions.length,0);
+  const data=snapshot();data.activityTasks=[{id:'old',kind:'meanings',state:'completed',label:'Earlier tag meanings',ownerPage:'vocabulary',message:'Earlier preparation'},{id:'known',kind:'meanings',state:'completed',label:'Saved tag meanings',ownerPage:'vocabulary',savedCount:2,leftUndefinedCount:1}];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());h.expand('History');h.expand('Completed work');assert.match(h.app.textContent,/2 meanings saved · 1 left undefined/);assert.doesNotMatch(h.app.textContent,/0 meanings saved|0 left undefined/);assert.equal(h.button('Open meanings'),undefined);assert.equal(h.actions.length,0);
+});
+
+test('Activity keeps notices singular and all applied changes searchable beyond the first hundred',async t=>{
+  const data=snapshot();data.activityTasks=[];data.warnings=[warning('one-notice')];
+  data.history=Array.from({length:125},(_,index)=>({id:`change-${index}`,date:'2026-11-01',label:`Audit record ${String(index).padStart(3,'0')}`,count:1,canUndo:true}));
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());
+  assert.equal(h.all().filter(node=>node.classList.contains('active-warning-summary')).length,0);
+  assert.equal(h.all().filter(node=>node.classList.contains('warning-record')).length,1);
+  assert.equal(h.doc.getElementById('activity-history').open,false);assert.equal(h.doc.getElementById('history-search'),null);
+  h.expand('History');const rows=()=>h.doc.querySelector('tbody').children;
+  assert.equal(rows().length,50);assert.match(rows()[0].textContent,/Audit record 000/);
+  await h.click('Next changes');assert.equal(rows().length,50);assert.match(rows()[0].textContent,/Audit record 050/);
+  await h.click('Next changes');assert.equal(rows().length,25);assert.match(rows().at(-1).textContent,/Audit record 124/);
+  h.change('history-search','Audit record 124');assert.equal(rows().length,1);
+  await h.click('Undo');assert.deepEqual(h.actions,[{action:'undo',payload:{id:'change-124'}}]);
+  h.change('history-search','missing record');assert.match(h.app.textContent,/No matching changes/);assert.equal(h.button('Undo'),undefined);
+  h.change('history-search','');assert.equal(rows().length,50);assert.match(rows()[0].textContent,/Audit record 000/);
 });
 
 test('Tag library opens browsing and shelf or status changes leave pending meaning review without losing it',async t=>{

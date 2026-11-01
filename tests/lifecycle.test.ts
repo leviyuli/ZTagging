@@ -171,6 +171,10 @@ function managerDialog() {
     removeEventListener() {}
     focus() { this.ownerDocument.activeElement = this; }
     contains(node: any) { return node === this || this.children.some(child => typeof child !== 'string' && child.contains?.(node)); }
+    querySelector(selector: string) {
+      const find = (element: any): any => (selector.startsWith('#') ? element?.id === selector.slice(1) : element?.className?.split(/\s+/).includes(selector.slice(1))) ? element : element?.children?.map(find).find(Boolean);
+      return this.children.map(find).find(Boolean) || null;
+    }
   }
   let app: Element | null = null;
   const listeners = new Map<string, Set<() => void>>();

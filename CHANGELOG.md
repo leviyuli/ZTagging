@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 — 2026-11-01
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.1/smart-tags-1.0.1-source.zip)
+
+- Put Find papers results first, with optional tag filters, one Clear search action, and related papers shown on request. Keep keyboard focus and selected search context when closing details.
+- Prioritize current choices and recovery in Activity. Collapse completed work and notices into searchable, paginated History; keep older Undo actions reachable.
+- Lead Settings with connection and incoming-tagging status. Keep optional preferences in disclosures, support Ctrl/Cmd+S, and provide draft discard and field-specific validation.
+- Recover saved native-meaning replies that repeat an unchanged candidate reference, retaining completed checks and spending. Show source-check progress, preserve scientific conflicts as questions, and avoid offering an already contradicted meaning again.
+- Keep state schema 12 and native-definition protocol 2. Resume and Retry revalidate compatible saved replies before another request; changed meanings, foreign targets, stale sources and unsupported evidence remain blocked.
+
 ## 1.0.0 — 2026-11-01
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.0/smart-tags-1.0.0-source.zip)
