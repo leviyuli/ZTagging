@@ -1,46 +1,42 @@
-# v1.0.7 validation
+# v1.1.0 validation
 
-Target: Zotero 10.0.6 on Windows. Release artifacts, hashes and aggregate results are recorded in [dist/validation.json](dist/validation.json).
+Target: Zotero 10.0.7 / Gecko 140.17.0 on Windows 11 Pro build 26300, Intel i5-13400F, approximately 40 GiB RAM. All native runs used marker-verified, isolated profiles and data directories. The working Zotero library and credentials were untouched.
 
-## Automated verification
+Artifact hashes and aggregate results are recorded in [dist/validation.json](dist/validation.json). Architecture and retention rules are described in [docs/workspace.md](docs/workspace.md).
 
-- **1,195 automated tests passed**, including **151 manager UI tests**, with zero failures, cancellations or skips.
-- Standard TypeScript checking and the stricter unused-local/unused-parameter check passed.
-- In-memory production bundling passed. Package identity, versioned resources, update metadata, source archive and installer rebuild checks are recorded in [dist/validation.json](dist/validation.json).
+## Source and recovery checks
 
-Notification tests cover unchanged items without persistence or history traversal, duplicate changes with one batch save, manual removals, attachment invalidation, order-independent native tags, failures affecting one paper, preserved caches after failed reads, shutdown, and retrying failed saves. Lifecycle tests cover events arriving during a flush and cancellation on shutdown. Store tests retain exact-backup and recovery guarantees while checking validation reuse only for identical bytes, changed disk data, and eviction of large cached text. Definition-index tests preserve name ownership, aliases, stale identity detection and current-definition lookup.
+- Both TypeScript checks passed, including unused locals and parameters.
+- The full regression suite passed **1,499 tests**, with no failures, skips or cancellations.
+- All three production entry points bundled in memory with `write: false`.
+- Scientific vectors, automatic assignment policies, saved meanings, manual protections, migrations, fact recovery, native binding exclusions, keyboard focus, editor drafts and dropdown dismissal remain covered.
 
-The regression suite also retains saved-state validation, migrations, fact recovery, assignment policy and cache compatibility, meaning admission, personal-label treatment, saved-name conflicts, dropdown dismissal, keyboard focus, editor drafts and Undo.
+Workspace tests cover idempotent commands, durable queued inputs, frozen paper selection, provider reservations and unknown outcomes, retained paid bytes, native-write journals and chunk acknowledgements, failed writes, external native edits, cancellation, corruption and migration activation. Injected-clock tests cover seven-day expiry, referenced/shared payloads, unknown-date grace, open/deferred choices, completed projections and backup cleanup after two distinct process restarts.
 
-## Focused native library checks
+A 100-paper assignment test completes 99 clear additions with one uncertain choice, serial requests and bounded native frames. A separate 25-paper run survives restart, uses one Undo group across 20+5 inverse writes, preserves manual tags and prevents immediate reapplication without new AI requests. Partial Undo recovery suppresses already reversed additions.
 
-The **1.0.7 production build** passed **43 checks in light mode and 43 in dark mode**, **86 total**, in a separate Zotero profile and data directory. It used synthetic papers and mocked provider/native-write adapters, making **zero AI requests and zero native writes**. Both themes loaded the production resources. The earlier final preview passed 44 checks per theme with its preview-specific metadata checks.
+## Native workflow and package
 
-The scenario exercises:
+The isolated workflow used synthetic papers and worker-local provider responses through the real provider parser. Eleven clear additions applied automatically; one uncertain paper did not block completion. Repeating the assignment reused replies without duplicate choices. One Undo reversed all eleven additions after restart and preserved manual tags. Gecko keyboard input stopped an unknown request in Activity without resending it or affecting completed work. No real provider network request was made.
 
-- No Smart Tags panel beside Collections, no sidebar API, and unchanged Collections DOM.
-- Duplicate no-op item notifications without saves, and batch processing that yields to the UI.
-- Tag library search, shelves, filters, meaning choices, saved-name conflicts, editor drafts and Undo.
-- Dropdown dismissal, **/** search focus, Escape clearing, linked-paper disclosures and keyboard correction.
-- Find papers queries, tag filters, clearing search and Enter-key focus.
-- Settings updates and installed-version controls, with no Show/Restore navigation actions.
+The exact **v1.1.0 XPI** was installed through AddonManager. Its workers and manager loaded from archive resources. Disable, re-enable and immediate disable/re-enable passed after lifecycle serialization. Full plugin shutdown, measured through Zotero's lifecycle observer, took **32 ms** in the final package run. Source tests also cover failed shutdown and delayed host cleanup.
 
-Each theme uses **19 pointer actions and thirteen Gecko keyboard actions**, retaining **nine screenshots**, **18 total**. Wide, medium and narrow layouts are checked; controls remain usable without horizontal overflow. Production-resource consistency is recorded in [dist/validation.json](dist/validation.json).
+The installer contains exactly fourteen extension/license/bundle files. Source packaging verifies an explicit allowlist, exact source bytes, deterministic ZIP output, matching versions, production bundles and the update manifest's SHA-256 hash. Profiles, library data, databases, reports, credentials, build directories and native test injection are excluded from the installer.
 
-## Performance evidence
+## Responsiveness and storage
 
-Read-only profiling used an existing copied state of approximately **153 MB**, not the working Zotero profile. Unchanged item updates and a batch of 100 duplicate notifications caused **zero persistence calls**. Operation-scoped definition indexes reduced repeated name-conflict work, and repeated full snapshots measured approximately **127 ms and 94 ms**, compared with approximately **502 ms and 469 ms** before the changes.
+| Isolated case | Input p95 / p99 | Warm page query p95 | Idle disable p95 | Maximum measured plugin page callback |
+| --- | --- | --- | --- | --- |
+| Copied archive, dark / software graphics | 12.16 / 13.60 ms | 61 ms | 23 ms | 20.39 ms |
+| Copied archive, light / native graphics | 12.25 / 33.81 ms | 61 ms | 28 ms | 16.43 ms |
+| 10,000 papers / 2,000 definitions, dark | 14.42 / 15.22 ms | 75 ms | 27 ms | 15.73 ms |
 
-These are local diagnostic measurements, not a guarantee of latency on every library. Genuine changes still require serialization and recovery-safe persistence. Paid replies and history are retained rather than trimmed for performance.
+All measured runs met the input, page-query, shutdown and page-callback limits. Each of the six main pages passed bounded-row/payload checks and layout checks. Search kept the same mounted input, and Escape cleared it. Light/dark screenshots were inspected. Controlled runs use software graphics; the archive also passed with native graphics enabled. The synthetic fixture includes an 8 MiB unique text body and both repeated and unique histories.
 
-## State and historical evidence
+The **152,976,903-byte** legacy fixture migrated to a **49,614,848-byte database (47.3 MiB)** after incremental idle reclamation, below the 50 MiB target. Its exact temporary migration backup is separate. Fresh migration took about 206.6 seconds, followed by 37.4 seconds of bounded reclamation. Worker progress was reported throughout. During reclamation, sampled input-to-paint latency was p95 0.39 ms / p99 0.57 ms; the subsequent search test was p95 15.91 ms / p99 19.13 ms. Idle disable never waited for archive maintenance.
 
-This release retains **state schema 13** and **native-definition protocol 2**. Updating from 1.0.5 or 1.0.6 requires no schema migration. Tests continue to cover exact-byte, collision-safe **state.json.pre-v13.json** backups for older states, preservation of paid progress and task policies, invalid-field rejection, backup/write failure and downgrade protection. Migration makes no AI request, meaning admission or assignment.
+Settings size queries use counters and SQLite page metadata. Routine views remain limited to fifty primary rows and 256 KiB; the combined decoded-payload cache stays within 32 MiB. SQL bulk transfers are limited to two, and native-write frames to twenty papers. Current definitions, supporting evidence, unfinished choices and recovery are protected by references after old diagnostics expire.
 
-The v1.0.6 production meaning scenario passed **32 checks per theme**, covering Use/Skip, automatic clear meanings, remembered personal labels, explicit AI retry, restart, saved-name conflicts and generated-alias pruning. That result is historical evidence, not a new native meaning run for v1.0.7. Earlier copied-state recovery, editor and broader automatic-workflow runs also remain historical; current automated tests retain their regression coverage.
+## Scope of evidence
 
-## Verification limits
-
-Native tests use synthetic papers and mocked adapters; they do not establish live scientific classification accuracy or provider availability. The working Zotero library, cache and credentials were not modified. Native in-place installation and Zotero’s own remote update discovery are separate from checking the published installer and update-feed bytes.
-
-Legacy navigator-specific native scenarios are retired after removal of the panel. The current library, Find papers and Settings scenario was rerun. Hidden-window test waits are bounded, and test-only timing preferences do not ship in the extension. Scientific filters whose per-paper exclusions cannot survive Zotero saved-search reload remain available in Find papers.
+These measurements describe this machine and the tested fixtures. Native Zotero calls, graphics and operating-system stalls are separate from plugin computation. Synthetic provider replies verify workflow and recovery, not live scientific accuracy or account availability. Remote Zotero update-feed discovery was not exercised; the public installer link and its exact update hash are checked separately.

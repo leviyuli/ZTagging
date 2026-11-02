@@ -1,24 +1,17 @@
-import { AppController, initialState, validState, validLegacyState, migrateState } from './controller.ts';
-import { normalizeTagDefinitions } from './core.ts';
-import type { AppState } from './controller.ts';
-import { ZoteroHost, SecureCredentials, registerOAuthCallback, chooseJSONFile } from './platform.ts';
-import { ProviderClient } from './providers.ts';
-import { AtomicStore } from './store.ts';
-import { mountManager } from './ui.ts';
-import type { ManagerUIOptions } from './ui.ts';
-import type { ManagerAPI } from './ui-contract.ts';
-import { upsertWarning } from './warnings.ts';
+import {ZoteroHost} from './platform.ts';
+import {mountManager} from './ui.ts';
+import type {ManagerUIOptions} from './ui.ts';
+import type {Workspace} from './workspace-contract.ts';
+import {createNativeWorkspace} from './workspace.ts';
+import type {NativeWorkspace} from './workspace.ts';
 
-type StartupData = { id: string; version: string; rootURI: string };
+type StartupData = { id: string; version: string; rootURI: string; indexLibrary?:boolean };
 
 const HTML = 'http://www.w3.org/1999/xhtml';
 const LOCALE = 'smart-tags.ftl';
 const MANAGER_URL = 'chrome://smart-tags/content/manager.xhtml';
-let controller: AppController | null = null;
+let workspace: NativeWorkspace | null = null;
 let host: ZoteroHost | null = null;
-let credentials: SecureCredentials | null = null;
-let aiClient: ProviderClient | null = null;
-let store: AtomicStore<AppState> | null = null;
 let managerWindow: Window | null = null;
 let managerUI: ReturnType<typeof mountManager> | null = null;
 let managerReadinessCleanup: (() => void) | null = null;
@@ -27,7 +20,6 @@ let startupData: StartupData | null = null;
 let stopping = false;
 const menuIDs: string[] = [];
 const mainWindows = new Set<any>();
-let libraryCache:Promise<{papers:import('./core.ts').PaperRecord[];nativeTags:Record<string,import('./platform.ts').NativeTag[]>}>|null=null;
 const itemChanges = new Map<number, { attachment: boolean }>();
 let itemTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -51,27 +43,9 @@ function mainWindowList(): any[] {
   return typeof Zotero.getMainWindows === 'function' ? Zotero.getMainWindows() : [Zotero.getMainWindow()].filter(Boolean);
 }
 
-async function importVocabulary() {
-  const path = await chooseJSONFile('open');
-  if (!path) return null;
-  const info = await IOUtils.stat(path);
-  if (info.size > 10 * 1024 * 1024) throw new Error('Choose a vocabulary JSON file smaller than 10 MB.');
-  let value: unknown;
-  try { value = JSON.parse(await IOUtils.readUTF8(path)); }
-  catch { throw new Error('The selected file is not valid vocabulary JSON.'); }
-  return value;
-}
-
-async function exportVocabulary(value: unknown) {
-  const path = await chooseJSONFile('save',(value as any)?.format==='zotero-smart-tags-proposal'?'smart-tags-proposal-with-evidence.json':'smart-tags-vocabulary.json');
-  if (!path) return;
-  await IOUtils.writeUTF8(path, JSON.stringify(value, null, 2) + '\n', { tmpPath: `${path}.tmp` });
-}
-
-async function analyzeScope(scope: 'selected' | 'collections') {
+async function analyzeScope(scope:'selected'|'collections') {
   await openManager();
-  if (!controller) return;
-  await controller.invoke('tag', { scope });
+  await workspace?.execute({type:'tag',payload:{scope}},{commandId:crypto.randomUUID()});
 }
 
 function registerMenus(data: StartupData) {
@@ -109,22 +83,21 @@ function registerMenus(data: StartupData) {
 }
 
 function scheduleItem(itemID: number, attachment: boolean) {
-  if (stopping || !controller || !host || host.mutating.has(itemID)) return;
+  if (stopping || !workspace || !host || host.mutating.has(itemID)) return;
   itemChanges.set(itemID,{attachment:attachment || !!itemChanges.get(itemID)?.attachment});
   if (itemTimer !== null) clearTimeout(itemTimer);
   itemTimer = setTimeout(() => {
     itemTimer = null;
     const changes=[...itemChanges].filter(([id])=>!host?.mutating.has(id)).map(([itemID,change])=>({itemID,...change}));
     itemChanges.clear();
-    const app=controller;
+    const app=workspace;
     if (!app || stopping || !changes.length) return;
-    void app.onItemsChanged(changes).catch(logError);
+    void app.notify(changes).catch(logError);
   },2000);
 }
 
-async function notifyItems(event: string, type: string, ids: (number | string)[]) {
-  libraryCache=null;
-  if (stopping || !controller || !host) return;
+async function notifyItems(event: string, type: string, ids: (number | string)[], extraData: Record<string, {libraryID?: number}> = {}) {
+  if (stopping || !workspace || !host) return;
   if (!['add', 'modify', 'remove', 'delete', 'trash', 'refresh'].includes(event)) return;
   const itemIDs = new Set<number>();
   for (const id of ids) {
@@ -132,81 +105,45 @@ async function notifyItems(event: string, type: string, ids: (number | string)[]
     if (Number.isSafeInteger(value) && value > 0) itemIDs.add(value);
   }
   for (const id of itemIDs) {
-    if (host.mutating.has(id)) continue;
-    const item = await Zotero.Items.getAsync(id).catch(() => null);
-    if (!item) continue;
-    if (personal(item)) scheduleItem(id, false);
+    if (stopping || !workspace || !host) return;
+    const currentHost: ZoteroHost = host;
+    if (currentHost.mutating.has(id)) continue;
+    if (type === 'item' && extraData?.[id]?.libraryID !== undefined && extraData[id].libraryID !== Zotero.Libraries.userLibraryID) continue;
+    let item: any;
+    try { item = await Zotero.Items.getAsync(id); }
+    catch (error) { logError(error); continue; }
+    if (stopping || !workspace || host !== currentHost) return;
+    if (!item) {
+      if (type === 'item' && (event === 'delete' || event === 'trash')) scheduleItem(id, false);
+      continue;
+    }
+    // Zotero refreshes the known parent when an attachment is erased.
+    if (item.isRegularItem?.() && item.libraryID === Zotero.Libraries.userLibraryID) scheduleItem(id, type === 'item' && event === 'refresh');
     else if (type === 'item' && item.isAttachment?.() && item.parentID) {
       const parent = await Zotero.Items.getAsync(item.parentID).catch(() => null);
-      if (personal(parent) && !host.mutating.has(parent.id)) scheduleItem(parent.id, true);
+      if (personal(parent)) scheduleItem(parent.id, true);
     }
   }
 }
 
-export async function startup(data: StartupData) {
-  if (controller) return;
-  stopping = false;
-  startupData = data;
-  if (Zotero.initializationPromise) await Zotero.initializationPromise;
-  const profilePath = Services.dirsvc.get('ProfD', Ci.nsIFile).path;
-  const directory = PathUtils.join(profilePath, 'smart-tags');
-  await IOUtils.makeDirectory(directory, { ignoreExisting: true, createAncestors: true });
-  let legacyBaseline: import('./core.ts').TagDefinition[] | undefined;
-  const baselinePath=PathUtils.join(directory,'state.json.pre-v3.json');
-  if(await IOUtils.exists(baselinePath)) {
-    try {
-      const baseline=JSON.parse(await IOUtils.readUTF8(baselinePath));
-      if(validLegacyState(baseline)&&Array.isArray(baseline.tags))legacyBaseline=baseline.tags.filter((tag:import('./core.ts').TagDefinition)=>normalizeTagDefinitions([tag]).length===1);
-    } catch { /* Without a readable baseline, legacy definitions are preserved. */ }
-  }
-  store = new AtomicStore<AppState>({
-    read: path => IOUtils.readUTF8(path),
-    exists: path => IOUtils.exists(path),
-    writeAtomic: (path, text) => IOUtils.writeUTF8(path, text, { tmpPath: `${path}.tmp` }),
-    readBytes:path=>IOUtils.read(path),
-    copyExact:async(source,destination)=>{await IOUtils.copy(source,destination,{noOverwrite:true});},
-  }, PathUtils.join(directory, 'state.json'), initialState, validState, value=>migrateState(value,{legacyBaseline}), validLegacyState);
-  const loaded = await store.load();
-  if (store.recovered) loaded.warnings=upsertWarning(loaded.warnings,{code:'state-recovery',message:'Smart Tags restored its previous valid state from the local backup.',context:'startup',conditionFingerprint:'state-backup-recovery'});
-  credentials = new SecureCredentials();
-  host = new ZoteroHost();
-  const secure = credentials;
-  const stateStore = store;
-  const ai = new ProviderClient({
-    fetch: globalThis.fetch.bind(globalThis), crypto: globalThis.crypto,
-    credentials: { load: key => secure.load(key), save: (key, value) => secure.save(key, value), remove: key => secure.remove(key) },
-    metadata: {
-      get: async key => (controller?.state || loaded).metadata[key] || null,
-      set: async (key, value) => {
-        const state = controller?.state || loaded;
-        state.metadata[key] = value;
-        if (controller) await controller.save(); else await stateStore.save(state);
-      },
-    },
-    registerCallback: registerOAuthCallback,
-    openExternal: url => { Zotero.launchURL(url); },
-  });
-  aiClient = ai;
-  controller = new AppController(loaded, {
-    host, ai, persist: state => stateStore.save(state), importFile: importVocabulary, exportFile: exportVocabulary,
-    credentialStatus: () => secure.sessionOnly ? 'Session only · OS credential encryption unavailable' : 'Encrypted with the operating-system keystore',
-    librarySnapshot:()=>libraryCache??=(async()=>{const papers=await host!.list('library');const nativeTags:Record<string,import('./platform.ts').NativeTag[]>={};for(const paper of papers)nativeTags[paper.id]=await host!.readTags(paper.itemID);return {papers,nativeTags};})(),
-  });
-  try {
-    await controller.initialize();
-    Zotero.ftl.addResourceIds([LOCALE]);
-    for (const win of mainWindowList()) onMainWindowLoad(win);
-    registerMenus(data);
-    notifierID = Zotero.Notifier.registerObserver({ notify: notifyItems }, ['item', 'item-tag'], 'smart-tags', 50);
-    Zotero.SmartTags = { openManager, controller, version: data.version, stateDirectory: directory };
-  } catch (error) {
-    await shutdown().catch(logError);
-    throw error;
-  }
+export async function startup(data:StartupData) {
+  if(workspace)return;
+  stopping=false;startupData=data;
+  if(Zotero.initializationPromise)await Zotero.initializationPromise;
+  const directory=PathUtils.join(Services.dirsvc.get('ProfD',Ci.nsIFile).path,'smart-tags');
+  await IOUtils.makeDirectory(directory,{ignoreExisting:true,createAncestors:true});
+  try{
+    workspace=createNativeWorkspace({directory,rootURI:data.rootURI,openManager,indexLibrary:data.indexLibrary});host=workspace.host.host;
+    Zotero.ftl.addResourceIds([LOCALE]);for(const win of mainWindowList())onMainWindowLoad(win);registerMenus(data);
+    notifierID=Zotero.Notifier.registerObserver({notify:notifyItems},['item','item-tag'],'smart-tags',50);
+    const current=workspace;
+    Zotero.SmartTags=Object.freeze({openManager,workspace:current,version:data.version,stateDirectory:directory,diagnostics:current.diagnostics});
+    void current.ready.catch(logError);
+  }catch(error){await shutdown().catch(logError);throw error;}
 }
 
 export async function openManager(options:ManagerUIOptions={}): Promise<Window | null> {
-  if (!controller || stopping) throw new Error('Smart Tags is not ready yet.');
+  if (!workspace || stopping) throw new Error('Smart Tags is not ready yet.');
   if (managerWindow && !managerWindow.closed) { managerUI?.navigate?.(options);managerWindow.focus(); return managerWindow; }
   const main = Zotero.getMainWindow();
   if (!main) throw new Error('Open Zotero’s library window before opening Smart Tags.');
@@ -250,7 +187,7 @@ export async function openManager(options:ManagerUIOptions={}): Promise<Window |
   };
   const attach = (candidate?: Window | null) => {
     if (mounted || readinessStopped) return;
-    if (!controller || stopping) { cleanupReadiness(); return; }
+    if (!workspace || stopping) { cleanupReadiness(); return; }
     const target = candidate || finalWindow || initialWindow;
     if (!target) return;
     let foundApp = false;
@@ -316,20 +253,12 @@ export async function openManager(options:ManagerUIOptions={}): Promise<Window |
   return managerWindow;
 }
 
-function managerAPI(main: any): ManagerAPI {
-  const libraryWindow = () => main.closed ? Zotero.getMainWindow() : main;
+function managerAPI(_main:unknown):Workspace {
+  const current=workspace!;
   return {
-    snapshot: async () => ({ ...await controller!.snapshot(), pluginVersion: startupData?.version }),
-    subscribe: listener => controller!.subscribe(listener),
-    async invoke(action, payload) {
-      if (action !== 'check-plugin-updates') return controller!.invoke(action, payload);
-      const target = libraryWindow();
-      if (!target || target.closed) throw new Error('Open Zotero’s library window to use this control.');
-      const command = target.document?.getElementById?.('menu_addons');
-      if (command?.doCommand) command.doCommand();
-      else if (Zotero.openInViewer) Zotero.openInViewer('chrome://mozapps/content/extensions/aboutaddons.html', { onLoad: target.ZoteroStandalone?.updateAddonsPane });
-      else throw new Error('Open Tools → Plugins in Zotero to check for updates.');
-    },
+    execute:(command,options)=>current.execute(command,options),
+    watch:(query,receive,options)=>current.watch(query,event=>receive(event.model?{...event,model:{...event.model,pluginVersion:startupData?.version}}:event),options),
+    close:reason=>current.close(reason),
   };
 }
 
@@ -359,18 +288,10 @@ export async function shutdown() {
   managerUI?.destroy(); managerUI = null;
   if (managerWindow && !managerWindow.closed) managerWindow.close();
   managerWindow = null;
-  libraryCache=null;
   for (const id of menuIDs.splice(0)) { try { Zotero.MenuManager.unregisterMenu(id); } catch (error) { logError(error); } }
   for (const win of [...mainWindows]) onMainWindowUnload(win);
   try { Zotero.ftl.removeResourceIds([LOCALE]); } catch (error) { logError(error); }
-  const app = controller;
-  // Abort OAuth, refreshes, and requests before waiting for queued controller work.
-  await aiClient?.dispose();
-  aiClient = null;
-  try { if (app) await app.shutdown(); if (store) await store.flush(); }
-  finally {
-    credentials?.clearMemory();
-    if (Zotero.SmartTags?.controller === app) delete Zotero.SmartTags;
-    controller = null; host = null; credentials = null; store = null; startupData = null;
-  }
+  const current=workspace;workspace=null;host=null;
+  try{await current?.close('disable');}
+  finally{if(Zotero.SmartTags?.workspace===current)delete Zotero.SmartTags;startupData=null;}
 }

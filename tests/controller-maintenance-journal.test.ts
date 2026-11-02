@@ -44,8 +44,9 @@ test('definition journal helpers compare exact scopes and preserve unrelated def
   assert.deepEqual(applyDefinitionRecords(next,{first:null}).map(tag=>tag.id),['other','new']);
 });
 
-test('completed metadata recovery archives exact facts, refreshes inputs, and completes associated definitions without repeating writes',async()=>{
+test('legacy metadata recovery archives exact facts, refreshes inputs, and completes associated definitions without repeating writes',async()=>{
   const host=new Host(),patch=metadataPatch(host),h=await harness(initialState(),host),created=detail();
+  delete h.state.metadata['storage.processingHistoryPolicy'];
   const paper=h.state.papers[patch.paperId];paper.pdfText='Retained local PDF passage.';paper.fingerprint=paperFingerprint(paper);
   const facts=normalizeFacts({summary:'Original factual synopsis.',concepts:[{name:'electrode transport',evidence:[{source:'pdf',text:paper.pdfText}]}],needsPDF:false},paper,'deepseek','retained-model');h.state.facts[paper.id]=facts;
   h.state.analyses[paper.id]={metadataFingerprint:'old',vocabularyVersion:0,provider:'deepseek',model:'model',raw:{}};

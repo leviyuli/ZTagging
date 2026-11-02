@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0 — 2026-11-02
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0-source.zip)
+
+- Move processing, serialization, hashing and compression into background workers behind the Workspace interface. Pages load bounded rows and optional details; search cancels superseded requests and preserves focus, drafts and scroll position.
+- Store normalized records and shared compressed content in a separate SQLite database. Stream schema 1–13 migration into schema 14, preserving exact legacy bytes, scientific identities, paid replies, pending choices and recovery without AI requests or library writes.
+- Keep completed work and Undo for seven days, and unused AI results for seven days without reuse. Protect current evidence and unfinished work. Reclaim unused payloads and database pages incrementally; remove the registered migration backup only after seven days, two verified restarts and no outstanding recovery.
+- Journal native writes in chunks of at most 20 papers and keep one Undo group per automatic assignment run. Preserve manual edits, recover interrupted chunks and prevent immediate automatic reapplication after Undo.
+- Persist queued actions and their selected paper identities. Pause unknown provider outcomes for explicit recovery, retain paid replies before applying results, and reuse compatible results across restart.
+- Show database, history, cache and backup sizes in Settings. Idle disable skips archive loading and serialization; shutdown drains only necessary checkpoints and the current native-write chunk.
+- Fix pagination and direct navigation for large meaning-review lists, preserve cold archived choices and factual context, and expire obsolete completed review bodies without losing current proof.
+- Serialize disable and re-enable through Zotero's completed lifecycle cleanup, preventing rapid toggles from removing the replacement workers and controls.
+
 ## 1.0.7 — 2026-11-02
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip)

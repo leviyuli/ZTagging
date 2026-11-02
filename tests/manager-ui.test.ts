@@ -6,30 +6,35 @@ import { readFile } from 'node:fs/promises';
 import type { DisplayTag, ManagerSnapshot } from '../src/ui-contract.ts';
 import type { ManagerUIOptions } from '../src/ui.ts';
 import type { WarningRecord } from '../src/warnings.ts';
+import type { ViewEvent, ViewQuery } from '../src/workspace-contract.ts';
 
 const bundle = build({entryPoints:['src/ui.ts'],bundle:true,write:false,format:'iife',globalName:'ManagerUI',platform:'browser',target:'firefox140'}).then(result=>result.outputFiles[0].text);
 const settle = () => new Promise<void>(resolve=>setImmediate(resolve));
 
 /** XML chrome DOM with real control handlers, sufficient for complete manager flows. */
-function managerDOM() {
+function managerDOM(nativeSVG=false) {
   const rectangles=new Map<string,Partial<{left:number;top:number;width:number;height:number}>>(),focusScroll=new Map<string,number>();
   class Target {
     listeners = new Map<string,Set<(event:any)=>void>>();
     addEventListener(name:string,callback:(event:any)=>void) {const list=this.listeners.get(name)||new Set();list.add(callback);this.listeners.set(name,list);}
     removeEventListener(name:string,callback:(event:any)=>void) {this.listeners.get(name)?.delete(callback);}
-    emit(name:string,extra:any={}) {const event={target:this,key:'',preventDefault(){},stopPropagation(){},...extra};for(const callback of [...this.listeners.get(name)||[]])callback(event);}
+    emit(name:string,extra:any={}) {const event={target:this,currentTarget:this,key:'',preventDefault(){},stopPropagation(){},...extra};for(const callback of [...this.listeners.get(name)||[]])callback(event);}
   }
   class Element extends Target {
     id='';className='';children:Element[]=[];parentNode:any=null;attributes=new Map<string,string>();style:any={};
     disabled=false;checked=false;value='';type='';open=false;scrollTop=0;ownText='';nodeType=1;ownerDocument:any;localName:string;
-    constructor(name:string){super();this.localName=name;this.ownerDocument=doc;}
+    constructor(name:string){super();this.localName=name;this.ownerDocument=doc;const style=this.style;Object.defineProperty(style,'cssText',{get(){return Object.entries(style).map(([key,value])=>`${key}:${value}`).join(';');},set(text:string){for(const key of Object.keys(style))delete style[key];for(const entry of text.split(';')){const split=entry.indexOf(':');if(split>=0)style[entry.slice(0,split)]=entry.slice(split+1);}}});}
     get textContent():string{return this.ownText+this.children.map(child=>child.textContent).join('');}
     set textContent(value:string){this.ownText=value;this.replaceChildren();}
     get isConnected():boolean{return this===doc.body||!!this.parentNode?.isConnected;}
     get lastElementChild(){return this.children.at(-1)||null;}
-    get classList(){return {contains:(name:string)=>this.className.split(/\s+/).includes(name),add:(name:string)=>{this.className+=` ${name}`;},remove:(name:string)=>{this.className=this.className.split(/\s+/).filter(value=>value!==name).join(' ');}};}
+    get childNodes(){return this.children;}
+    get firstChild(){return this.children[0]||null;}
+    get classList(){const value=()=>typeof this.className==='string'?this.className:this.getAttribute('class')||'',set=(next:string)=>{if(typeof this.className==='string')this.className=next;else this.setAttribute('class',next);};return {contains:(name:string)=>value().split(/\s+/).includes(name),add:(name:string)=>set(`${value()} ${name}`),remove:(name:string)=>set(value().split(/\s+/).filter(value=>value!==name).join(' '))};}
     append(...nodes:Element[]){for(const node of nodes){node.remove();node.parentNode=this;this.children.push(node);}}
     replaceChildren(...nodes:Element[]){for(const node of this.children)node.parentNode=null;this.children=[];this.append(...nodes);}
+    insertBefore(node:Element,before:Element|null){if(node===before)return node;if(node.contains(this))throw new Error(`Hierarchy cycle inserting ${node.id||node.localName} into ${this.id||this.localName}`);node.remove();node.parentNode=this;const index=before?this.children.indexOf(before):-1;if(index<0)this.children.push(node);else this.children.splice(index,0,node);return node;}
+    removeChild(node:Element){node.remove();return node;}
     remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter((node:Element)=>node!==this);this.parentNode=null;}
     setAttribute(name:string,value:string){this.attributes.set(name,String(value));}
     getAttribute(name:string){return this.attributes.get(name)??null;}
@@ -44,8 +49,8 @@ function managerDOM() {
   }
   const doc:any=new Target();
   doc.createElement=()=>{throw new Error('A chrome XML document requires explicit namespaces');};
-  doc.createElementNS=(namespace:string,name:string)=>{assert.ok(['http://www.w3.org/1999/xhtml','http://www.w3.org/2000/svg'].includes(namespace));return new Element(name);};
-  doc.createTextNode=(text:string)=>{const node=new Element('#text');node.textContent=text;return node;};
+  doc.createElementNS=(namespace:string,name:string)=>{assert.ok(['http://www.w3.org/1999/xhtml','http://www.w3.org/2000/svg'].includes(namespace));const element=new Element(name);if(nativeSVG&&namespace==='http://www.w3.org/2000/svg')Object.defineProperty(element,'className',{get:()=>({baseVal:element.getAttribute('class')||''})});return element;};
+  doc.createTextNode=(text:string)=>{const node=new Element('#text');node.nodeType=3;node.textContent=text;return node;};
   doc.body=new Element('body');doc.documentElement=doc.body;doc.activeElement=doc.body;
   const app=new Element('div');app.id='app';doc.body.append(app);
   doc.getElementById=(id:string)=>[doc.body,...descendants(doc.body)].find(node=>node.id===id)||null;
@@ -74,14 +79,17 @@ interface HarnessOptions extends ManagerUIOptions {
   emitOnInvoke?: number;
   onSnapshot?: (call: number, emit: () => void, current: ManagerSnapshot) => void | ManagerSnapshot | Promise<void | ManagerSnapshot>;
   onInvoke?: (action: string, payload: any, current: ManagerSnapshot) => unknown | Promise<unknown>;
+  manualSearchTimers?: boolean;
+  nativeSVG?: boolean;
+  view?: (query:ViewQuery,model:ManagerSnapshot)=>Pick<ViewEvent,'model'|'total'|'nextCursor'>;
 }
 async function harness(data=snapshot(),options:HarnessOptions={}) {
-  const {failAction,emitOnInvoke=0,onSnapshot,onInvoke,reviewMeanings=false,...uiOptions}=options;
-  const dom=managerDOM();const actions:{action:string;payload:any}[]=[];
+  const {failAction,emitOnInvoke=0,onSnapshot,onInvoke,reviewMeanings=false,manualSearchTimers=false,nativeSVG=false,view,...uiOptions}=options;
+  const dom=managerDOM(nativeSVG);const actions:{action:string;payload:any}[]=[];
   const subscribers=new Set<()=>void>();let snapshotCalls=0;
-  const context=vm.createContext({Zotero:{debug(){}},console});vm.runInContext(await bundle,context);
-  const emit=()=>{for(const listener of subscribers)listener();};
-  const api={snapshot:async()=>{snapshotCalls++;return await onSnapshot?.(snapshotCalls,emit,data)??structuredClone(data);},subscribe:(listener:()=>void)=>{subscribers.add(listener);return()=>subscribers.delete(listener);},invoke:async(action:string,payload:any)=>{
+  const context=vm.createContext({Zotero:{debug(){}},console,AbortController});vm.runInContext(await bundle,context);
+  let emits=0;const emit=()=>{emits++;for(const listener of subscribers)listener();};
+  const legacy={snapshot:async()=>{snapshotCalls++;return await onSnapshot?.(snapshotCalls,emit,data)??structuredClone(data);},subscribe:(listener:()=>void)=>{subscribers.add(listener);return()=>subscribers.delete(listener);},invoke:async(action:string,payload:any)=>{
     actions.push({action,payload:structuredClone(payload)});
     if(failAction===action)throw new Error('The tag could not be saved.');
     const result=await onInvoke?.(action,payload,data);
@@ -102,15 +110,147 @@ async function harness(data=snapshot(),options:HarnessOptions={}) {
     for(let i=0;i<emitOnInvoke;i++)emit();
     return result;
   }};
+  let revision=0;
+  const watches:{query:ViewQuery;signal:AbortSignal;receive:(event:ViewEvent)=>void}[]=[],commandIds:string[]=[];
+  const api={
+    watch(query:ViewQuery,receive:(event:ViewEvent)=>void,{signal}:{signal:AbortSignal}){
+      watches.push({query:structuredClone(query),signal,receive});
+      let active=true,pending=false,reading=false,again=false;
+      const publish=()=>{if(!active||signal.aborted)return;if(pending){if(reading)again=true;return;}pending=true;void Promise.resolve().then(async()=>{reading=true;try{const model=await legacy.snapshot();if(active&&!signal.aborted)receive({phase:'ready',revision,...view?.(query,model)??{model}});}catch(error){if(active&&!signal.aborted)receive({phase:'error',revision,error:error instanceof Error?error.message:String(error)});}finally{reading=false;pending=false;if(again){again=false;publish();}}});};
+      const stop=()=>{active=false;subscribers.delete(publish);};subscribers.add(publish);signal.addEventListener('abort',stop,{once:true});publish();return stop;
+    },
+    async execute(command:any,{commandId}:{commandId:string}){commandIds.push(commandId);const before=emits,result=await legacy.invoke(command.type,command.payload);revision++;if(emits===before)emit();return {commandId,revision,result};},
+    async close(){subscribers.clear();},
+  };
   const ui=context.ManagerUI.mountManager(dom.win,api,uiOptions);await settle();
   if(reviewMeanings){assert.ok(dom.button('Review meanings'));dom.button('Review meanings').emit('click');await settle();}
   assert.equal(dom.app.getAttribute('data-smart-tags-state'),'ready',dom.app.textContent);
-  async function click(label:string){const button=dom.button(label)||dom.all().find(node=>node.localName==='button'&&node.getAttribute('aria-label')===label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');if(button.type==='submit'){const formId=button.getAttribute('form');let form=formId?dom.doc.getElementById(formId):button.parentNode;while(form&&form.localName!=='form')form=form.parentNode;assert.ok(form,'Submit button has an associated form');form.emit('submit');}await settle();}
+  function flushSearch(){for(const [id,delay] of [...dom.timerDelays])if(delay===100){const run=dom.timers.get(id);dom.win.clearTimeout(id);run?.();}}
+  function maybeFlushSearch(){if(!manualSearchTimers)flushSearch();}
+  async function click(label:string){const button=dom.button(label)||dom.all().find(node=>node.localName==='button'&&node.getAttribute('aria-label')===label);assert.ok(button,`Missing button ${label}`);assert.equal(button.disabled,false,`Disabled button ${label}`);button.emit('click');maybeFlushSearch();if(button.type==='submit'){const formId=button.getAttribute('form');let form=formId?dom.doc.getElementById(formId):button.parentNode;while(form&&form.localName!=='form')form=form.parentNode;assert.ok(form,'Submit button has an associated form');form.emit('submit');}await settle();}
   function expand(label:string){const details=dom.all().find(node=>node.localName==='details'&&node.children[0]?.textContent===label);assert.ok(details,`Missing details ${label}`);details.open=true;details.emit('toggle');return details;}
-  function change(id:string,value:string|boolean){const control=dom.doc.getElementById(id);assert.ok(control,`Missing control ${id}`);if(typeof value==='boolean'){control.checked=value;control.emit('change');}else{control.value=value;control.emit('input');}}
-  function choose(id:string,index:number){const control=dom.doc.getElementById(id);assert.ok(control);control.emit('click');const option=dom.doc.getElementById(`${id}-option-${index}`);assert.ok(option);option.emit('click');}
-  return {...dom,data,actions,ui,click,change,choose,expand,emitUpdate:async()=>{emit();await settle();},get snapshotCalls(){return snapshotCalls;}};
+  function change(id:string,value:string|boolean){const control=dom.doc.getElementById(id);assert.ok(control,`Missing control ${id}`);if(typeof value==='boolean'){control.checked=value;control.emit('change');}else{control.value=value;control.emit('input');}maybeFlushSearch();}
+  function choose(id:string,index:number){const control=dom.doc.getElementById(id);assert.ok(control);control.emit('click');const option=dom.doc.getElementById(`${id}-option-${index}`);assert.ok(option);option.emit('click');maybeFlushSearch();}
+  return {...dom,data,actions,ui,click,change,choose,expand,watches,commandIds,flushSearch,subscriberCount:()=>subscribers.size,emitUpdate:async()=>{maybeFlushSearch();emit();await settle();},get snapshotCalls(){return snapshotCalls;}};
 }
+
+test('Workspace queries page rows and preserves search focus while debouncing superseded work',async t=>{
+  const data=snapshot();
+  const h=await harness(data,{page:'library',manualSearchTimers:true,view:(_query,model)=>({model,total:4})});t.after(()=>h.ui.destroy());
+  const shell=h.doc.getElementById('smart-tags-shell'),search=h.doc.getElementById('paper-search');
+  search.focus();search.selectionStart=2;search.selectionEnd=2;
+  const first=h.watches.at(-1)!;
+  assert.equal(first.query.page,'library');assert.equal(first.query.limit,50);assert.equal(first.query.cursor,'0');
+  h.change('paper-search','ca');h.change('paper-search','catalysis');
+  assert.equal(h.doc.getElementById('paper-search'),search);assert.equal(search.value,'catalysis');assert.equal(h.doc.activeElement,search);
+  assert.equal(h.doc.getElementById('smart-tags-shell'),shell);assert.equal(search.selectionStart,2);
+  assert.equal(first.signal.aborted,true);assert.equal(h.watches.length,1);
+  assert.equal([...h.timerDelays.values()].filter(delay=>delay===100).length,1);
+  h.flushSearch();await settle();
+  const latest=h.watches.at(-1)!;
+  assert.equal(h.watches.length,2);assert.equal(latest.query.params?.paperQuery,'catalysis');
+  await h.emitUpdate();assert.equal(h.doc.getElementById('paper-search'),search);assert.equal(h.doc.activeElement,search);
+  const stale=structuredClone(data);stale.papers=[{id:'stale',title:'This cancelled response must never appear'}];
+  first.receive({phase:'ready',revision:999,model:stale,total:1});
+  assert.doesNotMatch(h.app.textContent,/cancelled response/);
+});
+
+test('Workspace result pages use server totals and cursor without filtering or slicing them again',async t=>{
+  const data=snapshot();data.tags=[];data.papers=Array.from({length:123},(_,index)=>({id:`p${index}`,title:`Indexed paper ${index}`,tags:['A topic not included in this page']}));
+  const h=await harness(data,{page:'library',view:(query,model)=>({model:{...model,papers:model.papers.slice(Number(query.cursor),Number(query.cursor)+query.limit!)},total:123})});t.after(()=>h.ui.destroy());
+  assert.equal(h.all().filter(node=>node.classList.contains('paper-card')).length,50);assert.equal(h.doc.getElementById('find-result-count').textContent,'123 papers');
+  await h.click('Next');
+  assert.equal(h.watches.at(-1)!.query.cursor,'50');assert.equal(h.all().filter(node=>node.classList.contains('paper-card')).length,50);
+  assert.ok(h.button('Indexed paper 50'));assert.equal(h.button('Indexed paper 0'),undefined);
+  await h.click('Next');
+  assert.equal(h.watches.at(-1)!.query.cursor,'100');assert.equal(h.all().filter(node=>node.classList.contains('paper-card')).length,23);assert.equal(h.button('Next').disabled,true);
+});
+
+test('Workspace pagination follows the returned cursor when the payload limit trims rows',async t=>{
+  const data=snapshot();data.tags=[];data.papers=Array.from({length:8},(_,index)=>({id:`p${index}`,title:`Bounded paper ${index}`,tags:[]}));
+  const h=await harness(data,{page:'library',view:(query,model)=>{const offset=Number(query.cursor);return {model:{...model,papers:model.papers.slice(offset,offset+3)},total:8,...(offset+3<8?{nextCursor:String(offset+3)}:{})};}});t.after(()=>h.ui.destroy());
+  await h.click('Next');assert.equal(h.watches.at(-1)!.query.cursor,'3');assert.ok(h.button('Bounded paper 3'));
+  await h.click('Next');assert.equal(h.watches.at(-1)!.query.cursor,'6');assert.ok(h.button('Bounded paper 6'));assert.equal(h.button('Next').disabled,true);
+  await h.click('Previous');assert.equal(h.watches.at(-1)!.query.cursor,'3');assert.ok(h.button('Bounded paper 3'));
+});
+
+test('Find shows background paper discovery progress without blocking search or replacing it',async t=>{
+  const data=snapshot();data.libraryIndexProgress={phase:'indexing',checked:25,changed:25,removed:0,total:100};const h=await harness(data,{page:'library'});t.after(()=>h.ui.destroy());
+  const search=h.doc.getElementById('paper-search');search.focus();assert.match(h.doc.getElementById('library-index-progress').textContent,/25 of 100/);assert.equal(search.disabled,false);
+  data.libraryIndexProgress={...data.libraryIndexProgress,phase:'completed',checked:100};await h.emitUpdate();assert.equal(h.doc.getElementById('library-index-progress'),null);assert.equal(h.doc.getElementById('paper-search'),search);assert.equal(h.doc.activeElement,search);
+});
+
+test('a failed queued Activity marker can be stopped while another paper task continues',async t=>{
+  const data=snapshot();data.queue={...data.queue,status:'running',ownerPage:'assignment',total:100,completed:20};data.activityTasks=[{id:'task-failed-at-start',queuedAttempt:true,kind:'maintenance',state:'paused',label:'Work needs attention',ownerPage:'activity',message:'A selected paper was removed.'}];
+  const h=await harness(data,{page:'activity',onInvoke(action,payload,state){if(action==='stop-queued-task')state.activityTasks=state.activityTasks!.map(task=>task.id===payload.id?{...task,state:'completed'}:task);}});t.after(()=>h.ui.destroy());
+  await h.click('Stop this attempt');assert.deepEqual(h.actions.at(-1),{action:'stop-queued-task',payload:{id:'task-failed-at-start'}});assert.equal(h.button('Stop this attempt'),undefined);assert.equal(data.queue.status,'running');assert.equal(h.actions.some(action=>action.action==='cancel'),false);
+});
+
+test('a stopped unknown request can be explicitly retried later without another Stop action',async t=>{
+  const data=snapshot();data.recoveryRequests=[{id:'stopped-scope',status:'stopped',message:'This attempt was stopped. Its original result is unknown.'}];const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/may already have charged/);assert.equal(h.button('Stop this attempt'),undefined);assert.equal(h.actions.length,0);await h.click('Retry request');assert.deepEqual(h.actions.at(-1),{action:'retry-unknown-request',payload:{id:'stopped-scope'}});
+});
+
+test('Workspace subscriptions follow navigation and are cancelled when the manager closes',async()=>{
+  const h=await harness(snapshot(),{page:'library'});
+  const previous=h.watches.at(-1)!;
+  h.ui.navigate({page:'settings'});await settle();
+  assert.equal(previous.signal.aborted,true);assert.equal(h.watches.at(-1)!.query.page,'settings');assert.equal(h.subscriberCount(),1);
+  const before=h.app.textContent,stale=structuredClone(h.data);stale.settings.model='stale-response';
+  previous.receive({phase:'ready',revision:100,model:stale});assert.equal(h.app.textContent,before);
+  const active=h.watches.at(-1)!;h.ui.destroy();assert.equal(active.signal.aborted,true);assert.equal(h.subscriberCount(),0);
+  active.receive({phase:'ready',revision:101,model:stale});assert.equal(h.app.textContent,before);
+});
+
+test('Workspace updates retain editor controls, row identity and live corrected handlers',async t=>{
+  const data=snapshot();const h=await harness(data,{page:'vocabulary'});t.after(()=>h.ui.destroy());
+  await h.click('Edit tag FC');
+  const description=h.doc.getElementById('tag-description'),form=h.doc.getElementById('tag-editor-form'),shell=h.doc.getElementById('smart-tags-shell');
+  description.focus();description.scrollTop=44;h.change('tag-description','My corrected scientific meaning.');
+  data.tags.reverse();await h.emitUpdate();
+  assert.equal(h.doc.getElementById('tag-description'),description);assert.equal(h.doc.getElementById('tag-editor-form'),form);assert.equal(h.doc.getElementById('smart-tags-shell'),shell);
+  assert.equal(h.doc.activeElement,description);assert.equal(description.value,'My corrected scientific meaning.');assert.equal(description.scrollTop,44);
+  await h.click('Save');assert.equal(h.actions.at(-1)!.action,'save-tag');assert.equal(h.actions.at(-1)!.payload.tag.description,'My corrected scientific meaning.');
+  await h.click('Edit tag EIS');h.change('tag-description','A different corrected meaning.');await h.click('Save');
+  assert.equal(h.actions.at(-1)!.payload.tag.id,'eis');assert.equal(h.actions.at(-1)!.payload.tag.description,'A different corrected meaning.');
+  assert.equal(new Set(h.commandIds).size,h.commandIds.length);assert.equal(h.commandIds.length,2);
+});
+
+test('Workspace header counts and assignment defaults do not depend on loaded definition rows',async t=>{
+  const data=snapshot();data.tags=[];data.tagLibraryEntries=[];data.totals={papers:10000,tags:2000,definedTags:1900,assignableTags:1700,openChoices:9,history:40};
+  const h=await harness(data,{page:'assignment',view:(_query,model)=>({model,total:0})});t.after(()=>h.ui.destroy());
+  assert.equal(h.doc.getElementById('start-assignment').disabled,false);assert.match(h.doc.getElementById('assignment-tag-shelf').textContent,/All tags · 2000 total · 1700 ready/);
+  assert.equal(h.doc.getElementById('assignment-auto-assign').disabled,false);
+});
+
+test('Workspace patching supports Zotero SVG elements with getter-only animated class names',async t=>{
+  const h=await harness(snapshot(),{page:'vocabulary',nativeSVG:true});t.after(()=>h.ui.destroy());const svg=h.doc.querySelector('svg'),shell=h.doc.getElementById('smart-tags-shell');
+  assert.equal(typeof svg.className,'object');await h.emitUpdate();assert.equal(h.app.getAttribute('data-smart-tags-state'),'ready');assert.equal(h.doc.getElementById('smart-tags-shell'),shell);assert.equal(h.doc.querySelector('svg'),svg);assert.ok(h.button('Edit tag FC'));
+});
+
+test('interrupted AI requests have explicit retry and stop actions without paper review',async t=>{
+  const data=snapshot();data.recoveryRequests=[{id:'paid-unknown',provider:'api',model:'test-model',status:'unknown',message:'The request may have reached the provider.'}];
+  const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/may already have charged/);assert.equal(h.button('Resume'),undefined);
+  await h.click('Retry request');await h.click('Stop this attempt');assert.deepEqual(h.actions,[{action:'retry-unknown-request',payload:{id:'paid-unknown'}},{action:'stop-unknown-request',payload:{id:'paid-unknown'}}]);
+});
+
+test('loading heartbeats keep long migrations alive and display bounded progress',async t=>{
+  const dom=managerDOM(),context=vm.createContext({Zotero:{debug(){}},console,AbortController});vm.runInContext(await bundle,context);let receive!:(event:ViewEvent)=>void;
+  const api={watch(_query:ViewQuery,next:(event:ViewEvent)=>void){receive=next;return()=>{};},async execute(){return {commandId:'unused',revision:0};},async close(){}};
+  const ui=context.ManagerUI.mountManager(dom.win,api,{page:'settings'});t.after(()=>ui.destroy());
+  let previous=[...dom.timerDelays].find(([,delay])=>delay===15000)![0];
+  for(let index=0;index<40;index++){
+    receive({phase:'loading',revision:0,message:'Checking saved data…',progress:{label:'Source checks',completed:index,total:40}});
+    const next=[...dom.timerDelays].find(([,delay])=>delay===15000)![0];assert.notEqual(next,previous);assert.equal(dom.timers.has(previous),false);previous=next;
+    assert.equal(dom.app.getAttribute('data-smart-tags-state'),'loading');assert.match(dom.app.textContent,/Checking saved data/);assert.equal(dom.all().find(node=>node.localName==='progress')!.value,index);
+  }
+  receive({phase:'ready',revision:1,model:snapshot()});await settle();assert.equal(dom.app.getAttribute('data-smart-tags-state'),'ready');assert.equal([...dom.timerDelays.values()].includes(15000),false);
+});
+
+test('Settings uses stored Data counters and queues bounded expired-data cleanup',async t=>{
+  const data=snapshot();data.storage={activeBytes:1024*1024,historyBytes:2048,cacheBytes:0,backupBytes:4096,physicalBytes:200000,retentionDays:7};
+  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Data');assert.match(h.app.textContent,/Active data1\.0 MiB/);assert.match(h.app.textContent,/expire after 7 days/);
+  await h.click('Clean up expired data');assert.deepEqual(h.actions,[{action:'clean-expired-data',payload:undefined}]);
+});
 
 test('Tags shows one prepared list instead of the 107 previous definitions, without technical review controls',async t=>{
   const data=snapshot();data.tags=Array.from({length:107},(_,i)=>tag(`old-${i}`,`Old draft ${i}`,{status:'draft'}));data.tagPreparation=preparation([tag('fc','FC',{fullName:'fuel cell',aliases:['fuel cells']})]);
@@ -466,15 +606,15 @@ test('Continue with ChatGPT keeps its existing sign-in behavior and saved accoun
 });
 
 test('a pending ChatGPT sign-in keeps Cancel available while other actions are busy',async t=>{
-  const data=snapshot();data.settings.provider='chatgpt';let finishSnapshot:(value?:void)=>void=()=>{};
-  const h=await harness(data,{page:'connection',onSnapshot:call=>call===3?new Promise<void>(resolve=>{finishSnapshot=resolve;}):undefined});t.after(()=>h.ui.destroy());
+  const data=snapshot();data.settings.provider='chatgpt';let finishSignIn:()=>void=()=>{};
+  const h=await harness(data,{page:'connection',onInvoke(action){if(action==='sign-in')return new Promise<void>(resolve=>{finishSignIn=resolve;});if(action==='cancel-sign-in')finishSignIn();}});t.after(()=>{finishSignIn();h.ui.destroy();});
   await h.click('Use another account or workspace');assert.equal(h.button('Continue with ChatGPT').disabled,true);assert.equal(h.button('Cancel sign-in').disabled,false);
   await h.click('Cancel sign-in');assert.deepEqual(h.actions,[{action:'save-settings',payload:{settings:structuredClone(data.settings)}},{action:'sign-in',payload:{newAccount:true}},{action:'cancel-sign-in',payload:undefined}]);
-  finishSnapshot();await settle();assert.equal(h.button('Cancel sign-in'),undefined);
+  finishSignIn();await settle();assert.equal(h.button('Cancel sign-in'),undefined);
 });
 
-test('action notifications share one final refresh and later external changes remain visible',async t=>{
-  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
+test('action notifications coalesce into one view update and later external changes remain visible',async t=>{
+  const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup',emitOnInvoke:5});t.after(()=>h.ui.destroy());const reads=h.snapshotCalls;await h.click('Remove tag FC');assert.equal(h.snapshotCalls,reads+1);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,reads+2);assert.match(h.app.textContent,/Evidence gap external/);
 });
 
 test('Settings keeps plugin updates without native navigation controls or hiding Find papers',async t=>{
@@ -675,7 +815,7 @@ test('attention action menus support keyboard focus, scroll within a short popup
   const spaced=open(' ');spaced.items[0].emit('keydown',{key:'Tab'});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
   open('ArrowDown');const outside=h.doc.getElementById('attention-search');outside.focus();h.doc.emit('focusin',{target:outside});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assert.equal(h.doc.activeElement,outside);assertMenuListenersRemoved();assert.equal(h.actions.length,0);
   const activated=open('ArrowDown');assert.equal(activated.items[0].textContent,'Recheck PDF');activated.items[0].emit('keydown',{key:'Enter'});await settle();assert.deepEqual(h.actions,[{action:'recheck-paper-inputs',payload:{id:'a'}}]);assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
-  const refreshed=open('ArrowDown');await h.emitUpdate();assert.equal(refreshed.trigger.isConnected,false);assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
+  const refreshed=open('ArrowDown');await h.emitUpdate();assert.equal(refreshed.trigger.isConnected,true);assert.ok(h.doc.getElementById('attention-more-a-menu'));refreshed.items[0].emit('keydown',{key:'Escape'});assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
   open('ArrowDown');h.ui.destroy();assert.equal(h.doc.getElementById('attention-more-a-menu'),null);assertMenuListenersRemoved();
 });
 
@@ -808,8 +948,34 @@ test('maintenance jobs use their task name without a fictitious paper count',asy
   const data=snapshot();data.queue={status:'paused',taskLabel:'Checking tag names',total:0,completed:0,failed:0,message:'Waiting for the selected connection.'};const h=await harness(data,{page:'activity'});t.after(()=>h.ui.destroy());assert.match(h.app.textContent,/Checking tag names/);assert.doesNotMatch(h.app.textContent,/Paper analysis|0 of 0|0 papers read/);assert.equal(h.actions.length,0);
 });
 
+test('old processing history cleanup inspects once and removes data only after confirmation',async t=>{
+  const data=snapshot(),before=structuredClone(data);
+  const h=await harness(data,{page:'settings',onInvoke(action){if(action==='inspect-old-processing-history')return {records:3,bytes:25_237_129};}});t.after(()=>h.ui.destroy());
+  assert.equal(h.button('Clean up old processing history…'),undefined);assert.equal(h.actions.length,0);
+  h.expand('Data');assert.equal(h.actions.length,0);await h.emitUpdate();assert.equal(h.actions.length,0);
+  await h.click('Clean up old processing history…');assert.deepEqual(h.actions,[{action:'inspect-old-processing-history',payload:undefined}]);
+  assert.match(h.app.textContent,/3 records · about 25\.2 MB/);assert.match(h.app.textContent,/Permanently remove obsolete analysis, vocabulary and tag-comparison audit copies, superseded paper facts, and duplicate meaning checkpoints/);assert.match(h.app.textContent,/Current paper analysis, saved tags, unfinished reviews, reusable vocabulary progress, and Undo records stay in place/);assert.match(h.app.textContent,/Future saves will also stop accumulating these obsolete copies/);
+  assert.equal(h.doc.querySelector('.modal').getAttribute('role'),'dialog');assert.equal(h.doc.querySelector('.modal').getAttribute('aria-modal'),'true');
+  await h.click('Cancel');assert.equal(h.button('Clean up history'),undefined);assert.equal(h.actions.length,1);
+  await h.click('Clean up old processing history…');await h.click('Clean up history');
+  assert.deepEqual(h.actions.map(entry=>entry.action),['inspect-old-processing-history','inspect-old-processing-history','clean-old-processing-history']);assert.match(h.app.textContent,/Old processing history removed\. Future history stays compact/);assert.equal(h.button('Clean up history'),undefined);assert.deepEqual(data,before);
+});
+
+test('empty processing history enables compact future saves without a deletion confirmation',async t=>{
+  const h=await harness(snapshot(),{page:'settings',onInvoke(action){if(action==='inspect-old-processing-history')return {records:0,bytes:0};}});t.after(()=>h.ui.destroy());h.expand('Data');await h.click('Clean up old processing history…');
+  assert.deepEqual(h.actions,[{action:'inspect-old-processing-history',payload:undefined},{action:'clean-old-processing-history',payload:{expectEmpty:true}}]);assert.match(h.app.textContent,/History is already clean\. Future history stays compact/);assert.equal(h.button('Clean up history'),undefined);assert.equal(h.doc.querySelector('.modal'),null);
+});
+
+test('history cleanup can be dismissed with Escape and failed cleanup remains retryable',async t=>{
+  let fail=true;
+  const h=await harness(snapshot(),{page:'settings',onInvoke(action){if(action==='inspect-old-processing-history')return {records:1,bytes:1200};if(action==='clean-old-processing-history'&&fail)throw new Error('The saved data could not be written.');}});t.after(()=>h.ui.destroy());h.expand('Data');await h.click('Clean up old processing history…');assert.match(h.app.textContent,/1 record · about 1 KB/);
+  h.doc.querySelector('.modal').emit('keydown',{key:'Escape'});assert.equal(h.button('Clean up history'),undefined);assert.equal(h.actions.length,1);
+  await h.click('Clean up old processing history…');await h.click('Clean up history');assert.ok(h.button('Clean up history'));assert.match(h.app.textContent,/The saved data could not be written/);
+  fail=false;await h.click('Clean up history');assert.equal(h.button('Clean up history'),undefined);assert.match(h.app.textContent,/Old processing history removed\. Future history stays compact/);assert.equal(h.actions.filter(entry=>entry.action==='clean-old-processing-history').length,2);
+});
+
 test('resetting reusable paper analysis requires one explicit confirmation in Settings data controls',async t=>{
-  const data=snapshot(),native=structuredClone(data.papers),tags=structuredClone(data.tags),settings=structuredClone(data.settings);const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());assert.equal(h.button('Reset paper analysis…'),undefined);h.expand('Data');await h.click('Reset paper analysis…');assert.equal(h.actions.length,0);assert.match(h.app.textContent,/paper-tag suggestions/);assert.match(h.app.textContent,/PDFs, paper tags, saved tag definitions, credentials, spending records, and audit history stay in place/);await h.click('Cancel');assert.equal(h.actions.length,0);await h.click('Reset paper analysis…');await h.click('Reset paper analysis');assert.deepEqual(h.actions,[{action:'reset-paper-analysis',payload:undefined}]);assert.match(h.app.textContent,/Paper analysis reset\. The next build will start fresh/);assert.deepEqual(data.papers,native);assert.deepEqual(data.tags,tags);assert.deepEqual(data.settings,settings);
+  const data=snapshot(),native=structuredClone(data.papers),tags=structuredClone(data.tags),settings=structuredClone(data.settings);const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());assert.equal(h.button('Reset paper analysis…'),undefined);h.expand('Data');await h.click('Reset paper analysis…');assert.equal(h.actions.length,0);assert.match(h.app.textContent,/paper-tag suggestions/);assert.match(h.app.textContent,/PDFs, paper tags, saved tag definitions, credentials, spending records, and Undo history stay in place/);await h.click('Cancel');assert.equal(h.actions.length,0);await h.click('Reset paper analysis…');await h.click('Reset paper analysis');assert.deepEqual(h.actions,[{action:'reset-paper-analysis',payload:undefined}]);assert.match(h.app.textContent,/Paper analysis reset\. The next build will start fresh/);assert.deepEqual(data.papers,native);assert.deepEqual(data.tags,tags);assert.deepEqual(data.settings,settings);
 });
 
 test('a single Details click persists before the native toggle event or a background refresh',async t=>{
@@ -894,6 +1060,20 @@ test('native editors use a viewport drawer below tall reviews and retain drafts 
     assert.notEqual(innerScroll,155,'Reopening must reveal an offscreen Meaning field inside the form');assertDraft(innerScroll);assert.equal(h.doc.activeElement.id,'tag-description');assert.ok(field.top>=viewport.top&&field.bottom<=viewport.bottom);
     h.change('tag-description','A newly typed definition after revealing the field.');assert.equal(h.doc.getElementById('tag-description').value,'A newly typed definition after revealing the field.');assert.equal(h.win.scrollY,120);assert.equal(h.actions.length,0);
   }
+});
+
+test('bounded native meaning choices remain reachable beyond fifty in both processing policies',async t=>{
+  for(const automatic of [false,true]){
+    const data=snapshot(),rows:NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows']=Array.from({length:61},(_,index)=>({id:`paged-${index}`,sourceName:`Paged topic ${index}`,name:`Paged topic ${index}`,description:`Scientific meaning ${index}.`,paperIds:[],status:'question',questionKind:'meaning',choices:[{id:`choice-${index}`,label:`Use topic ${index}`,description:`Scientific meaning ${index}.`}]}));
+    data.nativeDefinitionPreparation={id:'paged-work',...(automatic?{processingPolicy:'auto-clear' as const}:{}),status:'ready',completed:61,total:61,canApply:false,rows};
+    const h=await harness(data,{page:'vocabulary',reviewMeanings:!automatic,view:(query,model)=>{if(query.params?.nativeMeaningReviewHidden!==false)return {model,total:model.tags.length};const offset=Number(query.cursor),native=model.nativeDefinitionPreparation!;return {model:{...model,nativeDefinitionPreparation:{...native,rows:native.rows.slice(offset,offset+20)}},total:61,...(offset+20<61?{nextCursor:String(offset+20)}:{})};}});t.after(()=>h.ui.destroy());if(automatic)await h.click('Choose meanings');
+    assert.ok(h.button('Use topic 0'));await h.click('Next meanings');assert.equal(h.watches.at(-1)!.query.cursor,'20');assert.ok(h.button('Use topic 20'));await h.click('Next meanings');assert.equal(h.watches.at(-1)!.query.cursor,'40');assert.ok(h.button('Use topic 40'));await h.click('Next meanings');assert.equal(h.watches.at(-1)!.query.cursor,'60');assert.ok(h.button('Use topic 60'));assert.equal(h.button('Next meanings').disabled,true);await h.click('Previous meanings');assert.equal(h.watches.at(-1)!.query.cursor,'40');assert.ok(h.button('Use topic 40'));
+  }
+});
+
+test('Open meaning requests and renders its exact native entry outside the first page',async t=>{
+  const data=snapshot(),target={id:'last-entry',sourceName:'Last scientific topic',name:'Last scientific topic',description:'The exact saved proposal.',paperIds:[],status:'question' as const,questionKind:'meaning' as const,choices:[{id:'last-choice',label:'Use exact last meaning',description:'The exact saved proposal.'}]};data.nativeDefinitionPreparation={id:'exact-work',processingPolicy:'auto-clear',status:'ready',completed:61,total:61,canApply:false,rows:[]};data.reviewItems=[{id:'last-review',kind:'definition',state:'open',taskId:'old-maintenance',workId:'exact-work',questionId:'last-entry',ownerPage:'vocabulary',label:'Last scientific topic'}];
+  const h=await harness(data,{page:'activity',view:(query,model)=>query.page==='vocabulary'?{model:{...model,reviewItems:undefined,detailNativeMeaningRows:query.params?.nativeReviewTarget?[target]:[]},total:61,nextCursor:'20'}:{model},onInvoke:action=>action==='open-review-item'?{page:'vocabulary'}:undefined});t.after(()=>h.ui.destroy());assert.ok(h.button('Open meaning'));await h.click('Open meaning');assert.deepEqual(h.watches.at(-1)!.query.params?.nativeReviewTarget,{workId:'exact-work',entryId:'last-entry'});assert.ok(h.button('Use exact last meaning'));
 });
 
 test('reopening a saved tag reveals an offscreen Name without moving the outer page or losing its draft',async t=>{

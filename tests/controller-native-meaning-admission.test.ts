@@ -5,7 +5,7 @@ import type {AppState,ControllerEnvironment} from '../src/controller.ts';
 import {fingerprint,paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import type {TagPatch} from '../src/platform.ts';
-import {acceptNativeTagDefinitionResult,createNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,resolveNativeTagDefinition,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
+import {acceptNativeTagDefinitionResult,createNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,resolveNativeTagDefinition,validNativeTagDefinitionWork,retainNativeTagDefinitionSnapshot} from '../src/native-tag-definition.ts';
 import {matchConceptFilter} from '../src/concept-filter.ts';
 import {MY_TAGS_SHELF_ID,migrateTagShelves} from '../src/tag-shelves.ts';
 
@@ -14,7 +14,7 @@ const SOURCE='Fuel cells',ABSTRACT='Fuel cells convert chemical energy into elec
 const personalDefinition:TagDefinition={id:'personal-priority',name:'Important',description:'A personal priority label.',facet:'phenomenon',aliases:[],inclusions:[],exclusions:[],examples:[],broaderIds:[],relatedIds:[],custom:false,status:'approved',matchingMode:'auto'};
 type AIInput={paper:PaperRecord;approvedVocabulary:{id:string}[]};
 
-function fixture(saved?:AppState,policy:1|null=1){
+function fixture(saved?:AppState,policy:1|null=1,capturedSummary?:string){
   const state=saved??initialState();
   if(!saved){
     state.tags=[clone(personalDefinition)];state.nativeTagTreatments={important:'personal'};state.taxonomyReady=true;state.tagShelves=migrateTagShelves(state.tags);
@@ -26,6 +26,7 @@ function fixture(saved?:AppState,policy:1|null=1){
       if(index===2||index===3)state.nativeTags[paper.id].push({tag:'fuel cell',type:0},{tag:'electrochemical fuel cell',type:0});
     }
     const input={papers:clone(Object.values(state.papers)),nativeTags:clone(state.nativeTags),definitions:clone(state.tags),facts:{},decisions:{},vocabularyVersion:state.vocabularyVersion,applied:false};
+    if(capturedSummary)input.papers[0].summary=capturedSummary;
     let work=createNativeTagDefinitionWork(input,[SOURCE],{maxOutputTokens:25000,...(policy?{selectionPolicyVersion:policy}:{})});
     const request=nextNativeTagDefinitionRequests(work)[0],incoming=JSON.parse(request.prompt.split('INPUT_DATA_JSON:\n')[1]),entryId=work.entries[0].id;
     assert.equal(incoming.papers.length,3);assert.equal(work.entries[0].paperIds.length,16);
@@ -53,6 +54,16 @@ test('using a supported AI meaning saves its concept without requiring all sixte
   assert.deepEqual(entry.judgments,before.entries[0].judgments);assert.deepEqual(review.work.snapshot,before.snapshot);assert.deepEqual(review.work.tasks.map(task=>task.attempts),before.tasks.map(task=>task.attempts));assert.equal(nextNativeTagDefinitionRequests(review.work).length,0);assert.equal(h.state.maintenanceTasks![0].run.spentUSD,0.37);
   assert.equal(Object.values(entry.judgments).filter(proof=>proof.relation==='same-meaning').length,2);assert.equal(Object.values(entry.judgments).filter(proof=>proof.relation==='different').length,1);assert.equal(entry.paperIds.length-Object.keys(entry.judgments).length,13);
   assert.equal(h.calls.length,0);assert.equal(h.writes.length,0);assert.deepEqual(h.native,native);assert.ok(h.state.reviewItems!.every(item=>item.workId!==review.work.id||item.state==='resolved'));assert.equal(validState(h.state),true);
+});
+
+test('admission and later archival share only retained native source bodies and preserve journal independence',async()=>{
+  const h=fixture(undefined,1,'Retained native scope context. '.repeat(1_200_000)),original=h.state.nativeDefinitionPreparation!,scope=original.work.snapshot,before=clone(h.state.tags);let serialized=0,persisted=0;
+  assert.ok(scope.papers[0].summary!.length>32*1024*1024);Object.defineProperty(scope,'toJSON',{enumerable:false,value(){serialized++;throw new Error('An admission must not serialize the retained native source body.');}});retainNativeTagDefinitionSnapshot(original.work);
+  h.env.persist=async next=>{persisted++;const current=next.nativeDefinitionPreparation;if(current?.work.id===original.work.id)assert.equal(current.work.snapshot,scope);for(const archived of next.nativeDefinitionHistory??[])if(archived.work.id===original.work.id)assert.equal(archived.work.snapshot,scope);};
+  const marker=await useMeaning(h),saved=h.state.tags.find(tag=>tag.id===marker.tagId)!;assert.equal(h.state.nativeDefinitionPreparation!.work.snapshot,scope);assert.equal(serialized,0);assert.ok(persisted>0);assert.notEqual(h.state.tags,before);assert.equal(h.calls.length,0);assert.equal(h.writes.length,0);
+  const journal=h.state.history.find(change=>change.id===marker.changeId)!;assert.equal(journal.afterDefinitions![saved.id]!.description,saved.description);assert.notEqual(journal.afterDefinitions![saved.id],saved);const savedDescription=saved.description;journal.afterDefinitions![saved.id]!.description='A local journal-copy mutation.';assert.equal(saved.description,savedDescription);journal.afterDefinitions![saved.id]!.description=savedDescription;
+  const previous=h.state.nativeDefinitionPreparation!;await h.app.invoke('prepare-tag-meanings',{names:['Important'],shelfId:MY_TAGS_SHELF_ID,processingPolicy:'auto-clear'});await h.app.waitForIdle();const archived=h.state.nativeDefinitionHistory!.find(review=>review.work.id===previous.work.id)!;
+  assert.equal(archived.work.snapshot,scope);assert.notEqual(archived.work.entries,previous.work.entries);assert.notEqual(archived.appliedEntryIds,previous.appliedEntryIds);assert.equal(serialized,0);assert.equal(h.calls.length,0);assert.equal(h.writes.length,0);assert.equal(validState(h.state),true);
 });
 
 test('a new clear scientific proposal is selected and saved after its initial sample without thirteen further AI checks',async()=>{

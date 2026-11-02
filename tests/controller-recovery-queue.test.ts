@@ -105,8 +105,9 @@ test('validated facts remain usable when more PDF context was requested, and loc
   let view=await h.app.snapshot();assert.equal(view.paperAttention!.papers[0].status,'usable');assert.equal(view.queue.needsInformation,0);h.host.pdfs.set(1,'Additional locally readable PDF evidence.');await h.app.invoke('recheck-paper-inputs',{id:value.id});view=await h.app.snapshot();assert.equal(view.paperAttention!.papers[0].status,'usable');assert.equal(h.state.paperInputs![value.id].pdf.status,'readable');assert.equal(h.host.inputChecks,1);assert.equal(h.ai.calls.length,0);
 });
 
-test('explicit paper retry replaces only the selected completed extraction and preserves its original facts in history',async()=>{
+test('legacy explicit paper retry replaces only the selected completed extraction and preserves its original facts in history',async()=>{
   const first=paper(1),second=paper(2),h=fixture([first,second]);for(const value of [first,second]){h.state.papers[value.id]=clone(value);h.state.facts[value.id]=normalizeFacts({summary:'Cached extraction.',concepts:[{name:'fuel cell',facet:'system',evidence:[{source:'abstract',text:passage}]}],needsPDF:false},value,'chatgpt','test-model');}
+  delete h.state.metadata['storage.processingHistoryPolicy'];
   const before=clone(h.state.facts[first.id]),untouched=clone(h.state.facts[second.id]);h.ai.handler=call=>{assert.ok(call.prompt.startsWith('Extract factual scientific concepts'));return {summary:'Explicitly retried extraction.',concepts:[{name:'fuel cell',facet:'system',evidence:[{source:'abstract',text:passage}]}],needsPDF:false};};
   await h.app.invoke('retry-papers',{ids:[first.id]});await h.app.waitForIdle();assert.equal(h.ai.calls.length,1);assert.equal(h.state.facts[first.id].summary,'Explicitly retried extraction.');assert.deepEqual(h.state.facts[second.id],untouched);assert.deepEqual(h.state.factHistory!.find(record=>record.facts.paperId===first.id)!.facts,before);assert.equal(h.host.tagWrites,0);assert.equal(h.host.metadataWrites,0);
 });

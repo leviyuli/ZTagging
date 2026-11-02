@@ -95,6 +95,7 @@ export interface DisplayTagPreparation {
   verificationScope?: 'representative' | 'exhaustive';
   status: 'checking' | 'questions' | 'ready' | 'failed';
   tags: DisplayTag[];
+  detailTags?: DisplayTag[];
   questions: DisplayTagQuestion[];
   canApply: boolean;
   needsRefresh?: boolean;
@@ -148,7 +149,17 @@ export interface DisplayReviewItem {
   workId?: string;
 }
 export interface ManagerSnapshot {
+  /** Query totals are independent of the bounded rows returned for this page. */
+  totals?: { papers: number; tags: number; openChoices: number; history: number; definedTags?: number; assignableTags?: number };
+  conceptCounts?: Record<string,number>;
+  /** Explicitly requested editor, relationship and evidence context. */
+  detailTags?: DisplayTag[];
+  detailPapers?: DisplayPaper[];
+  detailNativeMeaningRows?: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'];
+  storage?: { activeBytes: number; historyBytes: number; cacheBytes: number; backupBytes: number; physicalBytes: number; retentionDays: number; decodedCacheBytes?: number; databaseBytes?:number };
   reviewItems?: DisplayReviewItem[];
+  recoveryRequests?:{id:string;provider?:string;model?:string;status:'unknown'|'stopped';startedAt?:number;message:string}[];
+  libraryIndexProgress?:{phase:'indexing'|'reconciling'|'completed';checked:number;changed:number;removed:number;total:number;error?:string};
   nativeTagTreatments?: Record<string,'personal'|'scientific'>;
   canPrepareNativeMeanings?: boolean;
   pluginVersion?: string;
@@ -164,31 +175,33 @@ export interface ManagerSnapshot {
   };
   assignmentReview?: DisplayAssignmentReview;
   assignmentReviews?: DisplayAssignmentReview[];
-  tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
+  tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; readyCount?: number; assignableCount?: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
   tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[];
   nativeDefinitionPreparation?: {
     id: string; lastChangeId?: string; processingPolicy?: 'auto-clear'; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; clearChoiceCount?: number; canUseClearMeanings?: boolean; error?: string; spentUSD?: number; budgetUSD?: number;
     rows: { id: string; reviewId?: string; tagId?: string; sourceName: string; name?: string; fullName?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; inclusions?: string[]; exclusions?: string[]; examples?: string[]; broaderIds?: string[]; relatedIds?: string[]; matchingMode?: 'manual' | 'suggest' | 'auto'; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed' | 'left-undefined'; question?: string; questionKind?: 'meaning' | 'information' | 'personal' | 'protection'; resolution?: 'clear'|'ambiguous'|'personal'|'needs-information'; selectionOrigin?: 'human'|'automatic'; personalTreatment?: 'personal'|'scientific'; canSetTreatment?: boolean; canConfirmClear?: boolean; canUseProposedMeaning?: boolean; savedMeaningConflicts?: { id: string; name: string; description: string }[]; canSuggestMeaning?: boolean; choices?: { id: string; label: string; description: string }[]; needsContinuation?: boolean; targetTagId?: string; chosenMeaning?: {name:string;description:string}; sourceIssues?: {paperId:string;status:'uncertain'|'different'|'unchecked';reason:string}[]; canRecheckSources?: boolean; bindingVerified?: boolean; applied?: boolean }[];
   };
-  activityTasks?: { id: string; kind: 'rebuild' | 'assignment' | 'meanings' | 'maintenance'; state: 'queued' | 'running' | 'paused' | 'needs-choice' | 'ready-to-save' | 'completed'; label: string; ownerPage: 'cleanup' | 'assignment' | 'vocabulary' | 'activity'; workId?: string; message?: string; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; completed?: number; total?: number; spentUSD?: number; createdAt?: string }[];
+  activityTasks?: { id: string; kind: 'rebuild' | 'assignment' | 'meanings' | 'maintenance'; state: 'queued' | 'running' | 'paused' | 'needs-choice' | 'ready-to-save' | 'completed'; label: string; ownerPage: 'cleanup' | 'assignment' | 'vocabulary' | 'activity'; workId?: string; queuedAttempt?:boolean; message?: string; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; completed?: number; total?: number; spentUSD?: number; createdAt?: string }[];
   diyComparison?: {
     id: string;
+    total?: number;
     status: 'ready' | 'queued' | 'running' | 'paused';
     message?: string;
     pairs: { id: string; diyId: string; diyName: string; targetId: string; targetName: string; relation: 'equivalent' | 'broader' | 'narrower' | 'related' | 'distinct' | 'uncertain'; reason: string; conflict?: boolean }[];
-    preview?: { id: string; changes: { paperId: string; title: string; before: string[]; after: string[] }[]; mergeCount: number; overrideCount: number };
+    preview?: { id: string; total?: number; pageSize?: number; changes: { paperId: string; title: string; before: string[]; after: string[] }[]; mergeCount: number; overrideCount: number };
   };
   existingTags?: {
     id: string;
+    total?: number;
     applied: boolean;
     status: 'ready' | 'queued' | 'running' | 'paused';
     message?: string;
     rows: { id: string; name: string; kept?: boolean; protected?: boolean; locked?: boolean; status: 'match' | 'choice' | 'unmatched'; meaning?: string; meaningInferred?: boolean; facet?: DisplayTag['facet']; targetNames: string[]; paperIds: string[]; manualCount: number; affectedCount: number; reason: string; diyQuestion?: string; assignments?: { paperId: string; status: 'match' | 'choice' | 'unmatched'; targetNames: string[]; targetIds: string[]; reason: string; conflict?: boolean; meaning?: string }[] }[];
-    preview?: { id: string; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
-    keepPreview?: { id: string; removedNames: string[]; paperCount: number; overrideCount: number; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
+    preview?: { id: string; total?: number; pageSize?: number; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
+    keepPreview?: { id: string; total?: number; pageSize?: number; removedNames: string[]; paperCount: number; overrideCount: number; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
   };
-  paperAttention?: { papers: { id: string; title: string; status: 'usable' | 'needsInformation' | 'failed' | 'skipped' | 'excluded'; message: string; phase: string; queued?: boolean; canDismiss?: boolean; canLookupMetadata: boolean; canRecheck: boolean; canRetry: boolean; canSkip: boolean }[]; queued: number };
-  paperExclusionPreview?: { id: string; exclude: boolean; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
+  paperAttention?: { total?: number; papers: { id: string; title: string; status: 'usable' | 'needsInformation' | 'failed' | 'skipped' | 'excluded'; message: string; phase: string; queued?: boolean; canDismiss?: boolean; canLookupMetadata: boolean; canRecheck: boolean; canRetry: boolean; canSkip: boolean }[]; queued: number };
+  paperExclusionPreview?: { id: string; total?: number; pageSize?: number; exclude: boolean; changes: { paperId: string; title: string; before: string[]; after: string[] }[] };
   metadataPreview?: { paperId: string; itemID: number; status: string; message: string; identifier?: string; changes: { field: string; before: string; after: string }[]; id: string };
   vocabularyVersion: number;
   pilotReviewed: boolean;
@@ -252,6 +265,7 @@ export interface ManagerSnapshot {
   settings: ManagerSettings;
   models: string[];
   connection: {
+    signingIn?: boolean;
     apiKeyStored: boolean;
     deepseekKeyStored?: boolean;
     chatgptSignedIn: boolean;

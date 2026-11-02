@@ -7,6 +7,17 @@ import { createHash } from 'node:crypto';
 
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const out = path.join(root, 'build', 'addon');
+const check = process.argv.includes('--check');
+const preview = process.argv.includes('--preview');
+const bundles = await Promise.all([
+  ['src/main.ts', 'smart-tags.js', 'SmartTags'],
+  ['src/workspace/worker-entry.ts', 'workspace-worker.js'],
+  ['src/workspace/query-entry.ts', 'workspace-query-worker.js'],
+].map(async ([entry, name, globalName]) => build({entryPoints:[entry],bundle:true,write:false,outfile:path.join(out,'content',name),format:'iife',...(globalName?{globalName}:{}),target:'firefox140',platform:'browser',sourcemap:'external',legalComments:'none'})));
+if(check){
+  console.log(`Bundled ${bundles.length} entry points in memory (${bundles.flatMap(result=>result.outputFiles).reduce((sum,file)=>sum+file.contents.length,0)} bytes including maps).`);
+  process.exit(0);
+}
 if (!out.startsWith(root + path.sep) || path.relative(root,out) !== path.join('build','addon')) throw new Error('Refusing to clean an unexpected build path.');
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
@@ -15,7 +26,7 @@ const manifest=JSON.parse(await readFile(path.join(out,'manifest.json'),'utf8'))
 const managerPath=path.join(out,'content/manager.xhtml');
 const managerMarkup=(await readFile(managerPath,'utf8')).replace(/(content\/manager(?:\.css|-loader\.js))"/g,`$1?v=${encodeURIComponent(manifest.version)}"`);
 await writeFile(managerPath,managerMarkup);
-await build({ entryPoints: ['src/main.ts'], bundle: true, outfile: path.join(out, 'content/smart-tags.js'), format: 'iife', globalName: 'SmartTags', target: 'firefox140', platform: 'browser', sourcemap: 'external', legalComments: 'none' });
+for(const result of bundles)for(const file of result.outputFiles)await writeFile(file.path,file.contents);
 await cp('LICENSE', path.join(out, 'LICENSE'));
 const entries = [];
 async function walk(dir) {
@@ -36,11 +47,11 @@ for(const entry of entries) {
   const c=Buffer.alloc(46);c.writeUInt32LE(0x02014b50);c.writeUInt16LE(20,4);c.writeUInt16LE(20,6);c.writeUInt16LE(0x800,8);c.writeUInt16LE(8,10);c.writeUInt16LE(33,14);c.writeUInt32LE(crc,16);c.writeUInt32LE(compressed.length,20);c.writeUInt32LE(entry.data.length,24);c.writeUInt16LE(name.length,28);c.writeUInt32LE(offset,42);central.push(c,name);offset+=h.length+name.length+compressed.length;
 }
 const directory=Buffer.concat(central), end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(entries.length,8);end.writeUInt16LE(entries.length,10);end.writeUInt32LE(directory.length,12);end.writeUInt32LE(offset,16);
-await mkdir('dist',{recursive:true});
-const artifact=`dist/smart-tags-${manifest.version}.xpi`;
+await mkdir(preview?'build':'dist',{recursive:true});
+const artifact=preview?`build/smart-tags-${manifest.version}-preview.xpi`:`dist/smart-tags-${manifest.version}.xpi`;
 const archive=Buffer.concat([...local,directory,end]);
 await writeFile(artifact,archive);
-await writeFile(path.join(root,'updates.json'),JSON.stringify({addons:{[manifest.applications.zotero.id]:{updates:[{
+if(!preview)await writeFile(path.join(root,'updates.json'),JSON.stringify({addons:{[manifest.applications.zotero.id]:{updates:[{
   version:manifest.version,
   update_link:`https://raw.githubusercontent.com/leviyuli/ZTagging/main/${artifact}`,
   update_hash:`sha256:${createHash('sha256').update(archive).digest('hex')}`,

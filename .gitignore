@@ -4,6 +4,7 @@ build/
 .test-profile-native/
 .test-profile-native-fresh/
 .test-profile-native-automatic/
+.test-profile-workspace-*/
 *.log
 *.tmp
 .npm-cache/

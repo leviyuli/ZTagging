@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AppController,initialState,validState} from '../src/controller.ts';
+import {AppController,initialState,validState,automaticAssignmentHistoryId} from '../src/controller.ts';
 import type {AppState,ControllerEnvironment} from '../src/controller.ts';
 import {paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
@@ -23,7 +23,7 @@ function fixture(count=1,saved?:AppState){
   const ai:ControllerEnvironment['ai']={async completeJson(_system,prompt){const input=JSON.parse(prompt.split('INPUT_DATA_JSON:\n')[1]) as Input;calls.push(copy(input));const value=reply(input);return {value,text:JSON.stringify(value),usage:{inputTokens:20,outputTokens:20},usageKnown:true,estimatedCostUSD:0.001};},async hasApiKey(){return true;},async getSession(){return {connected:true,sharing:true,email:null,accountId:null,accounts:[]};},async listModels(){return [];},async testConnection(){throw new Error('Not used');},async setApiKey(){},async removeApiKey(){},async signIn(){throw new Error('Not used');},cancelSignIn(){},async signOut(){return {revoked:true};},async selectAccount(){}};
   const host:ControllerEnvironment['host']={async list(){return copy(papers);},async read(itemID){return copy(papers.find(paper=>paper.itemID===itemID)??null);},async readTags(itemID){return copy(native[`1:P${itemID}`]??[]);},async pdfText(){return '';},async apply(patches){writes.push(copy(patches));for(const patch of patches){assert.deepEqual(native[patch.paperId],patch.before);native[patch.paperId]=copy(patch.after);}},async show(){},async saveSearch(){}};
   const controller=new AppController(state,{ai,host,persist:async()=>{}});
-  return {controller,get state(){return controller.state;},papers,native,calls,writes,suggested,respond:(handler:Reply)=>{reply=handler;}};
+  return {controller,host,get state(){return controller.state;},papers,native,calls,writes,suggested,respond:(handler:Reply)=>{reply=handler;}};
 }
 async function assign(h:ReturnType<typeof fixture>){await h.controller.invoke('tag',{scope:'library',processingPolicy:'auto-clear'});await h.controller.waitForIdle();assert.equal(h.state.run!.status,'idle',h.state.run!.message);return h.state.run!.id;}
 
@@ -108,4 +108,34 @@ test('omitting an earlier exception from a later explicit reply does not invent 
   const firstRun=await assign(h),item=copy(h.state.reviewItems!.find(item=>item.kind==='assignment')!);
   h.state.settings.model='another-selected-model';h.respond(()=>({summary:'No additional explicit suggestions.',concepts:[],needsPDF:false,suggestions:[],newTagCandidates:[]}));await assign(h);
   const retained=h.state.reviewItems!.find(row=>row.id===item.id)!;assert.equal(retained.state,'open');assert.equal(retained.taskId,firstRun);assert.equal(retained.suggestionId,item.suggestionId);assert.deepEqual(h.state.decisions,{});assert.equal(h.writes.length,0);
+});
+
+test('one automatic run keeps one incremental Undo for twenty-five clear papers across restart',async()=>{
+  const h=fixture(26);h.respond(input=>({summary:'A membrane transport measurement.',concepts:[],needsPDF:false,suggestions:[h.suggested(input,'clear',input.paper.title.endsWith(' 26')?'medium':'high')],newTagCandidates:[]}));
+  const runId=await assign(h),groups=h.state.history.filter(change=>change.label==='Automatic tag assignments');assert.equal(groups.length,1);
+  const group=groups[0];assert.equal(group.id,automaticAssignmentHistoryId(runId));assert.equal(group.patches.length,25);assert.equal(Object.keys(group.automaticSegments!).length,25);assert.ok(Object.values(h.state.ownership).flatMap(Object.values).every(owner=>owner.changeId===group.id));assert.equal(validState(h.state),true);
+  const restored=fixture(26,copy(h.state));await restored.controller.initialize();await restored.controller.invoke('undo',{id:group.id});
+  assert.equal(Object.values(restored.native).filter(tags=>tags.some(tag=>tag.tag==='proton transport')).length,0);assert.ok(Object.values(restored.native).every(tags=>tags.some(tag=>tag.tag==='Manual project'&&tag.type===0)));assert.equal(restored.writes.length,1);assert.equal(restored.writes[0].length,25);
+  await assign(restored);assert.equal(restored.calls.length,0);assert.equal(Object.values(restored.native).filter(tags=>tags.some(tag=>tag.tag==='proton transport')).length,0);assert.equal(validState(restored.state),true);
+});
+
+test('recovery acknowledges an already merged automatic segment without duplicating its Undo patches',async()=>{
+  const h=fixture(3),runId=await assign(h),saved=copy(h.state),group=saved.history.find(change=>change.id===automaticAssignmentHistoryId(runId))!,patch=group.patches[0],segmentId=Object.keys(group.automaticSegments!)[0];
+  saved.pendingChange={id:segmentId,taskId:runId,automaticGroupId:group.id,date:group.date,label:group.label,status:'prepared',patches:[copy(patch)],beforeOwnership:{[patch.paperId]:copy(group.beforeOwnership[patch.paperId])},afterOwnership:{[patch.paperId]:copy(group.afterOwnership[patch.paperId])},suggestionIds:group.suggestionIds.filter(id=>saved.suggestions.find(row=>row.id===id)?.paperId===patch.paperId)};
+  const restored=fixture(3,saved);await restored.controller.initialize();const recovered=restored.state.history.find(change=>change.id===group.id)!;
+  assert.equal(restored.writes.length,0);assert.equal(restored.state.pendingChange,undefined);assert.equal(recovered.patches.length,3);assert.equal(Object.keys(recovered.automaticSegments!).length,3);assert.equal(restored.state.history.filter(change=>change.label==='Automatic tag assignments').length,1);assert.equal(validState(restored.state),true);
+});
+
+test('run-wide automatic Undo refuses a later native edit before changing any paper',async()=>{
+  const h=fixture(25),runId=await assign(h),writes=h.writes.length;h.native['1:P25'].push({tag:'Later manual decision',type:0});
+  await assert.rejects(h.controller.invoke('undo',{id:automaticAssignmentHistoryId(runId)}),/Later tag edits conflict/);
+  assert.equal(h.writes.length,writes);assert.equal(Object.values(h.native).filter(tags=>tags.some(tag=>tag.tag==='proton transport')).length,25);assert.ok(h.native['1:P25'].some(tag=>tag.tag==='Later manual decision'&&tag.type===0));
+});
+
+test('a partially completed grouped Undo suppresses reapplication of its acknowledged papers',async()=>{
+  const h=fixture(25),runId=await assign(h),apply=h.host.apply;h.host.apply=async(patches,label)=>{await apply(patches.slice(0,20),label);throw new Error('Native write stopped after its first chunk');};
+  await assert.rejects(h.controller.invoke('undo',{id:automaticAssignmentHistoryId(runId)}),/first chunk/);
+  assert.equal(Object.values(h.native).filter(tags=>tags.some(tag=>tag.tag==='proton transport')).length,5);assert.equal(h.state.automaticSuppressions!.length,20);assert.ok(h.state.history.some(change=>change.undoOfId===automaticAssignmentHistoryId(runId)&&change.status==='conflict'));
+  h.host.apply=apply;const requests=h.calls.length,writes=h.writes.length;await assign(h);
+  assert.equal(h.calls.length,requests);assert.equal(h.writes.length,writes);assert.equal(Object.values(h.native).filter(tags=>tags.some(tag=>tag.tag==='proton transport')).length,5);assert.ok(Object.values(h.native).every(tags=>tags.some(tag=>tag.tag==='Manual project'&&tag.type===0)));assert.equal(validState(h.state),true);
 });

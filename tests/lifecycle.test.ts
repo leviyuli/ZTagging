@@ -4,29 +4,27 @@ import vm from 'node:vm';
 import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
-import { initialState } from '../src/controller.ts';
 
-async function bundleMain(disposeGate = false, mockUI = false) {
+async function bundleMain(_disposeGate = false, mockUI = false) {
   const result = await build({
     entryPoints: ['src/main.ts'], bundle: true, write: false, format: 'iife',
     globalName: 'SmartTags', target: 'firefox140', platform: 'browser',
-    plugins: [...(disposeGate ? [{
-      name: 'observe-provider-disposal',
+    plugins: [{
+      name: 'lifecycle-workspace-adapter',
       setup(plugin) {
-        plugin.onLoad({ filter: /[/\\]providers\.ts$/ }, async args => ({
-          // Keep the real provider and append an asynchronous observation boundary.
-          // This proves main awaits disposal rather than merely calling it.
-          contents: (await readFile(args.path, 'utf8')) + `
-            const originalDisposeForLifecycleTest = ProviderClient.prototype.dispose;
-            ProviderClient.prototype.dispose = async function () {
-              await originalDisposeForLifecycleTest.call(this);
-              await (globalThis as any).__lifecycleDisposeGate();
-            };
-          `,
-          loader: 'ts',
-        }));
+        plugin.onLoad({filter:/[/\\]workspace\.ts$/},()=>({loader:'ts',contents:`
+          export function createNativeWorkspace(options) {
+            const observer=(globalThis as any).__lifecycleWorkspace;
+            const workspace={ready:Promise.resolve(),host:{host:{mutating:new Set()}},diagnostics:{phase:'ready',revision:0},
+              async execute(command,options){observer.commands.push(command);if(command.type==='check-plugin-updates'){await observer.openManager({page:'settings'});Zotero.getMainWindow()?.document.getElementById('menu_addons')?.doCommand();}return {commandId:options.commandId,revision:0};},
+              watch(query,receive,{signal}){const update=()=>receive(observer.error?{phase:'error',revision:0,error:observer.error}:{phase:'ready',revision:0,model:observer.model});observer.watchers.add(update);update();const stop=()=>observer.watchers.delete(update);signal.addEventListener('abort',stop,{once:true});return stop;},
+              async notify(changes){await observer.notify(changes);},
+              async close(reason){observer.closed.push(reason);await (globalThis as any).__lifecycleDisposeGate?.();observer.watchers.clear();}
+            };observer.current=workspace;observer.openManager=options.openManager;return workspace;
+          }
+        `}));
       },
-    }] : []), ...(mockUI ? [{
+    }, ...(mockUI ? [{
       name: 'observe-manager-mount',
       setup(plugin: any) {
         plugin.onLoad({ filter: /[/\\]ui\.ts$/ }, () => ({ loader: 'ts', contents: `
@@ -57,6 +55,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   const locale = new Set<string>();
   const timers = new Map<number, () => void>();
   const errors: unknown[] = [];
+  const workspace:any={commands:[],closed:[],watchers:new Set<()=>void>(),error:undefined,notify:async()=>{},model:{vocabularyVersion:0,pilotReviewed:false,taxonomyReady:false,tags:[],papers:[],suggestions:[],cleanup:[],history:[],neighbors:{},queue:{status:'idle',total:0,completed:0,failed:0},settings:{provider:'chatgpt',model:'',autoAssign:false,budgetUSD:5,inputPricePerMillion:0,outputPricePerMillion:0,maxOutputTokens:8192,coreConceptLimit:60},models:[],connection:{apiKeyStored:false,deepseekKeyStored:false,chatgptSignedIn:false}}};
   let timerID = 0;
   let fetchCalls = 0;
   let libraryWrites = 0;
@@ -125,6 +124,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
     clearTimeout: (id: number) => { timers.delete(id); },
     __lifecycleDisposeGate: options.disposeGate,
     __lifecycleUI: options.ui,
+    __lifecycleWorkspace: workspace,
   });
   if (options.manager) {
     options.manager.setTimeout = context.setTimeout;
@@ -132,7 +132,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   }
   vm.runInContext(code, context);
   return {
-    app: context.SmartTags, Zotero, win, regular, files, writes, copies, menus, sections, observers, locale, timers, errors,
+    app: context.SmartTags, Zotero, win, regular, files, writes, copies, menus, sections, observers, locale, timers, errors,workspace,
     get fetchCalls() { return fetchCalls; },
     get libraryWrites() { return libraryWrites; },
     get libraryReads() { return libraryReads; },
@@ -150,14 +150,22 @@ function managerDialog() {
     style: any = {};
     ownerDocument: any;
     tagName: string;
+    nodeType = 1;
+    parentNode: Element | null = null;
     private ownText = '';
     constructor(ownerDocument: any, tagName: string) { this.ownerDocument = ownerDocument; this.tagName = tagName; }
+    get localName() { return this.tagName; }
+    get childNodes() { return this.children; }
     get textContent(): string { return this.ownText + this.children.map(child => typeof child === 'string' ? child : child.textContent || '').join(''); }
     set textContent(value: string) { this.ownText = value; this.children = []; }
-    append(...children: any[]) { this.children.push(...children); }
-    replaceChildren(...children: any[]) { this.ownText = ''; this.children = [...children]; }
+    append(...children: any[]) { for(const child of children){child.remove?.();if(typeof child==='object')child.parentNode=this;this.children.push(child);} }
+    replaceChildren(...children: any[]) { this.ownText = '';for(const child of this.children)if(typeof child==='object')child.parentNode=null;this.children=[];this.append(...children); }
+    insertBefore(child:Element,before:Element|null) { child.remove();child.parentNode=this;const index=before?this.children.indexOf(before):-1;if(index<0)this.children.push(child);else this.children.splice(index,0,child);return child; }
+    remove() { if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(child=>child!==this);this.parentNode=null; }
+    removeChild(child:Element) { child.remove();return child; }
     setAttribute(key: string, value: string) { this.attributes.set(key, value); }
     getAttribute(key: string) { return this.attributes.get(key) || null; }
+    removeAttribute(key:string) { this.attributes.delete(key); }
     addEventListener() {}
     removeEventListener() {}
     focus() { this.ownerDocument.activeElement = this; }
@@ -184,7 +192,7 @@ function managerDialog() {
       assert.ok(['http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/svg'].includes(namespace), `Unexpected element namespace: ${namespace}`);
       return new Element(doc, name);
     },
-    createTextNode(text: string) { const textNode = new Element(doc, '#text'); textNode.textContent = text; return textNode; },
+    createTextNode(text: string) { const textNode = new Element(doc, '#text');textNode.nodeType=3;textNode.textContent = text; return textNode; },
   };
   const win: any = {
     document: doc, closed: false, scrollY: 0, focus() {}, scrollTo() {},
@@ -195,7 +203,7 @@ function managerDialog() {
   };
   return {
     win,
-    ready() { doc.readyState = 'complete'; doc.documentURI = 'chrome://smart-tags/content/manager.xhtml'; app = new Element(doc, 'div'); app.id = 'app'; app.textContent = 'Opening Smart Tags…'; },
+    ready() { doc.readyState = 'complete'; doc.documentURI = 'chrome://smart-tags/content/manager.xhtml'; app = new Element(doc, 'div'); app.id = 'app'; app.append(doc.createTextNode('Opening Smart Tags…')); },
     get app() { return app; },
   };
 }
@@ -217,15 +225,11 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.sections.size, 0, "right item and information panes stay unchanged");
   assert.equal(native.observers.size, 1);
   assert.equal(native.locale.has('smart-tags.ftl'), true);
-  assert.ok(native.Zotero.SmartTags.controller);
+  assert.ok(native.Zotero.SmartTags.workspace);
+  assert.equal(native.Zotero.SmartTags.controller, undefined);
   assert.equal(native.Zotero.SmartTags.version, '0.1.0');
   assert.equal(native.Zotero.SmartTags.stateDirectory, '/test-profile/smart-tags');
-  const state = JSON.parse(native.files.get('/test-profile/smart-tags/state.json')!);
-  assert.equal(state.schemaVersion, initialState().schemaVersion);
-  assert.deepEqual(state.warnings, []);
-  assert.equal(state.settings.autoAssign, false);
-  assert.equal(state.run, null);
-  assert.ok(native.writes.every(write => write.tmpPath === `${write.path}.tmp`));
+  assert.equal(native.writes.length, 0, "The main lifecycle delegates persistence to Workspace.");
   assert.equal(native.fetchCalls, 0);
   assert.equal(native.libraryWrites, 0);
   native.app.onMainWindowLoad(native.win);
@@ -237,49 +241,6 @@ test('native startup registers UI and notifier, persists only plugin state, and 
   assert.equal(native.locale.size, 0);
   assert.equal(native.Zotero.SmartTags, undefined);
   assert.equal(native.errors.length, 0);
-});
-
-test('native startup migrates schema 2 with an exact immutable versioned backup and historical warning records', async () => {
-  const native = nativeHarness(await normalBundle);
-  const old: any = initialState();old.schemaVersion = 2;delete old.tagShelves;old.vocabularyVersion = 7;
-  old.warnings = ['Missing local PDF text in an earlier run.'];old.settings.budgetUSD = 17;
-  old.metadata = { savedSetting: 'Ångström and Co/CO evidence remains unchanged.' };
-  delete old.evidenceCatalog;delete old.taxonomyEvidence;
-  const original = `${JSON.stringify(old, null, 3)}\r\n`;
-  const statePath = '/test-profile/smart-tags/state.json';
-  const occupiedBackup = `${statePath}.pre-v13.json`;
-  native.files.set(statePath, original);native.files.set(`${statePath}.bak`, JSON.stringify(initialState()));
-  native.files.set(occupiedBackup, 'An older immutable migration backup.');
-  await startNative(native);
-  try {
-    const migrated = JSON.parse(native.files.get(statePath)!);
-    assert.equal(migrated.schemaVersion, initialState().schemaVersion);assert.equal(migrated.vocabularyVersion, 7);
-    assert.equal(migrated.settings.budgetUSD, 17);assert.deepEqual(migrated.metadata, old.metadata);
-    assert.equal(native.files.get(occupiedBackup), 'An older immutable migration backup.');
-    assert.deepEqual(native.copies, [{ source: statePath, destination: `${statePath}.pre-v13.1.json` }]);
-    assert.deepEqual(Buffer.from(native.files.get(`${statePath}.pre-v13.1.json`)!, 'utf8'), Buffer.from(original, 'utf8'));
-    assert.equal(migrated.warnings.length, 1);assert.equal(migrated.warnings[0].message, old.warnings[0]);
-    assert.equal(migrated.warnings[0].legacy, true);assert.equal(migrated.warnings[0].status, 'dismissed');
-    assert.deepEqual(migrated.warnings[0].paperIds, []);assert.deepEqual(migrated.warnings[0].runIds, []);
-    assert.equal(migrated.warnings[0].firstSeenAt, null);assert.equal(migrated.warnings[0].lastSeenAt, null);assert.equal(migrated.warnings[0].occurrenceCount, null);
-    assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
-    assert.equal(native.errors.length, 0);
-  } finally { await native.app.shutdown(); }
-});
-
-test('native backup recovery records an active warning without restoring legacy string banners', async () => {
-  const native = nativeHarness(await normalBundle);
-  const backup = initialState();backup.vocabularyVersion = 4;
-  const statePath = '/test-profile/smart-tags/state.json';
-  native.files.set(statePath, '{invalid json');native.files.set(`${statePath}.bak`, JSON.stringify(backup));
-  await startNative(native);
-  try {
-    const restored = JSON.parse(native.files.get(statePath)!);
-    assert.equal(restored.schemaVersion, initialState().schemaVersion);assert.equal(restored.vocabularyVersion, 4);
-    assert.ok(restored.warnings.some((warning: any) => warning.status === 'active' && /restored.*previous valid state/i.test(warning.message)));
-    assert.ok(restored.warnings.every((warning: unknown) => warning && typeof warning === 'object'));
-    assert.equal(native.fetchCalls, 0);assert.equal(native.libraryWrites, 0);assert.equal(native.sections.size, 0);
-  } finally { await native.app.shutdown(); }
 });
 
 test('native collection menus use Zotero 10 plural context without registering item-pane sections', async () => {
@@ -317,23 +278,33 @@ test('shutdown clears debounced item work before it can analyze a paper', async 
   assert.equal(native.errors.length, 0);
 });
 
-test('main shutdown awaits asynchronous provider disposal before waiting on controller shutdown', async () => {
+test('disabling an idle native plugin releases registrations without serializing its saved history', async () => {
+  const native = nativeHarness(await normalBundle);
+  await startNative(native);
+  const writes = native.writes.length;
+  await native.app.shutdown();
+  assert.equal(native.writes.length, writes);
+  assert.equal(native.Zotero.SmartTags, undefined);
+  assert.equal(native.observers.size, 0);
+  assert.equal(native.menus.size, 0);
+  assert.equal(native.timers.size, 0);
+  assert.equal(native.errors.length, 0);
+});
+
+test('main shutdown awaits durable Workspace close after removing native registrations', async () => {
   let release!: () => void, entered!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  const atDispose = new Promise<void>(resolve => { entered = resolve; });
-  const native = nativeHarness(await bundleMain(true), { disposeGate: () => { entered(); return gate; } });
+  const atClose = new Promise<void>(resolve => { entered = resolve; });
+  const native = nativeHarness(await normalBundle, { disposeGate: () => { entered(); return gate; } });
   await startNative(native);
-  const app = native.Zotero.SmartTags.controller;
-  const originalShutdown = app.shutdown.bind(app);
-  let controllerStarted = false, finished = false;
-  app.shutdown = async () => { controllerStarted = true; await originalShutdown(); };
+  let finished = false;
   const stopping = native.app.shutdown().then(() => { finished = true; });
-  await atDispose;
+  await atClose;
   assert.equal(finished, false);
-  assert.equal(controllerStarted, false, 'controller work must wait until provider disposal settles');
-  release();
-  await stopping;
-  assert.equal(controllerStarted, true);
+  assert.equal(native.observers.size, 0);
+  assert.equal(native.menus.size, 0);
+  assert.deepEqual(native.workspace.closed, ['disable']);
+  release();await stopping;
   assert.equal(finished, true);
   assert.equal(native.Zotero.SmartTags, undefined);
   assert.equal(native.errors.length, 0);
@@ -414,25 +385,20 @@ test('the real manager renders in an XML chrome document using explicit HTML nam
   await native.app.shutdown();
 });
 
-test('a failed first snapshot shows a retryable error instead of keeping the opening placeholder', async () => {
+test('a failed first page query shows a retryable error and recovers on the next update', async () => {
   const dialog = managerDialog(); dialog.ready();
   const native = nativeHarness(await normalBundle, { manager: dialog.win });
   await startNative(native);
-  const controller = native.Zotero.SmartTags.controller;
-  const originalSnapshot = controller.snapshot.bind(controller);
-  controller.snapshot = async () => { throw new Error('Local settings are temporarily unavailable'); };
+  native.workspace.error='Local settings are temporarily unavailable';
   await native.app.openManager();
-  for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'error'; turn++) await new Promise(resolve => setImmediate(resolve));
-  assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'error');
-  assert.match(dialog.app!.textContent, /could not load local settings/);
-  assert.match(dialog.app!.textContent, /temporarily unavailable/);
-  assert.match(dialog.app!.textContent, /Retry loading/);
-  assert.doesNotMatch(dialog.app!.textContent, /Opening Smart Tags/);
-  controller.snapshot = originalSnapshot;
-  await controller.save();
-  for (let turn = 0; turn < 20 && dialog.app!.getAttribute('data-smart-tags-state') !== 'ready'; turn++) await new Promise(resolve => setImmediate(resolve));
-  assert.equal(dialog.app!.getAttribute('data-smart-tags-state'), 'ready');
-  assert.match(dialog.app!.textContent, /Create your first tag list/);
+  for (let turn=0;turn<20&&dialog.app!.getAttribute('data-smart-tags-state')!=='error';turn++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(dialog.app!.getAttribute('data-smart-tags-state'),'error');
+  assert.match(dialog.app!.textContent,/temporarily unavailable/);
+  assert.match(dialog.app!.textContent,/Retry loading/);
+  native.workspace.error=undefined;
+  for(const update of native.workspace.watchers)update();
+  for(let turn=0;turn<20&&dialog.app!.getAttribute('data-smart-tags-state')!=='ready';turn++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(dialog.app!.getAttribute('data-smart-tags-state'),'ready');
   await native.app.shutdown();
 });
 
@@ -485,11 +451,12 @@ test('main windows keep native Collections without a panel, startup scans or idl
   assert.equal(native.Zotero.SmartTags.getNavigator,undefined);assert.equal(native.timers.size,0);assert.equal(native.libraryReads,0);
   assert.deepEqual([...native.observers.keys()],['smart-tags']);assert.equal(ui.mounts,0);
   native.app.onMainWindowLoad(native.win);const second:any={document:{querySelectorAll:()=>[]}};native.app.onMainWindowLoad(second);
-  await native.Zotero.SmartTags.controller.save();await native.Zotero.SmartTags.controller.save();
-  assert.equal(native.timers.size,0);assert.equal(native.libraryReads,0,'saving progress while the manager is closed must not scan Zotero');
+  assert.equal(native.timers.size,0);assert.equal(native.libraryReads,0,'closed pages never request library snapshots');
   let updates=0;(native.win.document as any).getElementById=(id:string)=>id==='menu_addons'?{doCommand(){updates++;}}:null;
-  await native.app.openManager();const snapshot=await ui.api.snapshot();assert.equal(snapshot.pluginVersion,startup.version);assert.equal(snapshot.navigation,undefined);
-  await ui.api.invoke('check-plugin-updates');assert.equal(updates,1);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);
+  await native.app.openManager();let model:any;
+  const abort=new AbortController();ui.api.watch({page:'settings'},(event:any)=>{model=event.model;},{signal:abort.signal});abort.abort();
+  assert.equal(model.pluginVersion,startup.version);assert.equal(model.navigation,undefined);
+  await ui.api.execute({type:'check-plugin-updates'},{commandId:'updates'});assert.equal(updates,1);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);
   await native.app.shutdown();assert.equal(native.timers.size,0);assert.equal(native.observers.size,0);
 });
 
@@ -498,8 +465,8 @@ test('an open manager sends plugin updates to a surviving library window only af
   const native=nativeHarness(await bundleMain(false,true),{manager:dialog.win,ui});await native.app.startup(startup);
   let firstUpdates=0,secondUpdates=0;(native.win.document as any).getElementById=(id:string)=>id==='menu_addons'?{doCommand(){firstUpdates++;}}:null;
   await native.app.openManager();const second:any={closed:false,document:{getElementById:(id:string)=>id==='menu_addons'?{doCommand(){secondUpdates++;}}:null,querySelectorAll:()=>[]}};
-  native.Zotero.getMainWindow=()=>second;native.app.onMainWindowLoad(second);await ui.api.invoke('check-plugin-updates');assert.equal(firstUpdates,1);assert.equal(secondUpdates,0);
-  (native.win as any).closed=true;native.app.onMainWindowUnload(native.win);await ui.api.invoke('check-plugin-updates');assert.equal(firstUpdates,1);assert.equal(secondUpdates,1);
+  native.Zotero.getMainWindow=()=>second;native.app.onMainWindowLoad(second);await ui.api.execute({type:'check-plugin-updates'},{commandId:crypto.randomUUID()});assert.equal(firstUpdates,0);assert.equal(secondUpdates,1);
+  (native.win as any).closed=true;native.app.onMainWindowUnload(native.win);await ui.api.execute({type:'check-plugin-updates'},{commandId:crypto.randomUUID()});assert.equal(firstUpdates,0);assert.equal(secondUpdates,2);
   assert.equal(native.timers.size,0);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();
 });
 
@@ -507,11 +474,52 @@ test('item notification bursts use one deduplicated timer and preserve changes r
   const native=nativeHarness(await normalBundle);await startNative(native);const batches:any[]=[];
   native.Zotero.Items.getAsync=async(id:number)=>id===999?{id,isRegularItem:()=>false,isAttachment:()=>true,parentID:42}:{...native.regular,id,key:'PAPER'+id};
   const observer=native.observers.get('smart-tags').observer;
-  native.Zotero.SmartTags.controller.onItemsChanged=async(changes:any[])=>{batches.push(changes);if(batches.length===1)await observer.notify('modify','item',[44]);};
+  native.workspace.notify=async(changes:any[])=>{batches.push(changes);if(batches.length===1)await observer.notify('modify','item',[44]);};
   for(let index=0;index<40;index++)await observer.notify('modify','item',[42,43,42]);
   await observer.notify('modify','item',[999]);
   assert.equal(native.timers.size,1);assert.equal(batches.length,0);runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));
   assert.equal(batches.length,1);assert.deepEqual(JSON.parse(JSON.stringify(batches[0])),[{itemID:42,attachment:true},{itemID:43,attachment:false}]);assert.equal(native.timers.size,1);
   runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));assert.equal(batches.length,2);assert.equal(batches[1][0].itemID,44);assert.equal(native.timers.size,0);
   await observer.notify('modify','item',[45]);assert.equal(native.timers.size,1);await native.app.shutdown();assert.equal(native.timers.size,0);
+});
+
+test('closed Smart Tags pages forward deleted and trashed identities without scanning the library',async()=>{
+  const native=nativeHarness(await normalBundle);await startNative(native);const batches:any[]=[];const reads:number[]=[];
+  const observer=native.observers.get('smart-tags').observer;
+  native.workspace.notify=async(changes:any[])=>{batches.push(changes);};
+  native.Zotero.Items.getAsync=async(id:number)=>{reads.push(id);return id===42?{...native.regular,deleted:true}:id===43?{...native.regular,id,libraryID:2,deleted:true}:null;};
+  await observer.notify('trash','item',[42,42,'NaN',0,-1]);
+  await observer.notify('delete','item',[44,44,45],{44:{libraryID:1},45:{libraryID:2}});
+  await observer.notify('trash','item',[43]);
+  await observer.notify('delete','item',[46]);
+  assert.equal(native.timers.size,1);assert.equal(batches.length,0);
+  runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(JSON.parse(JSON.stringify(batches)),[[{itemID:42,attachment:false},{itemID:44,attachment:false},{itemID:46,attachment:false}]]);
+  assert.deepEqual(reads,[42,44,43,46]);assert.equal(native.libraryReads,0);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);
+  await native.app.shutdown();
+});
+
+test('attachment removal follows Zotero parent refresh and does not guess a deleted attachment parent',async()=>{
+  const native=nativeHarness(await normalBundle);await startNative(native);const batches:any[]=[];
+  const observer=native.observers.get('smart-tags').observer;
+  native.workspace.notify=async(changes:any[])=>{batches.push(changes);};
+  native.Zotero.Items.getAsync=async(id:number)=>id===42?native.regular:id===90?{id,isRegularItem:()=>false,isAttachment:()=>true,parentID:42}:null;
+  await observer.notify('trash','item',[90]);
+  await observer.notify('delete','item',[91],{91:{libraryID:1,key:'ATTACH91',parentID:999}});
+  await observer.notify('refresh','item',[42]);
+  runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(JSON.parse(JSON.stringify(batches)),[[{itemID:42,attachment:true},{itemID:91,attachment:false}]]);
+  assert.equal(native.libraryReads,0);await native.app.shutdown();
+});
+
+test('an item read failure cannot masquerade as a deletion or bypass native-write suppression',async()=>{
+  const native=nativeHarness(await normalBundle);await startNative(native);const batches:any[]=[];
+  const observer=native.observers.get('smart-tags').observer;
+  native.workspace.notify=async(changes:any[])=>{batches.push(changes);};
+  native.Zotero.Items.getAsync=async(id:number)=>{if(id===42)throw new Error('Native read unavailable');return null;};
+  native.workspace.current.host.host.mutating.add(44);
+  await observer.notify('delete','item',[42,44]);assert.equal(native.timers.size,0);assert.equal(native.errors.length,1);
+  await observer.notify('delete','item',[45]);native.workspace.current.host.host.mutating.add(45);
+  runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(batches.length,0);assert.equal(native.libraryReads,0);await native.app.shutdown();
 });

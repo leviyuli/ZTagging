@@ -1,5 +1,7 @@
-import type { BuildMode, DisplayAssignmentReview, DisplayPaper, DisplayReviewItem, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
-import { createDropdown, cleanupDropdowns } from './dropdown';
+import type {Workspace,ViewEvent,ViewQuery} from './workspace-contract.ts';
+import type { BuildMode, DisplayAssignmentReview, DisplayPaper, DisplayReviewItem, DisplaySuggestion, DisplayTag, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
+import { createDropdown, cleanupDropdowns, updateDropdown } from './dropdown';
+import type {DropdownOptions} from './dropdown';
 import { compileConceptFilter, descendantIds, matchCompiledConceptFilter } from './concept-filter';
 import type { ConceptFilter } from './concept-filter';
 import { canonicalTagKey } from './core';
@@ -8,7 +10,7 @@ import type { WarningRecord } from './warnings';
 type Child = Node | string | null | undefined | false;
 type NativeMeaningRow = NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number];
 type MenuAction = { id: string; label: string; run: () => void | Promise<unknown> };
-type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'search' | 'reset-analysis' | 'merge-shelves' } | null;
+type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'cleanup-history'; records: number; bytes: number } | { kind: 'search' | 'reset-analysis' | 'merge-shelves' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
 const pageTitles: Record<ManagerPage, [string, string]> = {
@@ -41,7 +43,7 @@ const iconPaths = {
 export interface ManagerUIOptions { page?: ManagerPage; createDetail?: boolean; detailContextId?: string; tagId?: string; assignmentRunId?: string }
 
 /** Mount a credential-free manager. All data access and writes go through the host. */
-export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOptions = {}): { refresh: () => Promise<void>; destroy: () => void; navigate: (options: ManagerUIOptions) => void } {
+export function mountManager(win: Window, api: Workspace, options: ManagerUIOptions = {}): { refresh: () => Promise<void>; destroy: () => void; navigate: (options: ManagerUIOptions) => void } {
   const doc = win.document;
   const app = doc.getElementById('app');
   if (!app) throw new Error('Smart Tags manager is missing its app container.');
@@ -65,6 +67,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let replaceMergedShelves = true;
   let nativeMeaningWorkId = '';
   let nativeMeaningReviewHidden = true;
+  let pendingNativeReview:{workId:string;entryId:string}|null=null;
   let nativeMeaningPage = 0;
   const excludedNativeMeaningRows = new Set<string>();
   let reviewDetailsOpen = false;
@@ -90,13 +93,26 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   const nativeEditOptionsOpen = new Set<string>();
   let busy = false;
   let signingIn = false;
+  let requestingFasterBuild = false;
   let disposed = false;
-  let refreshing = false;
-  let refreshAgain = false;
-  let refreshDeferred = false;
+  let viewEpoch = 0;
+  let viewRevision = -1;
+  let viewQueryKey = '';
+  let viewSearchKey = '';
+  let viewController: AbortController | null = null;
+  let stopView: (() => void) | null = null;
+  let searchTimer = 0;
+  let viewTotal: number | undefined;
+  let viewNextCursor: string | undefined;
+  let viewOffset=0,viewRowCount=0;
+  const viewCursors=new Map<string,Map<number,string>>(),queryPageIndexes=new WeakMap<ViewQuery,number>();
+  let commandSequence = 0;
+  const commandPrefix = `manager-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let toast = '';
   let toastError = false;
   let toastTimer = 0;
+  let loadingMessage='';
+  let loadingProgress:ViewEvent['progress'];
   let closeActionMenu: ((restoreFocus?: boolean) => void) | null = null;
   let vocabQuery = '';
   let vocabularyPage = 0;
@@ -118,6 +134,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let keepFilter = 'all';
   let keepPreviewPage = 0;
   const keptNames = new Set<string>();
+  const keepDecisions = new Map<string,boolean>();
   const selectedDIYComparisons = new Set<string>();
   let diyComparisonId = '';
   let diyComparisonPage = 0;
@@ -180,6 +197,57 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   const searchCache = new Map<string, { title: string; abstract?: string; summary?: string; keywords?: string[]; text: string }>();
   const PAGE_SIZE = 50;
 
+  type ListenerBinding={type:string;listener:EventListener;options?:boolean|AddEventListenerOptions};
+  const nodeListeners=new WeakMap<EventTarget,ListenerBinding[]>();
+  const dropdownOptions=new WeakMap<HTMLButtonElement,DropdownOptions>();
+  function listen<K extends keyof HTMLElementEventMap>(target:HTMLElement,type:K,handler:(event:HTMLElementEventMap[K])=>void,options?:boolean|AddEventListenerOptions) {
+    const listener:EventListener=event=>handler(event as HTMLElementEventMap[K]);
+    target.addEventListener(type,listener,options);
+    const bindings=nodeListeners.get(target)||[];bindings.push({type,listener,options});nodeListeners.set(target,bindings);
+  }
+  function nodeChildren(node:Node):Node[] {return Array.from(node.childNodes);}
+  function nodeKey(node:Node):string {
+    if(node.nodeType!==1)return '';
+    const element=node as HTMLElement;return element.id?`id:${element.id}`:element.getAttribute('data-ui-key')||'';
+  }
+  function sameNodeKind(left:Node,right:Node):boolean {return left.nodeType===right.nodeType&&(left.nodeType!==1||(left as Element).localName===(right as Element).localName);}
+  function attributePairs(element:Element):[string,string][] {return Array.from(element.attributes).map(attribute=>Array.isArray(attribute)?[String(attribute[0]),String(attribute[1])]:[attribute.name,attribute.value]);}
+  function patchNode(current:Node,desired:Node,keys:Map<string,Node>):Node {
+    if(!sameNodeKind(current,desired))return desired;
+    if(current.nodeType===3){if(current.textContent!==desired.textContent)current.textContent=desired.textContent;return current;}
+    if(current.nodeType!==1)return current;
+    const before=current as HTMLElement,after=desired as HTMLElement;
+    const dropdown=dropdownOptions.get(after as HTMLButtonElement);
+    if(dropdown&&updateDropdown(before as HTMLButtonElement,dropdown))return before;
+    const oldBindings=nodeListeners.get(before)||[],newBindings=nodeListeners.get(after)||[];
+    for(const binding of oldBindings)before.removeEventListener(binding.type,binding.listener,binding.options);
+    for(const binding of newBindings)before.addEventListener(binding.type,binding.listener,binding.options);
+    nodeListeners.set(before,newBindings);
+    const attributes=new Map(attributePairs(after));
+    for(const [name] of attributePairs(before))if(!attributes.has(name))before.removeAttribute(name);
+    for(const [name,value] of attributes)if(before.getAttribute(name)!==value){if(name==='aria-expanded'&&before.getAttribute(name)==='true'&&doc.getElementById(before.getAttribute('aria-controls')||''))continue;before.setAttribute(name,value);}
+    if(typeof before.className==='string'&&typeof after.className==='string'&&before.className!==after.className)before.className=after.className;
+    before.style.cssText=after.style.cssText;
+    for(const name of ['disabled','checked','value','type','open','tabIndex','hidden','title','placeholder','noValidate','htmlFor'] as const){
+      if(name in before&&name in after){const old=Reflect.get(before,name),next=Reflect.get(after,name);if(old!==next)Reflect.set(before,name,next);}
+    }
+    patchChildren(before,after,keys);return before;
+  }
+  function patchChildren(parent:Node,desired:Node,keys:Map<string,Node>) {
+    const old=nodeChildren(parent),used=new Set<Node>();
+    nodeChildren(desired).forEach((next,index)=>{
+      const key=nodeKey(next),candidate=key?keys.get(key):old[index];
+      const current=candidate&&!used.has(candidate)&&sameNodeKind(candidate,next)&&(key||!nodeKey(candidate))?candidate:undefined;
+      const target=current?patchNode(current,next,keys):next;used.add(target);
+      const reference=parent.childNodes[index]||null;if(reference!==target)parent.insertBefore(target,reference);
+    });
+    for(const child of nodeChildren(parent))if(!used.has(child))child.parentNode?.removeChild(child);
+  }
+  function patchRoot(desired:HTMLElement) {
+    const keys=new Map<string,Node>(),duplicates=new Set<string>();
+    const collect=(node:Node)=>{const key=nodeKey(node);if(key){if(keys.has(key)){keys.delete(key);duplicates.add(key);}else if(!duplicates.has(key))keys.set(key,node);}for(const child of nodeChildren(node))collect(child);};collect(app!);
+    const container=doc.createElementNS('http://www.w3.org/1999/xhtml','div');container.append(desired);patchChildren(app!,container,keys);
+  }
   function h<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', ...children: Child[]): HTMLElementTagNameMap[K] {
     // A chrome XHTML window is an XMLDocument; explicit HTML namespace is required.
     const element = doc.createElementNS('http://www.w3.org/1999/xhtml', tag) as HTMLElementTagNameMap[K];
@@ -190,6 +258,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     return element;
   }
+  function keyed<T extends HTMLElement>(element:T,key:string):T {element.setAttribute('data-ui-key',key);return element;}
   function icon(name: ManagerPage): SVGSVGElement {
     const namespace = 'http://www.w3.org/2000/svg';
     const svg = doc.createElementNS(namespace, 'svg');
@@ -206,7 +275,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const element = h('button', kind, text);
     element.type = 'button';
     element.disabled = disabled || busy;
-    element.addEventListener('click', () => { Promise.resolve().then(action).catch(showError); });
+    listen(element,'click', () => { Promise.resolve().then(action).catch(showError); });
     return element;
   }
   function actionMenu(id: string, label: string, accessibleName: string, commands: MenuAction[]) {
@@ -214,26 +283,27 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     let popup: HTMLDivElement | null = null;
     let items: HTMLButtonElement[] = [];
     let active = 0;
-    const trigger = button(label, () => { if (popup) close();else open(0); }, 'quiet small attention-menu-trigger');
+    const trigger = button(label, () => { if (doc.getElementById(`${id}-menu`)) closeActionMenu?.();else open(0); }, 'quiet small attention-menu-trigger');
     trigger.id = id;
     trigger.setAttribute('aria-label', accessibleName);
     trigger.setAttribute('aria-haspopup', 'menu');
     trigger.setAttribute('aria-expanded', 'false');
     trigger.setAttribute('aria-controls', `${id}-menu`);
     const contains = (node: Node, target: EventTarget | null) => !!target && typeof (target as Node).nodeType === 'number' && node.contains(target as Node);
+    const mountedTrigger=()=>doc.getElementById(id) as HTMLButtonElement||trigger;
     function close(restoreFocus = true) {
       if (!popup) return;
       popup.remove();popup = null;items = [];
-      trigger.setAttribute('aria-expanded', 'false');
+      mountedTrigger().setAttribute('aria-expanded', 'false');
       doc.removeEventListener('pointerdown', outside, true);
       doc.removeEventListener('focusin', outside);
       doc.removeEventListener('scroll', scrolled, true);
       win.removeEventListener('resize', viewportChanged);
       win.removeEventListener('unload', viewportChanged);
       if (closeActionMenu === close) closeActionMenu = null;
-      if (restoreFocus && trigger.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
+      if (restoreFocus && mountedTrigger().isConnected && !mountedTrigger().disabled) mountedTrigger().focus({ preventScroll: true });
     }
-    function outside(event: Event) { if (!contains(trigger, event.target) && (!popup || !contains(popup, event.target))) close(false); }
+    function outside(event: Event) { if (!contains(mountedTrigger(), event.target) && (!popup || !contains(popup, event.target))) close(false); }
     function scrolled(event: Event) { if (!popup || !contains(popup, event.target)) close(false); }
     function viewportChanged() { close(false); }
     function focusItem(index: number) {
@@ -261,26 +331,26 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
     }
     function open(index: number) {
-      if (trigger.disabled || !trigger.isConnected || !doc.body) return;
+      if (mountedTrigger().disabled || !mountedTrigger().isConnected || !doc.body) return;
       closeActionMenu?.();cleanupDropdowns(doc);
       popup = h('div', 'smart-tags-action-menu');popup.id = `${id}-menu`;
       popup.setAttribute('role', 'menu');popup.setAttribute('aria-labelledby', id);
       items = commands.map(command => {
         const item = button(command.label, () => { close();return command.run(); }, 'smart-tags-action-item');
-        item.id = `${id}-item-${command.id}`;item.tabIndex = -1;item.setAttribute('role', 'menuitem');item.addEventListener('keydown', keydown);popup!.append(item);return item;
+        item.id = `${id}-item-${command.id}`;item.tabIndex = -1;item.setAttribute('role', 'menuitem');listen(item,'keydown', keydown);popup!.append(item);return item;
       });
       doc.body.append(popup);
-      const rect = trigger.getBoundingClientRect(), edge = 8;
+      const rect = mountedTrigger().getBoundingClientRect(), edge = 8;
       const width = Math.min(280, Math.max(1, win.innerWidth - edge * 2));
       const height = Math.min(popup.scrollHeight + 2, 320, Math.max(1, win.innerHeight - edge * 2));
       popup.style.width = `${width}px`;popup.style.maxHeight = `${height}px`;
       popup.style.left = `${Math.max(edge, Math.min(rect.right - width, win.innerWidth - width - edge))}px`;
       popup.style.top = `${Math.max(edge, Math.min(rect.bottom + 4 + height <= win.innerHeight - edge ? rect.bottom + 4 : rect.top - height - 4, win.innerHeight - height - edge))}px`;
-      trigger.setAttribute('aria-expanded', 'true');closeActionMenu = close;
+      mountedTrigger().setAttribute('aria-expanded', 'true');closeActionMenu = close;
       doc.addEventListener('pointerdown', outside, true);doc.addEventListener('focusin', outside);doc.addEventListener('scroll', scrolled, true);
       win.addEventListener('resize', viewportChanged);win.addEventListener('unload', viewportChanged);focusItem(index);
     }
-    trigger.addEventListener('keydown', keydown);
+    listen(trigger,'keydown', keydown);
     return trigger;
   }
   function hideEditor() { rememberEditorDraft();editorTag = null;editorPreparationId = '';editorNativeEntry = null; }
@@ -289,7 +359,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const active = doc.activeElement as HTMLElement | null;
     editorReturnFocus = active?.id && !doc.getElementById('tag-editor-form')?.contains(active) ? active.id : fallback;
   }
-  function browseTags() { nativeMeaningReviewHidden = true;if (editorNativeEntry) hideEditor(); }
+  function browseTags() { nativeMeaningReviewHidden = true;pendingNativeReview=null;if (editorNativeEntry) hideEditor(); }
   function nav(target: ManagerPage, showMeanings = false) { hideEditor();page = target; if (target === 'review') assignmentView = 'suggestions';if (target === 'vocabulary') nativeMeaningReviewHidden = !showMeanings;modal = null;win.scrollTo(0,0);render(); }
   function empty(title: string, message: string, action?: Node) {
     return h('div', 'empty', h('strong', '', title), h('p', '', message), action ? h('div', 'actions', action) : null);
@@ -303,9 +373,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const element = h('input');
     element.id = id;
     element.type = type;
+    if(type==='search')element.maxLength=512;
     element.value = value;
     element.placeholder = placeholder;
-    element.addEventListener('input', () => { onInput(element.value);updateTagApplyState(); });
+    listen(element,'input', event => { onInput((event.currentTarget as HTMLInputElement).value);updateTagApplyState(); });
     return element;
   }
   function textarea(id: string, value: string, onInput: (value: string) => void, placeholder = '') {
@@ -313,11 +384,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     element.id = id;
     element.value = value;
     element.placeholder = placeholder;
-    element.addEventListener('input', () => { onInput(element.value);updateTagApplyState(); });
+    listen(element,'input', event => { onInput((event.currentTarget as HTMLTextAreaElement).value);updateTagApplyState(); });
     return element;
   }
   function select<T extends string>(id: string, value: T, choices: [T, string][], onChange: (value: T) => void, accessibleName?: string) {
-    const control = createDropdown(win, { id, value, choices, onChange: next => { onChange(next as T);updateTagApplyState(); }, disabled: busy });
+    const options:DropdownOptions={ id, value, choices, onChange: next => { onChange(next as T);updateTagApplyState(); }, disabled: busy };
+    const control = createDropdown(win,options);dropdownOptions.set(control,options);
     if (accessibleName) control.setAttribute('aria-label', accessibleName);
     return control;
   }
@@ -327,7 +399,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     element.type = 'checkbox';
     element.checked = checked;
     element.disabled = disabled || busy;
-    element.addEventListener('change', () => onChange(element.checked));
+    listen(element,'change', event => onChange((event.currentTarget as HTMLInputElement).checked));
     const labelElement = h('label', 'check-label', element, h('span', '', label));
     labelElement.htmlFor = id;
     return labelElement;
@@ -339,8 +411,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const summary = h('summary', '', label);summary.id = `details-${label.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
     const panel = h('details', 'section-gap', summary);panel.open = open;
     if (open) panel.append(content());
-    summary.addEventListener('click', event => { event.preventDefault();changed(!open);render(); });
-    panel.addEventListener('toggle', () => { if (panel.isConnected && panel.open !== open) { changed(panel.open);render(); } });
+    listen(summary,'click', event => { event.preventDefault();changed(!open);render(); });
+    listen(panel,'toggle', event => { const current=event.currentTarget as HTMLDetailsElement;if (current.isConnected && current.open !== open) { changed(current.open);render(); } });
     return panel;
   }
   function notify(message: string, error = false) {
@@ -367,70 +439,120 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     busy = true;
     render();
     try {
-      const result = await api.invoke(action, payload);
-      refreshDeferred = false;
-      await refresh();
+      const result = await invoke(action, payload);
       if (message) notify(message);
       return result;
     } finally {
       busy = false;
       render();
-      if (refreshDeferred) { refreshDeferred = false;void refresh(); }
     }
   }
+  async function invoke(action:string,payload?:any):Promise<any> {
+    const receipt=await api.execute({type:action,...(payload===undefined?{}:{payload})},{commandId:`${commandPrefix}-${++commandSequence}`});
+    return receipt.result;
+  }
+  function viewQuery():ViewQuery {
+    const params={paperQuery,vocabQuery,libraryTagShelfId,libraryTagStatus,...(page==='build'||page==='cleanup'?{buildScope,buildMode}:{}),...(page==='assignment'?{assignmentScope,assignmentTagShelfId}:{}),...(page==='settings'?{settingsTransfersOpen}:{}),conceptFilter,conceptQuery,expandedConceptIds:[...expandedConcepts],selectedPaper,assignmentRunId:assignmentRunSelection,reviewFilter,activityHistoryQuery,activityHistoryOpen,completedActivityOpen,activityPaperInfoOpen,deferredReviewOpen,attentionQuery,attentionFilter,attentionPage,paperExclusionPage,keepPreviewPage,existingTagQuery,existingTagView,keepFilter,existingTagFilter,existingTagFacet,existingTagPage,existingPreviewPage,diyComparisonPage,diyPreviewPage,topicPage,expandedExistingGroups:[...expandedExistingGroups],existingPaperPages:Object.fromEntries(existingPaperPages),nativeMeaningReviewHidden,nativeReviewTarget:pendingNativeReview,tagView,editorTagId:editorTag?.id,editorPreparationId,editorNativeEntry,libraryLinkedPaperNames:[...libraryLinkedPapersOpen],libraryNoteNames:[...libraryNotesOpen],relationshipQueries:Object.fromEntries(relationQueries),openRelationshipPickers:[...openRelationshipPickers],libraryFiltersOpen,assignmentView};
+    const pageSize=page==='vocabulary'?20:page==='cleanup'?tagView==='questions'?10:20:PAGE_SIZE;
+    const pageIndex=page==='vocabulary'?nativeMeaningReviewHidden?vocabularyPage:nativeMeaningPage:page==='library'?libraryPage:page==='activity'?activityHistoryPage:page==='assignment'||page==='review'?reviewPage:page==='cleanup'?tagView==='questions'?tagQuestionPage:vocabularyPage:0;
+    const query:ViewQuery={page,params:{...params,pageSize},limit:pageSize},key=JSON.stringify(query);
+    let cursors=viewCursors.get(key);if(!cursors){cursors=new Map([[0,'0']]);viewCursors.set(key,cursors);if(viewCursors.size>32)viewCursors.delete(viewCursors.keys().next().value!);}
+    query.cursor=cursors.get(pageIndex)??String(pageIndex*pageSize);queryPageIndexes.set(query,pageIndex);return query;
+  }
+  function primaryRowCount(query:ViewQuery,model:ManagerSnapshot){
+    if(query.page==='library')return model.papers.length;
+    if(query.page==='activity')return model.history.length;
+    if(query.page==='assignment'||query.page==='review')return model.suggestions.length;
+    if(query.page==='vocabulary'&&!query.params?.nativeMeaningReviewHidden)return model.nativeDefinitionPreparation?.rows.length??model.tagLibraryEntries?.length??model.tags.length;
+    if(query.page==='cleanup'&&query.params?.tagView==='questions')return model.tagPreparation?.questions.length??0;
+    return model.tagLibraryEntries?.length??model.tagPreparation?.tags.length??model.tags.length;
+  }
+  function acceptViewModel(model:ManagerSnapshot) {
+    state=model;
+    if(model.queue.switchingToFasterBuild||!model.queue.canUseFasterBuild)requestingFasterBuild=false;
+    if(model.connection.signingIn!==undefined)signingIn=model.connection.signingIn;
+    paperMap = new Map([...state.papers,...(state.detailPapers||[])].map(paper => [paper.id, paper]));
+    tagMap = new Map([...state.tags,...(state.detailTags||[])].map(tag => [tag.id, tag]));
+    suggestionMap = new Map(state.suggestions.map(suggestion => [suggestion.id, suggestion]));
+    papersByNativeTag = new Map();
+    for (const paper of state.papers) for (const name of paper.tags || []) {
+      const key = canonicalTagKey(name);
+      const items = papersByNativeTag.get(key) || new Set<string>();
+      items.add(paper.id); papersByNativeTag.set(key, items);
+    }
+    for (const id of searchCache.keys()) if (!paperMap.has(id)) searchCache.delete(id);
+    if (!settingsDirty) settingsDraft = { ...state.settings };
+    if (assignmentRunSelection === null) assignmentRunSelection = state.assignmentReview?.id || state.assignmentReviews?.[0]?.id || null;
+    if (!assignmentViewInitialized) {
+      const active = (state.assignmentReviews || (state.assignmentReview ? [state.assignmentReview] : [])).find(review => review.status !== 'finished');
+      if (active) { assignmentRunSelection = active.id;assignmentView = 'suggestions'; }
+      if (active || page === 'assignment' || page === 'review') assignmentViewInitialized = true;
+    }
+    if (!workflowInitialized) {
+      if (!options.page && !options.createDetail && !options.tagId) page = state.taxonomyReady ? 'vocabulary' : 'cleanup';
+      buildScope = state.workflow?.buildScope || (state.taxonomyReady ? 'selected' : 'pilot');
+      assignmentScope = state.workflow?.assignmentScope || 'library';
+      assignmentTagShelfId = state.workflow?.assignmentTagShelfId || 'all';
+      buildMode = state.taxonomyReady ? 'extend' : state.workflow?.buildMode || 'replace';
+      workflowInitialized = true;
+    }
+    if (state.tagShelves) {
+      const shelfIds = new Set(state.tagShelves.map(shelf => shelf.id));
+      if (libraryTagShelfId !== 'all' && !shelfIds.has(libraryTagShelfId)) { libraryTagShelfId = 'all';vocabularyPage = 0;renamingShelf = ''; }
+      if (assignmentTagShelfId !== 'all' && !shelfIds.has(assignmentTagShelfId)) assignmentTagShelfId = state.workflow?.assignmentTagShelfId && shelfIds.has(state.workflow.assignmentTagShelfId) ? state.workflow.assignmentTagShelfId : 'all';
+    }
+    if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
+  }
+  function observeView(query:ViewQuery):Promise<void> {
+    const epoch=++viewEpoch;
+    cleanupDropdowns(doc);
+    viewController?.abort();stopView?.();
+    viewController=new AbortController();viewRevision=-1;
+    viewQueryKey=JSON.stringify(query);
+    viewSearchKey=JSON.stringify([paperQuery,vocabQuery,conceptQuery,activityHistoryQuery,attentionQuery,existingTagQuery]);
+    if(!state)app!.setAttribute('data-smart-tags-state','loading');
+    return new Promise<void>((resolve,reject)=>{
+      let settled=false;
+      const timeout=()=>{if(settled)return;settled=true;reject(new Error('This page is taking longer than expected to load. Try again.'));};
+      let timer=win.setTimeout(timeout,15000);
+      const finish=(error?:Error)=>{if(settled)return;settled=true;win.clearTimeout(timer);error?reject(error):resolve();};
+      const receive=(event:ViewEvent)=>{
+        if(disposed||epoch!==viewEpoch||viewController?.signal.aborted)return;
+        if(event.revision<viewRevision)return;
+        if(event.phase==='loading'){
+          if(!settled){win.clearTimeout(timer);timer=win.setTimeout(timeout,15000);}
+          if(!state){loadingMessage=event.message||'Opening Smart Tags…';loadingProgress=event.progress;render(true);}return;
+        }
+        if(event.phase==='error'){const error=new Error(event.error||'This page could not be loaded.');finish(error);showError(error);return;}
+        if(event.phase!=='ready'||!event.model)return;
+        loadingMessage='';loadingProgress=undefined;viewRevision=event.revision;viewTotal=event.total;viewOffset=Number(query.cursor)||0;viewRowCount=primaryRowCount(query,event.model);viewNextCursor=event.nextCursor??(event.total!==undefined&&viewRowCount&&viewOffset+viewRowCount<event.total?String(viewOffset+viewRowCount):undefined);
+        const cursorKey=JSON.stringify({page:query.page,params:query.params,limit:query.limit}),cursors=viewCursors.get(cursorKey),index=queryPageIndexes.get(query)??0;
+        if(cursors){for(const key of cursors.keys())if(key>index+1)cursors.delete(key);if(viewNextCursor!==undefined)cursors.set(index+1,viewNextCursor);else cursors.delete(index+1);}
+        acceptViewModel(event.model);finish();
+        if(!busy)render(true);
+      };
+      try{stopView=api.watch(query,receive,{signal:viewController!.signal});}
+      catch(error){finish(error instanceof Error?error:new Error(String(error)));}
+      viewController!.signal.addEventListener('abort',()=>finish(),{once:true});
+    });
+  }
   async function refresh() {
-    if (disposed) return;
-    if (refreshing) { refreshAgain = true; return; }
-    refreshing = true;
-    try {
-      do {
-        refreshAgain = false;
-        diagnostic('snapshot begin');
-        if (!state) app!.setAttribute('data-smart-tags-state', 'loading');
-        let snapshotTimer = 0;
-        try {
-          state = await Promise.race([
-            api.snapshot(),
-            new Promise<never>((_resolve, reject) => { snapshotTimer = win.setTimeout(() => reject(new Error('Your library is taking longer than expected to load. Try reopening Smart Tags.')), 15000); }),
-          ]);
-        } finally { if (snapshotTimer) win.clearTimeout(snapshotTimer); }
-        if (disposed) return;
-        diagnostic(`snapshot complete: ${state.papers.length} papers, ${state.tags.length} definitions`);
-        paperMap = new Map(state.papers.map(paper => [paper.id, paper]));
-        tagMap = new Map(state.tags.map(tag => [tag.id, tag]));
-        suggestionMap = new Map(state.suggestions.map(suggestion => [suggestion.id, suggestion]));
-        papersByNativeTag = new Map();
-        for (const paper of state.papers) for (const name of paper.tags || []) {
-          const key = canonicalTagKey(name);
-          const items = papersByNativeTag.get(key) || new Set<string>();
-          items.add(paper.id); papersByNativeTag.set(key, items);
-        }
-        for (const id of searchCache.keys()) if (!paperMap.has(id)) searchCache.delete(id);
-        if (!settingsDirty) settingsDraft = { ...state.settings };
-        if (assignmentRunSelection === null) assignmentRunSelection = state.assignmentReview?.id || state.assignmentReviews?.[0]?.id || null;
-        if (!assignmentViewInitialized) {
-          const active = (state.assignmentReviews || (state.assignmentReview ? [state.assignmentReview] : [])).find(review => review.status !== 'finished');
-          if (active) { assignmentRunSelection = active.id;assignmentView = 'suggestions'; }
-          if (active || page === 'assignment' || page === 'review') assignmentViewInitialized = true;
-        }
-        if (!workflowInitialized) {
-          if (!options.page && !options.createDetail && !options.tagId) page = state.taxonomyReady ? 'vocabulary' : 'cleanup';
-          buildScope = state.workflow?.buildScope || (state.taxonomyReady ? 'selected' : 'pilot');
-          assignmentScope = state.workflow?.assignmentScope || 'library';
-          assignmentTagShelfId = state.workflow?.assignmentTagShelfId || 'all';
-          buildMode = state.taxonomyReady ? 'extend' : state.workflow?.buildMode || 'replace';
-          workflowInitialized = true;
-        }
-        if (state.tagShelves) {
-          const shelfIds = new Set(state.tagShelves.map(shelf => shelf.id));
-          if (libraryTagShelfId !== 'all' && !shelfIds.has(libraryTagShelfId)) { libraryTagShelfId = 'all';vocabularyPage = 0;renamingShelf = ''; }
-          if (assignmentTagShelfId !== 'all' && !shelfIds.has(assignmentTagShelfId)) assignmentTagShelfId = state.workflow?.assignmentTagShelfId && shelfIds.has(state.workflow.assignmentTagShelfId) ? state.workflow.assignmentTagShelfId : 'all';
-        }
-        if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
-      } while (refreshAgain && !disposed);
-      render();
-    } catch (error) { diagnostic(`snapshot failed: ${error instanceof Error ? error.message : String(error)}`); showError(error); }
-    finally { refreshing = false; }
+    if(disposed)return;
+    if(searchTimer){win.clearTimeout(searchTimer);searchTimer=0;}
+    try{await observeView(viewQuery());if(!disposed)render();}
+    catch(error){if(!disposed){diagnostic(`view failed: ${error instanceof Error?error.message:String(error)}`);showError(error);}}
+  }
+  function ensureView() {
+    if(disposed)return;
+    const query=viewQuery(),key=JSON.stringify(query);
+    if(key===viewQueryKey)return;
+    const searchKey=JSON.stringify([paperQuery,vocabQuery,conceptQuery,activityHistoryQuery,attentionQuery,existingTagQuery]);
+    const changedSearch=!!viewQueryKey&&searchKey!==viewSearchKey;viewSearchKey=searchKey;
+    if(searchTimer)win.clearTimeout(searchTimer);
+    if(changedSearch){
+      ++viewEpoch;viewController?.abort();stopView?.();stopView=null;viewQueryKey=key;
+      searchTimer=win.setTimeout(()=>{searchTimer=0;void observeView(query).catch(showError);},100);
+    }else void observeView(query).catch(showError);
   }
   function currentState(): ManagerSnapshot {
     if (!state) throw new Error('Smart Tags is still loading.');
@@ -462,6 +584,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   }
+  function formatBytes(bytes:number) {return bytes<1024?`${bytes} B`:bytes<1024*1024?`${(bytes/1024).toFixed(1)} KiB`:`${(bytes/(1024*1024)).toFixed(1)} MiB`;}
   function activeWarnings() {
     const records = (currentState().warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && !['evidence-gap', 'unapproved-topics'].includes(warning.code));
     if (!records.length) return null;
@@ -483,13 +606,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   async function openReviewItem(item: DisplayReviewItem) {
     const destination = await run('open-review-item', { id: item.id });
     if (item.kind === 'assignment') { assignmentRunSelection = destination?.runId || item.taskId;assignmentView = 'suggestions';nav('assignment');return; }
-    if (item.ownerPage === 'vocabulary') openNativeMeanings();
+    if (item.ownerPage === 'vocabulary') openNativeMeanings({workId:item.workId||item.taskId,entryId:item.questionId||''});
     else { tagView = 'questions';nav(destination?.page || 'cleanup'); }
   }
   function nativeReviewRow(item: DisplayReviewItem) {
     const work = currentState().nativeDefinitionPreparation;
-    return work && (work.id === item.taskId || work.id === item.workId) ? work.rows.find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
+    return work && (work.id === item.taskId || work.id === item.workId) ? nativeMeaningRows().find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
   }
+  function nativeMeaningRows() {const s=currentState();return [...s.nativeDefinitionPreparation?.rows||[],...s.detailNativeMeaningRows||[]];}
+  function preparationTags(preparation=currentState().tagPreparation) {return [...preparation?.tags||[],...preparation?.detailTags||[]];}
   function nativeSourceReview(row?: NativeMeaningRow) {
     return !!row?.chosenMeaning && row.questionKind !== 'protection' && !nativePersonalReview(row) && row.personalTreatment !== 'personal' && !!row.sourceIssues?.length;
   }
@@ -531,7 +656,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function nativeReviewTarget(element: HTMLElement, row: NativeMeaningRow) { element.id=`native-review-${row.id}`;element.tabIndex=-1;return element; }
   function nativeMeaningSaveMessage(workId: string, entryId: string) {
-    const work=currentState().nativeDefinitionPreparation,row=work?.id === workId ? work.rows.find(row => row.id === entryId) : undefined;
+    const work=currentState().nativeDefinitionPreparation,row=work?.id === workId ? nativeMeaningRows().find(row => row.id === entryId) : undefined;
     if (row?.applied) return 'Meaning saved to your tag library.';
     if (work?.id === workId) {
       if (work.status === 'queued') return 'Meaning kept. Linked papers are queued for checking.';
@@ -560,7 +685,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if(later)actions.append(button('Later',later,'quiet small',disabled));
     const optional=h('details','native-meaning-options',h('summary','','Edit options'));
     optional.id=`native-edit-options-${row.id}`;optional.open=nativeEditOptionsOpen.has(row.id);
-    optional.addEventListener('toggle',() => { if(optional.isConnected)optional.open ? nativeEditOptionsOpen.add(row.id) : nativeEditOptionsOpen.delete(row.id); });
+    listen(optional,'toggle',event => { const current=event.currentTarget as HTMLDetailsElement;if(current.isConnected)current.open ? nativeEditOptionsOpen.add(row.id) : nativeEditOptionsOpen.delete(row.id); });
     if (!saved.length && (row.status === 'question' || row.status === 'failed') && !row.applied && !row.canUseProposedMeaning && !row.choices?.length && row.questionKind !== 'protection') { const retry=button('Ask AI again',() => run('retry-proposed-tag-meaning',{id:workId,entryId:row.id},'AI is preparing another proposal.'),'small',disabled || !canAnalyze() || currentState().canPrepareNativeMeanings === false);retry.id=`retry-native-proposed-${row.id}`;retry.setAttribute('aria-label',`Ask AI again for ${row.sourceName}`);actions.append(retry); }
     const currentWork=currentState().nativeDefinitionPreparation;
     const edit=button('Edit meaning',() => { if(page !== 'vocabulary')nav('vocabulary',true);nativeMeaningReviewHidden=false;editNativeMeaning(workId,row); },'quiet small',currentWork?.status === 'queued' || currentWork?.status === 'running');edit.id=`edit-native-meaning-${row.id}`;edit.setAttribute('aria-label',`Edit meaning for ${row.sourceName}`);optional.append(edit);
@@ -625,10 +750,20 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return !!treatments && [tag.name,tag.fullName,...tag.aliases].some(name => name ? treatments[canonicalTagKey(name)] === 'personal' : false);
   }
   function assignmentTags() { return approvedTags().filter(tag => !personalTag(tag)); }
+  function assignmentTagCount() {return currentState().totals?.assignableTags??assignmentTags().length;}
+  function remotePage(noun=''):boolean {
+    if(viewTotal===undefined)return false;
+    return page==='library'&&!noun||page==='activity'&&noun==='changes'||(page==='assignment'||page==='review')&&!noun||page==='vocabulary'&&noun===(nativeMeaningReviewHidden?'tags':'meanings')||page==='cleanup'&&noun===(tagView==='questions'?'questions':'tags');
+  }
+  function pageRows<T>(rows:T[],pageIndex:number,size:number,noun=''):T[] {return remotePage(noun)?rows:rows.slice(pageIndex*size,(pageIndex+1)*size);}
+  function pageTotal(local:number,noun=''):number {return remotePage(noun)?viewTotal!:local;}
+  function hasPages(local:number,size:number,noun=''){return remotePage(noun)?viewOffset>0||viewNextCursor!==undefined:local>size;}
   function pagination(total: number, pageIndex: number, change: (next: number) => void, pageSize = PAGE_SIZE, noun = '') {
+    total=pageTotal(total,noun);
     const pages = Math.max(1, Math.ceil(total / pageSize));
-    return h('div', 'inline between', h('span', 'muted', total ? `${pageIndex * pageSize + 1}–${Math.min(total, (pageIndex + 1) * pageSize)} of ${total}` : '0 results'),
-      h('div', 'inline', button(`Previous${noun ? ` ${noun}` : ''}`, () => { change(pageIndex - 1); render(); }, 'small', pageIndex <= 0), h('span', 'muted', `${pageIndex + 1} / ${pages}`), button(`Next${noun ? ` ${noun}` : ''}`, () => { change(pageIndex + 1); render(); }, 'small', pageIndex >= pages - 1)));
+    const remote=remotePage(noun),offset=remote?viewOffset:pageIndex*pageSize,count=remote?viewRowCount:pageSize;
+    return h('div', 'inline between', h('span', 'muted', total ? `${offset + 1}–${Math.min(total, offset+count)} of ${total}` : '0 results'),
+      h('div', 'inline', button(`Previous${noun ? ` ${noun}` : ''}`, () => { change(pageIndex - 1); render(); }, 'small', pageIndex <= 0), h('span', 'muted', remote?`Page ${pageIndex+1}`:`${pageIndex + 1} / ${pages}`), button(`Next${noun ? ` ${noun}` : ''}`, () => { change(pageIndex + 1); render(); }, 'small', remote?viewNextCursor===undefined:pageIndex >= pages - 1)));
   }
   function assignmentReviews(): DisplayAssignmentReview[] { const s = currentState();return s.assignmentReviews?.length ? s.assignmentReviews : s.assignmentReview ? [s.assignmentReview] : []; }
   function selectedAssignmentReview() { return assignmentReviews().find(review => review.id === assignmentRunSelection); }
@@ -706,7 +841,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const q = currentState().queue;
     if (!q.canUseFasterBuild && !q.switchingToFasterBuild) return null;
     if (q.switchingToFasterBuild && q.status === 'paused') return null;
-    return button(q.switchingToFasterBuild ? 'Switching to faster build…' : 'Use faster build', () => run('use-faster-build', { targetCount: 60 }, 'Switching to faster build. Completed paper analysis is kept.'), kind, q.switchingToFasterBuild === true);
+    return button(q.switchingToFasterBuild ? 'Switching to faster build…' : 'Use faster build', async () => {requestingFasterBuild=true;try{await run('use-faster-build', { targetCount: 60 }, 'Switching to faster build. Completed paper analysis is kept.');}catch(error){requestingFasterBuild=false;render();throw error;}}, kind, q.switchingToFasterBuild === true||requestingFasterBuild);
   }
   function resumeQueueButton(kind = '', disabled = false) {
     const q = currentState().queue, fasterBuild = q.status === 'paused' && q.switchingToFasterBuild, retry = !fasterBuild && q.status === 'paused' && q.selection?.failed === true;
@@ -785,7 +920,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (shouldRender) render();
   }
   function relationshipPicker(tag: DisplayTag, key: 'broaderIds' | 'relatedIds', label: string, description: string) {
-    const choices = (editorPreparationId ? currentState().tagPreparation?.tags || [] : currentState().tags).filter(other => other.id !== tag.id && !other.builtin);
+    const choices = (editorPreparationId ? preparationTags() : [...currentState().tags,...(currentState().detailTags||[])]).filter(other => other.id !== tag.id && !other.builtin);
     const query = relationQueries.get(key) || '';
     const selected = tag[key] || [];
     const list = h('div', 'concept-picker-list');
@@ -799,7 +934,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (visible.length > 100) list.append(h('p', 'muted', 'Refine the search to see more tags.'));
     const picker = h('details', 'relationship-picker', h('summary', '', `${label} · ${selected.length} selected`), h('p', 'card-description', description), input(`tag-${key}-search`, query, value => { relationQueries.set(key, value); openRelationshipPickers.add(key); render(); }, 'Find a tag…', 'search'), list);
     picker.open = openRelationshipPickers.has(key);
-    picker.addEventListener('toggle', () => { if (picker.isConnected) picker.open ? openRelationshipPickers.add(key) : openRelationshipPickers.delete(key); });
+    listen(picker,'toggle', event => { const current=event.currentTarget as HTMLDetailsElement;if (current.isConnected) current.open ? openRelationshipPickers.add(key) : openRelationshipPickers.delete(key); });
     return picker;
   }
   function definitionKey(tag: DisplayTag) {
@@ -807,8 +942,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function editorDirty() {
     if (!editorTag) return false;
-    const native = editorNativeEntry && currentState().nativeDefinitionPreparation?.rows.find(row => row.id === editorNativeEntry!.entryId);
-    const baseline = native ? nativeMeaningTag(native) : editorPreparationId ? currentState().tagPreparation?.tags.find(tag => tag.id === editorTag!.id) : tagById(editorTag.id);
+    const native = editorNativeEntry && nativeMeaningRows().find(row => row.id === editorNativeEntry!.entryId);
+    const baseline = native ? nativeMeaningTag(native) : editorPreparationId ? preparationTags().find(tag => tag.id === editorTag!.id) : tagById(editorTag.id);
     if (baseline) return definitionKey(editorTag) !== definitionKey(baseline);
     return !!(editorTag.name || editorTag.description || editorTag.fullName || editorTag.aliases.length || editorTag.inclusions.length || editorTag.exclusions.length || editorTag.examples.length || editorTag.broaderIds.length || editorTag.relatedIds?.length);
   }
@@ -827,9 +962,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const tag = editorTag;
     const preparationId = editorPreparationId;
     const nativeEntry = editorNativeEntry;
-    const nativeRow=nativeEntry && currentState().nativeDefinitionPreparation?.id === nativeEntry.workId ? currentState().nativeDefinitionPreparation!.rows.find(row => row.id === nativeEntry.entryId) : undefined;
+    const nativeRow=nativeEntry && currentState().nativeDefinitionPreparation?.id === nativeEntry.workId ? nativeMeaningRows().find(row => row.id === nativeEntry.entryId) : undefined;
     const draftKey = editorDraftKey(tag);
-    const orphaned = !!preparationId && state?.tagPreparation?.id === preparationId && !state.tagPreparation.tags.some(saved => saved.id === tag.id);
+    const orphaned = !!preparationId && state?.tagPreparation?.id === preparationId && !preparationTags().some(saved => saved.id === tag.id);
     const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
     const advanced = h('details', 'editor-advanced', h('summary', '', 'More options'),
       field('Full name', input('tag-full-name', tag.fullName || '', value => { tag.fullName = value; }, 'Expand an abbreviation when helpful')),
@@ -843,7 +978,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       field('Paper matching', select('tag-matching-mode', tag.matchingMode || (tag.custom ? 'suggest' : 'auto'), [['manual', 'Only when I choose'], ['suggest', 'Suggest paper matches'], ['auto', 'Match automatically']], value => { tag.matchingMode = value; }), 'Matching new papers automatically also needs your explicit switch on Assign tags.'),
       tag.custom && !tag.id ? button('Use RCL example', () => { tag.name = 'RCL';tag.fullName = 'Catalyst-layer resistance';tag.description = 'Catalyst-layer resistance in water electrolysis or fuel cells.';render(); }, 'quiet small') : null);
     advanced.open = editorAdvancedOpen;
-    advanced.addEventListener('toggle', () => { if (advanced.isConnected) editorAdvancedOpen = advanced.open; });
+    listen(advanced,'toggle', event => { const current=event.currentTarget as HTMLDetailsElement;if (current.isConnected) editorAdvancedOpen = current.open; });
     const form = h('form', 'editor-scroll',
       orphaned ? h('p', 'notice warning', 'This tag left the suggested list. Copy your changes, save them to your tag library, or cancel this draft. Matching will start with suggestions; suggested-list relationships are not copied.') : null,
       nativeRow ? h('p','card-description',nativeRow.chosenMeaning ? 'Your meaning is selected. Revisions may require new checks of the linked papers.' : nativeHasDraft(nativeRow) ? 'This draft is not selected yet. Saving uses this meaning in your tag library. Existing paper tags stay unchanged.' : 'Saving uses this meaning in your tag library. Existing paper tags stay unchanged.') : null,
@@ -868,7 +1003,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       delete submitted.nativeBindingExclusions;
       if (nativeEntry) {
         const work = currentState().nativeDefinitionPreparation;
-        if (work?.id !== nativeEntry.workId || !work.rows.some(row => row.id === nativeEntry.entryId)) throw new Error('This meaning preparation changed. Reopen the tag before saving.');
+        if (work?.id !== nativeEntry.workId || !nativeMeaningRows().some(row => row.id === nativeEntry.entryId)) throw new Error('This meaning preparation changed. Reopen the tag before saving.');
         await run('edit-tag-meaning', { id: nativeEntry.workId, entryId: nativeEntry.entryId, tag: submitted });
         notify(nativeMeaningSaveMessage(nativeEntry.workId,nativeEntry.entryId));
       } else if (preparationId) {
@@ -885,14 +1020,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       editorDrafts.delete(`${preparationId}:${tag.id}`);
       if (editorTag === tag) { editorTag = null;editorPreparationId = '';render(); }
     };
-    form.addEventListener('submit', event => { event.preventDefault();void save().catch(showError); });
+    listen(form,'submit', event => { event.preventDefault();void save().catch(showError); });
     const cancel = () => { editorDrafts.delete(draftKey);editorTag = null;editorPreparationId = '';editorNativeEntry = null;pendingEditorFocus = editorReturnFocus;render(); };
     const saveButton = h('button', orphaned ? '' : 'primary', 'Save');saveButton.id = 'save-tag';saveButton.type = 'submit';saveButton.setAttribute('form',form.id);saveButton.disabled = orphaned || busy;
     const close = button('Close editor',closeEditor,'quiet small');close.id = 'close-tag-editor';
     const discard = button('Discard changes',cancel,'quiet');discard.id = 'discard-tag-draft';
     const status = h('span', 'editor-status','Unsaved changes');status.id = 'tag-editor-status';status.hidden = !editorDirty();status.setAttribute('aria-live','polite');
-    const editor = h('section', 'card editor tag-editor', h('div', 'card-header inline between', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag'),close), form, h('div', 'card-footer editor-footer',status,saveButton,orphaned ? button('Save to tag library', saveAsDetail, 'primary') : null,discard));
-    editor.addEventListener('keydown', event => {
+    const editor = h('section', 'card editor tag-editor', h('div', 'card-header inline between', h('h2', '', tag.id ? `Edit ${tag.name}` : 'Add a tag'),close), form, h('div', 'card-footer editor-footer',status,saveButton,orphaned ? button('Save to tag library', saveAsDetail, 'primary') : null,discard));editor.id='tag-editor';
+    listen(editor,'keydown', event => {
       if (busy || event.defaultPrevented || event.isComposing) return;
       if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();closeEditor(); }
       else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault();event.stopPropagation();void save().catch(showError); }
@@ -904,7 +1039,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const s = currentState();
     const readyTags=forAssignment ? assignmentTags() : approvedTags();
     const label = (name: string, total: number, ready: number) => `${name} · ${total}${total === ready ? ' tags' : ` total · ${ready} ready`}`;
-    return [['all', label('All tags', s.tagLibraryEntries?.length ?? approvedTags().length, readyTags.length)], ...(s.tagShelves || []).map(shelf => [shelf.id, label(shelf.name, shelf.count, readyTags.filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string])];
+    return [['all', label('All tags', s.totals?.tags??s.tagLibraryEntries?.length??approvedTags().length, forAssignment?s.totals?.assignableTags??readyTags.length:s.totals?.definedTags??readyTags.length)], ...(s.tagShelves || []).map(shelf => [shelf.id, label(shelf.name, shelf.count, (forAssignment?shelf.assignableCount:shelf.readyCount)??readyTags.filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string])];
   }
   function libraryShelfControls(search: HTMLElement) {
     const shelf = currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
@@ -926,7 +1061,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function orphanedPreparedDrafts() {
     const preparation = state?.tagPreparation;
     if (!preparation) return [];
-    const ids = new Set(preparation.tags.map(tag => tag.id));
+    const ids = new Set(preparationTags(preparation).map(tag => tag.id));
     return [...currentDrafts()].filter(([key, draft]) => key.startsWith(`${preparation.id}:`) && !ids.has(draft.id)).map(([, draft]) => draft);
   }
   function hasUnsavedPreparedChanges() {
@@ -935,7 +1070,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     for (const [key, draft] of currentDrafts()) {
       const relevant = key.startsWith(`${preparation.id}:`) || (key.startsWith(':') && draft.custom);
       if (!relevant) continue;
-      const saved = preparation.tags.find(tag => tag.id === draft.id);
+      const saved = preparationTags(preparation).find(tag => tag.id === draft.id);
       if (!saved || definitionKey(saved) !== definitionKey(draft)) return true;
     }
     return false;
@@ -992,7 +1127,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const proposed = nativeMeaningTag(row);
     editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();focusTagEditorField('tag-description');
   }
-  function openNativeMeanings() { nav('vocabulary',true); }
+  function openNativeMeanings(target?:{workId:string;entryId:string}) { pendingNativeReview=target??null;nav('vocabulary',true); }
   function openNativeSourceReview(row: NativeMeaningRow) {
     const work=currentState().nativeDefinitionPreparation,item=(currentState().reviewItems || []).find(item => item.ownerPage === 'vocabulary' && item.workId === work?.id && item.questionId === row.id && item.state !== 'resolved');
     if (item?.state === 'deferred') deferredReviewOpen=true;
@@ -1009,8 +1144,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const work = currentState().nativeDefinitionPreparation;
     if (!work || work.status === 'finished' && !(work.processingPolicy === 'auto-clear' && work.lastChangeId)) return null;
     if (work.processingPolicy === 'auto-clear') {
-      const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id));
-      const questions = work.rows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
+      const displayedRows=nativeMeaningRows(),displayedIds=new Set(displayedRows.map(row=>row.id));
+      const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id)&&(!remotePage('meanings')||!!item.questionId&&displayedIds.has(item.questionId)));
+      const questions = displayedRows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
       const meaningQuestions = questions.length;
       const deferredCount = items.filter(item => item.state === 'deferred').length;
       const savedCount = work.savedCount ?? 0;
@@ -1024,16 +1160,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => nativePersonalReview(row) ? nativeReviewTarget(h('article','tag-row',h('strong','',row.sourceName),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row)),row) : nativeReviewTarget(h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row) || nativeDraftMeaning(row),nativeSavedMeanings(row),h('p', '',nativeDecisionMessage(row)),nativeDecisionActions(work.id,row)),row))) : null;
       const taskSummary=h('section','task-summary library-meaning-summary',summary,actions);taskSummary.id='native-meaning-summary';taskSummary.tabIndex=-1;
       return h('div', 'stack',taskSummary,
-        !nativeMeaningReviewHidden ? reviewInbox(items,'Needs your choice',true) : null,fallback);
+        !nativeMeaningReviewHidden ? reviewInbox(items,'Needs your choice',true) : null,fallback,!nativeMeaningReviewHidden&&hasPages(work.rows.length,20,'meanings')?pagination(work.rows.length,nativeMeaningPage,next=>{nativeMeaningPage=next;},20,'meanings'):null);
     }
     if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
     if (nativeMeaningReviewHidden) return null;
-    const rows = work.rows.filter(row => !row.applied && row.status !== 'left-undefined'), ready = rows.filter(row => row.status === 'ready' && !excludedNativeMeaningRows.has(row.id));
+    const rows = nativeMeaningRows().filter(row => !row.applied && row.status !== 'left-undefined'), ready = rows.filter(row => row.status === 'ready' && !excludedNativeMeaningRows.has(row.id));
     const questions = rows.filter(row => row.status === 'question').length;
     const unsaved = new Set(work.rows.filter(row => nativeMeaningChanged(work.id,row)).map(row => row.id));
     const savedCount = work.savedCount ?? work.rows.filter(row => row.applied).length;
     const leftCount = work.leftUndefinedCount ?? work.rows.filter(row => row.status === 'left-undefined').length;
-    nativeMeaningPage = Math.min(nativeMeaningPage,Math.max(0,Math.ceil(rows.length / 20) - 1));
+    if(!remotePage('meanings'))nativeMeaningPage = Math.min(nativeMeaningPage,Math.max(0,Math.ceil(rows.length / 20) - 1));
     const running = work.status === 'running' || work.status === 'queued';
     const summary = running ? `${work.completed} of ${work.total} names prepared` : questions ? `${questions} ${questions === 1 ? 'tag needs' : 'tags need'} attention.${ready.length ? ' Ready meanings can be saved separately.' : ' Use the actions below, or leave a name undefined.'}` : rows.length ? 'Save the ready meanings together. Paper tags stay unchanged.' : `${savedCount} saved · ${leftCount} left undefined. Paper tags are unchanged.`;
     const body = h('div','native-meaning-review',h('p','card-description',summary));
@@ -1042,7 +1178,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (spentUSD > 0) body.append(h('p','card-description',`Estimated API use: $${spentUSD.toFixed(4)}${work.budgetUSD === undefined ? '' : ` of $${work.budgetUSD.toFixed(2)}`}`));
     if (work.error) body.append(h('p','notice warning',humanMessage(work.error)));
     const clear=clearNativeMeanings(work);if (clear) body.append(clear);
-    for (const row of rows.slice(nativeMeaningPage * 20,(nativeMeaningPage + 1) * 20)) {
+    for (const row of pageRows(rows,nativeMeaningPage,20,'meanings')) {
       if (nativePersonalReview(row)) { body.append(nativeReviewTarget(h('article','tag-row',h('div','inline between',h('strong','',row.sourceName),badge('Personal label','draft')),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row,unsaved.has(row.id))),row));continue; }
       const suggestible = row.canSuggestMeaning ?? row.needsContinuation;
       const source = row.name && row.name !== row.sourceName ? h('p','card-description',`From: ${row.sourceName}`) : null;
@@ -1052,7 +1188,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (row.status !== 'pending') article.append(nativeDecisionActions(work.id,row,undefined,running || unsaved.has(row.id)));
       body.append(article);
     }
-    if (rows.length > 20) body.append(pagination(rows.length,nativeMeaningPage,next => { nativeMeaningPage = next; },20,'meanings'));
+    if (hasPages(rows.length,20,'meanings')) body.append(pagination(rows.length,nativeMeaningPage,next => { nativeMeaningPage = next; },20,'meanings'));
     const saveReady = async () => {
       await run('apply-tag-meanings',{id:work.id,rowIds:ready.map(row => row.id)},'Tag meanings saved. Paper tags are unchanged.');
       const saved = currentState().nativeDefinitionPreparation?.rows.filter(row => row.applied).map(row => row.id) || [];
@@ -1082,21 +1218,21 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const personalQuestions=new Map((s.nativeDefinitionPreparation?.rows || []).filter(row => !row.applied && row.status === 'question' && nativePersonalReview(row)).map(row => [row.sourceName,row]));
     const nativeSourceRows=new Map((s.nativeDefinitionPreparation?.rows || []).filter(row => !row.applied && row.status !== 'left-undefined' && !nativePersonalReview(row)).map(row => [row.sourceName,row]));
     if (!prepared) for (const name of selectedNativeNames) if (personalName(name) || personalQuestions.has(name) || nativeSourceRows.has(name)) selectedNativeNames.delete(name);
-    if (!prepared && s.tagLibraryEntries) {
+    if (!prepared && s.tagLibraryEntries && !remotePage('tags')) {
       const available = new Set(s.tagLibraryEntries.filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag' && !nativeSourceRows.has(entry.name) && !personalQuestions.has(entry.name) && !personalName(entry.name)).map(entry => entry.name));
       for (const name of selectedNativeNames) if (!available.has(name)) selectedNativeNames.delete(name);
     }
-    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return (libraryTagStatus === 'all' || libraryTagStatus === 'ready' && !!tag || libraryTagStatus === 'undefined' && !tag && !entry.protected && entry.name !== 'no_tag' && !personalName(entry.name)) && (!query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query)); });
-    const tags = workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)) && (prepared || libraryTagStatus !== 'undefined'));
+    const nativeNames = remotePage('tags')?libraryEntries:libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return (libraryTagStatus === 'all' || libraryTagStatus === 'ready' && !!tag || libraryTagStatus === 'undefined' && !tag && !entry.protected && entry.name !== 'no_tag' && !personalName(entry.name)) && (!query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query)); });
+    const tags = remotePage('tags')?workingTags(preparation):workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)) && (prepared || libraryTagStatus !== 'undefined'));
     const questions = preparation?.questions || [];
     const view = preparation && questions.length ? tagView : 'tags';
     const savedIds = new Set(approvedTags().map(tag => tag.id));
     const addedCount = preparation?.tags.filter(tag => !savedIds.has(tag.id)).length || 0;
-    vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil((nativeNames?.length ?? tags.length) / 20) - 1));
-    tagQuestionPage = Math.min(tagQuestionPage, Math.max(0, Math.ceil(questions.length / 10) - 1));
+    if(!remotePage('tags'))vocabularyPage = Math.min(vocabularyPage, Math.max(0, Math.ceil((nativeNames?.length??tags.length)/20) - 1));
+    if(!remotePage('questions'))tagQuestionPage = Math.min(tagQuestionPage, Math.max(0, Math.ceil(questions.length/10) - 1));
     const status = preparation?.status === 'checking' ? 'Checking your tags…' : preparation?.status === 'questions' ? `${questions.length} ${questions.length === 1 ? 'question needs' : 'questions need'} your choice` : preparation?.status === 'failed' ? 'Your tag list needs another try' : preparation ? 'Your tag list is ready' : shelf?.name || 'Your tags';
     const add = button('Add tag', () => newTag(true), preparation ? 'quiet' : 'primary');add.id = 'add-tag';
-    const header = h('div', `tag-workspace-header${preparation ? '' : ' library-overview'}`, h('div', '', preparation ? h('h2', '', status) : null, h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${preparation.tags.length} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : libraryEntries ? `${libraryEntries.length} tags` : `${workingTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id)).length} saved tags`), extending ? h('p', 'card-description', preparation?.needsRefresh ? 'Your saved tags changed. Compare these additions with the current list and apply.' : 'Your saved tags are kept.') : null), h('div', 'inline', add, preparation ? button(preparation.needsRefresh ? 'Update and apply' : 'Apply tag list', () => applyTagList(preparation), 'primary', !preparation.canApply || preparation.status === 'checking') : null));
+    const header = h('div', `tag-workspace-header${preparation ? '' : ' library-overview'}`, h('div', '', preparation ? h('h2', '', status) : null, h('p', 'card-description', extending ? `${savedIds.size} saved + ${addedCount} new = ${savedIds.size + addedCount} total · ${preparation!.scopeCount} papers` : preparation ? `${pageTotal(preparation.tags.length,'tags')} tags · ${preparation.scopeCount} papers · preferred count ${preparation.targetCount}` : libraryEntries ? `${s.totals?.tags??libraryEntries.length} tags` : `${s.totals?.tags??workingTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id)).length} saved tags`), extending ? h('p', 'card-description', preparation?.needsRefresh ? 'Your saved tags changed. Compare these additions with the current list and apply.' : 'Your saved tags are kept.') : null), h('div', 'inline', add, preparation ? button(preparation.needsRefresh ? 'Update and apply' : 'Apply tag list', () => applyTagList(preparation), 'primary', !preparation.canApply || preparation.status === 'checking') : null));
     if (preparation) header.querySelector<HTMLButtonElement>('.primary')!.id = 'apply-tag-list';
     const tabs = h('div', 'tag-workspace-tabs');
     tabs.setAttribute('role', 'tablist');tabs.setAttribute('aria-label', 'Tags and questions');
@@ -1108,7 +1244,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     function librarySearch() {
       const search=input('vocabulary-search',vocabQuery,value => { vocabQuery=value;vocabularyPage=0;if(!prepared)browseTags();render(); },'Find a tag or another name…','search');
       search.setAttribute('aria-label','Search tags');
-      search.addEventListener('keydown',event => { if(event.key==='Escape' && vocabQuery) { event.preventDefault();event.stopPropagation();clearLibrarySearch(); } });
+      listen(search,'keydown',event => { if(event.key==='Escape' && vocabQuery) { event.preventDefault();event.stopPropagation();clearLibrarySearch(); } });
       const clear=vocabQuery ? button('Clear search',clearLibrarySearch,'quiet small') : null;
       if(clear){clear.id='clear-library-search';clear.setAttribute('aria-label','Clear tag search');}
       return h('div','library-search',field('Search tags',search),clear);
@@ -1123,8 +1259,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (preparation?.status === 'checking') content.append(h('div', 'notice info', h('p', '', 'Your papers have been read. We are checking the tag names and meanings.'), s.queue.status !== 'running' ? button('Resume checks', () => run('retry-tag-preparation', { id: preparation.id }, 'Checking your tags.'), 'small') : null));
     if (view === 'questions') {
       if (!questions.length) content.append(empty('No questions waiting', 'You can browse or edit the tags before applying the list.', button('Back to tags', () => { tagView = 'tags';render(); }, 'quiet')));
-      for (const question of questions.slice(tagQuestionPage * 10, (tagQuestionPage + 1) * 10)) {
-        const cardBody = h('article', 'tag-question', h('h3', '', question.title), h('p', '', question.description));
+      for (const question of pageRows(questions,tagQuestionPage,10,'questions')) {
+        const cardBody = keyed(h('article', 'tag-question', h('h3', '', question.title), h('p', '', question.description)),`tag-question:${question.id}`);
         if (question.paperIds.length) cardBody.append(h('div', 'warning-papers', ...question.paperIds.slice(0, 3).map(id => paperButton(id))));
         const choices = h('div', 'question-choices');
         for (const choice of question.choices) {
@@ -1134,10 +1270,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         }
         cardBody.append(choices);content.append(cardBody);
       }
-      if (questions.length > 10) content.append(pagination(questions.length, tagQuestionPage, next => { tagQuestionPage = next; }, 10, 'questions'));
+      if (hasPages(questions.length,10,'questions')) content.append(pagination(questions.length, tagQuestionPage, next => { tagQuestionPage = next; }, 10, 'questions'));
     } else {
       if (prepared) content.append(h('div', 'tag-list-search', librarySearch()));
-      else if (query) content.append(h('p','library-result-count',`${nativeNames?.length ?? tags.length} matching ${(nativeNames?.length ?? tags.length) === 1 ? 'tag' : 'tags'}`));
+      else if (query) {const count=pageTotal(nativeNames?.length??tags.length,'tags');content.append(h('p','library-result-count',`${count} matching ${count===1?'tag':'tags'}`));}
       const selectable = (nativeNames || []).filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag' && !nativeSourceRows.has(entry.name) && !personalQuestions.has(entry.name) && !personalName(entry.name));
       if (!preparation && (selectable.length || selectedNativeNames.size)) {
         const selection = h('div','tag-meaning-selection',selectable.length ? button('Select all names',() => { for(const entry of selectable)selectedNativeNames.add(entry.name);render(); },'quiet small') : null);
@@ -1145,7 +1281,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         content.append(selection);
       }
       if (!(nativeNames?.length ?? tags.length)) content.append(query ? empty('No matching tags', 'Try another name, or clear the search.',button('Clear search',clearLibrarySearch,'small')) : libraryTagStatus === 'undefined' ? empty('No meanings needed', 'The tags in this view already have meanings, or are kept as personal labels.') : libraryTagStatus === 'ready' ? empty('No defined tags here', 'Choose All tags to see names that still need a meaning.') : empty('No tags here yet', 'Build tags from a few papers, or add a tag of your own.'));
-      for (const entry of (nativeNames || []).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
+      for (const entry of pageRows(nativeNames||[],vocabularyPage,20,'tags')) {
         const tag = entry.tagId ? tagById(entry.tagId) : undefined;
         const protectedName = entry.protected || entry.name === 'no_tag' || tag?.builtin;
         if (personalName(entry.name) && !protectedName) {
@@ -1164,15 +1300,15 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
           content.append(h('article','tag-row',h('div','inline between',h('strong','',entry.name),review),h('p','card-description',`${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${sourceReview.chosenMeaning ? `Meaning selected: ${sourceReview.chosenMeaning.name}` : sourceReview.name ? `AI proposal: ${sourceReview.name}` : 'AI meaning preparation'}`),nativeSourceReview(sourceReview) ? h('p','card-description',nativeSourceMessage(sourceReview)) : null));continue;
         }
         const native=nativeRows.get(entry.name),savedMeaning=tag || (native?.applied ? tagById(native.targetTagId || native.tagId || '') : undefined);
-        if (savedMeaning && !protectedName) { const savedRow=savedTagRow(savedMeaning,savedMeaning.currentlyTaggedCount ?? (native?.applied ? undefined : entry.paperCount)),notes=native?.applied && native.sourceIssues?.length ? nativeMeaningSupport(native) : null;if(notes){const noteKey=native!.id,panel=notes.querySelector('details');if(panel){panel.classList.add('library-saved-notes');panel.querySelector('summary')!.id=`saved-source-notes-${encodeURIComponent(noteKey)}`;panel.open=libraryNotesOpen.has(noteKey);panel.addEventListener('toggle',() => { if(panel.isConnected)panel.open ? libraryNotesOpen.add(noteKey) : libraryNotesOpen.delete(noteKey); });savedRow.append(panel);}}content.append(savedRow);continue; }
+        if (savedMeaning && !protectedName) { const savedRow=savedTagRow(savedMeaning,savedMeaning.currentlyTaggedCount ?? (native?.applied ? undefined : entry.paperCount)),notes=native?.applied && native.sourceIssues?.length ? nativeMeaningSupport(native) : null;if(notes){const noteKey=native!.id,panel=notes.querySelector('details');if(panel){panel.classList.add('library-saved-notes');panel.querySelector('summary')!.id=`saved-source-notes-${encodeURIComponent(noteKey)}`;panel.open=libraryNotesOpen.has(noteKey);listen(panel,'toggle',event => { const current=event.currentTarget as HTMLDetailsElement;if(current.isConnected)current.open ? libraryNotesOpen.add(noteKey) : libraryNotesOpen.delete(noteKey); });savedRow.append(panel);}}content.append(savedRow);continue; }
         const edit = !protectedName ? button('Add meaning', () => addNativeMeaning(entry.name), 'quiet small') : null;
         edit?.setAttribute('aria-label', `Add meaning for ${entry.name}`);
-        content.append(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? linkedPapers(entry.name,entry.paperIds) : null));
+        content.append(keyed(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? linkedPapers(entry.name,entry.paperIds) : null),`native-tag:${entry.name}`));
       }
-      for (const tag of (nativeNames ? [] : tags).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
+      for (const tag of pageRows(nativeNames?[]:tags,vocabularyPage,20,'tags')) {
         content.append(savedTagRow(tag));
       }
-      if ((nativeNames?.length ?? tags.length) > 20) content.append(pagination(nativeNames?.length ?? tags.length, vocabularyPage, next => { vocabularyPage = next; }, 20, 'tags'));
+      if (hasPages(nativeNames?.length??tags.length,20,'tags')) content.append(pagination(nativeNames?.length ?? tags.length, vocabularyPage, next => { vocabularyPage = next; }, 20, 'tags'));
     }
     function savedTagRow(tag: DisplayTag, paperCount?: number) {
       const retained = !!preparation && tag.retained === true;
@@ -1190,7 +1326,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
       const taggedCount = paperCount ?? tagById(tag.id)?.currentlyTaggedCount ?? tag.currentlyTaggedCount ?? 0;
       const countLabel = preparation && !retained ? `${tag.coverage ?? 0} ${preparation.verificationScope === 'representative' ? 'verified example papers' : 'papers in this build'}` : `${taggedCount} ${taggedCount === 1 ? 'paper' : 'papers'} tagged`;
-      return h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null));
+      return keyed(h('article', 'tag-row', h('div', 'inline between', h('div', 'tag-heading', h('strong', '', tag.name), retained ? badge('Saved tag · kept unchanged') : null), actions), tag.fullName && tag.fullName !== tag.name ? h('p', 'concept-full-name', tag.fullName) : null, h('p', '', tag.description), h('div', 'tag-meta', h('span', '', countLabel), tag.aliases.length ? h('span', '', `Other names: ${tag.aliases.join(', ')}`) : null)),`tag:${preparation?.id||'saved'}:${tag.id}`);
     }
     const note = h('p', 'card-description', preparation ? 'Next, choose which papers to tag. No paper tags change yet.' : '');note.hidden = !preparation;
     note.id = 'tag-apply-note';
@@ -1222,7 +1358,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const body = h('div', 'stack',h('p', '', `${preparation.savedCount ?? 0} tags saved${choices ? ` · ${choices} meanings need your choice` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
         h('p', 'card-description', preparation.status === 'checking' ? 'Supported meanings are saved as their checks finish. Other choices can wait.' : 'Saved definitions are ready to use. Remaining choices do not block them.'),
         preparation.error ? h('p', 'notice warning',humanMessage(preparation.error)) : null,
-        h('div', 'task-actions',button('Open tag library',openLibrary,'small'),button('Assign tags',() => { if (preparation.shelfId) assignmentTagShelfId = preparation.shelfId;assignmentView = 'setup';nav('assignment'); },'primary',!assignmentTags().length),taskUndo(preparation.lastChangeId,'undo-build-change'),
+        h('div', 'task-actions',button('Open tag library',openLibrary,'small'),button('Assign tags',() => { if (preparation.shelfId) assignmentTagShelfId = preparation.shelfId;assignmentView = 'setup';nav('assignment'); },'primary',!assignmentTagCount()),taskUndo(preparation.lastChangeId,'undo-build-change'),
           preparation.status === 'failed' ? button('Retry build',() => run('retry-tag-preparation',{id:preparation.id}),'small') : null));
       const fallback = !s.reviewItems && preparation.questions.length ? h('div', 'stack',...preparation.questions.map(question => h('article', 'tag-question',h('h3', '', question.title),h('p', '', question.description),
         ...question.choices.map(choice => button(choice.label,() => run('answer-tag-question',{id:preparation.id,questionId:question.id,choiceId:choice.id},'Meaning selected.'),'small'))))) : null;
@@ -1243,34 +1379,39 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (assignmentView === 'suggestions') return h('div', 'stack', tabs, renderReview());
     const shelf = s.tagShelves?.find(shelf => shelf.id === assignmentTagShelfId);
     const shelfTags = assignmentTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id));
-    const unavailable = !canAnalyze() || !shelfTags.length || s.queue.status === 'running';
+    const shelfTagCount=(shelf?shelf.assignableCount:undefined)??(shelf?shelfTags.length:assignmentTagCount());
+    const unavailable = !canAnalyze() || !shelfTagCount || s.queue.status === 'running';
     const suggest = async () => { assignmentRunSelection = null;selectedSuggestions.clear();const result = await run('tag', { scope: assignmentScope, tagShelfId: assignmentTagShelfId, processingPolicy: 'auto-clear' }, 'Assigning supported tags. Other choices can wait.');if (result?.runId) assignmentRunSelection = result.runId;assignmentView = 'suggestions';render(); };
     const assignButton = button('Assign tags', suggest, 'primary', unavailable);assignButton.id = 'start-assignment';assignButton.setAttribute('aria-label', 'Assign tags to these papers');
     const group = h('section', 'task-setup', field('Tags to use', select('assignment-tag-shelf', assignmentTagShelfId, tagShelfOptions(true), value => { assignmentTagShelfId = value;render(); }, 'Assignment tag shelf')),
       field('Papers', scopeSelect('assignment-scope', assignmentScope, value => { assignmentScope = value;render(); })),
-      shelf && !shelfTags.length ? h('p', 'notice info', 'This shelf has no scientific tags available for assignment. Define a scientific meaning or choose another shelf.') : null,
+      shelf && !shelfTagCount ? h('p', 'notice info', 'This shelf has no scientific tags available for assignment. Define a scientific meaning or choose another shelf.') : null,
       s.workflow?.assignmentScope === assignmentScope ? h('p', 'card-description', `${s.workflow.assignmentPaperCount} papers in the last chosen group · ${s.workflow.assignedPaperCount} with Smart Tags assignments`) : null,
       h('p', 'card-description', 'High-confidence additions apply automatically; other changes wait for your choice.'),h('div', 'task-actions', assignButton));
     const incoming = checkbox('assignment-auto-assign', s.settings.autoAssign, 'Tag new papers automatically', value => {
       void run('save-settings', { settings: { ...currentState().settings, autoAssign: value } }, value ? 'Automatic tagging enabled for new papers.' : 'Automatic tagging disabled.').catch(showError);
-    }, !shelfTags.length || !canAnalyze());
+    }, !shelfTagCount || !canAnalyze());
     const routine = h('details','incoming-settings',h('summary','',`For new papers · ${s.settings.autoAssign ? 'On' : 'Off'}`),incoming,h('p','card-description','Uses saved tags eligible for automatic matching, within your connection and spending limit.'));
-    routine.open = incomingSettingsOpen;routine.addEventListener('toggle',() => { if (routine.isConnected) incomingSettingsOpen = routine.open; });
-    return h('div', 'stack', tabs, !approvedTags().length ? h('div', 'notice info inline between', h('span', '', 'Save a tag list before assigning paper tags.'), button('Build tags', () => nav('cleanup'), 'small')) : !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Connect an AI model before assigning tags.'), button('Connect AI', () => nav('connection'), 'small')) : null,
+    routine.open = incomingSettingsOpen;listen(routine,'toggle',event => { const current=event.currentTarget as HTMLDetailsElement;if (current.isConnected) incomingSettingsOpen = current.open; });
+    return h('div', 'stack', tabs, !(s.totals?.definedTags??approvedTags().length) ? h('div', 'notice info inline between', h('span', '', 'Save a tag list before assigning paper tags.'), button('Build tags', () => nav('cleanup'), 'small')) : !canAnalyze() ? h('div', 'notice info inline between', h('span', '', 'Connect an AI model before assigning tags.'), button('Connect AI', () => nav('connection'), 'small')) : null,
       group,routine);
   }
 
-  function nativeChanges(changes: { paperId: string; title: string; before: string[]; after: string[] }[], pageIndex: number, changed: (page: number) => void, noun: string) {
-    const index = Math.min(pageIndex, Math.max(0, Math.ceil(changes.length / 50) - 1));
+  function nativeChanges(changes: { paperId: string; title: string; before: string[]; after: string[] }[], pageIndex: number, changed: (page: number) => void, noun: string,totalInput?:number,size=50) {
+    const total=totalInput??changes.length,index = Math.min(pageIndex, Math.max(0, Math.ceil(total / size) - 1));
     const list = h('div', 'native-change-preview');
-    for (const change of changes.slice(index * 50, (index + 1) * 50)) list.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
+    for (const change of totalInput!==undefined?changes:changes.slice(index * size, (index + 1) * size)) list.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
     if (!changes.length) list.append(h('p', 'card-description', 'No paper tags need to change.'));
-    if (changes.length > 50) list.append(pagination(changes.length, index, changed, 50, noun));
+    if (total > size) list.append(pagination(total, index, changed, size, noun));
     return list;
   }
   function syncKeepChoices() {
     const existing = currentState().existingTags;
     if (!existing) return;
+    if(existing.total!==undefined){
+      if(keepPlanId!==existing.id){keptNames.clear();keepDecisions.clear();keepDraftDirty=false;keepDraftStale=false;keepPlanId=existing.id;}
+      for(const row of existing.rows)if(!keepDecisions.has(row.name)){if(row.kept||row.protected)keptNames.add(row.name);else keptNames.delete(row.name);}return;
+    }
     const inventory = JSON.stringify(existing.rows.map(row => [row.name, row.paperIds, !!row.protected, !!row.locked]));
     if (keepPlanId && keepDraftDirty && (keepPlanId !== existing.id || keepInventoryKey !== inventory)) { keepDraftStale = true;return; }
     if (!keepPlanId || !keepDraftDirty) {
@@ -1280,28 +1421,29 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   }
   function renderKeepTags() {
     const existing = currentState().existingTags;syncKeepChoices();
-    const all = existing?.rows || [], rows = all.filter(row => (!existingTagQuery || row.name.toLocaleLowerCase().includes(existingTagQuery.toLocaleLowerCase())) && (keepFilter === 'all' || keepFilter === 'kept' && keptNames.has(row.name) || keepFilter === 'remove' && !keptNames.has(row.name) || keepFilter === 'protected' && row.protected));
+    const all = existing?.rows || [], rows = existing?.total!==undefined?all:all.filter(row => (!existingTagQuery || row.name.toLocaleLowerCase().includes(existingTagQuery.toLocaleLowerCase())) && (keepFilter === 'all' || keepFilter === 'kept' && keptNames.has(row.name) || keepFilter === 'remove' && !keptNames.has(row.name) || keepFilter === 'protected' && row.protected));
+    const total=existing?.total??rows.length;
     const running = existing?.status === 'queued' || existing?.status === 'running';
-    existingTagPage = Math.min(existingTagPage, Math.max(0, Math.ceil(rows.length / 30) - 1));
+    existingTagPage = Math.min(existingTagPage, Math.max(0, Math.ceil(total / 30) - 1));
     const controls = h('div', 'toolbar', input('keep-tag-search', existingTagQuery, value => { existingTagQuery = value;existingTagPage = 0;render(); }, 'Find a tag name…', 'search'), select('keep-tag-filter', keepFilter, [['all', 'All names'], ['kept', 'Kept names'], ['remove', 'Names to remove'], ['protected', 'Always kept']], value => { keepFilter = value;existingTagPage = 0;render(); }, 'Keep choices'), button('Read library tags', () => run('refresh-existing-tags', {}, 'Existing tags refreshed.'), '', running));
     const list = h('section', 'card existing-tags-list');
-    for (const row of rows.slice(existingTagPage * 30, (existingTagPage + 1) * 30)) {
-      list.append(h('article', 'existing-tag-row', checkbox(`keep-name-${row.id}`, keptNames.has(row.name) || row.protected === true, row.name, checked => { checked ? keptNames.add(row.name) : keptNames.delete(row.name);keepDraftDirty = true;render(); }, row.protected), h('div', 'inline', h('span', 'muted', `${row.affectedCount} papers · ${row.manualCount} manual`), row.protected ? badge('Always kept') : row.locked ? badge('Earlier protected choice') : null)));
+    for (const row of existing?.total!==undefined?rows:rows.slice(existingTagPage * 30, (existingTagPage + 1) * 30)) {
+      list.append(h('article', 'existing-tag-row', checkbox(`keep-name-${row.id}`, keptNames.has(row.name) || row.protected === true, row.name, checked => { checked ? keptNames.add(row.name) : keptNames.delete(row.name);keepDecisions.set(row.name,checked);keepDraftDirty = true;render(); }, row.protected), h('div', 'inline', h('span', 'muted', `${row.affectedCount} papers · ${row.manualCount} manual`), row.protected ? badge('Always kept') : row.locked ? badge('Earlier protected choice') : null)));
     }
     if (!rows.length) list.append(empty(existing ? 'No matching names' : 'Read the tags already on your papers', existing ? 'Try another search or Keep filter.' : 'Choose the names to retain before previewing removal of the others.'));
-    if (rows.length > 30) list.append(pagination(rows.length, existingTagPage, next => { existingTagPage = next; }, 30, 'names'));
+    if (total > 30) list.append(pagination(total, existingTagPage, next => { existingTagPage = next; }, 30, 'names'));
     const preview = existing?.keepPreview;
     return h('div', 'stack', h('p', 'card-description', 'Keep the names you want on your papers. Every other name in this inventory will be removed only after you review the paper changes. no_tag always stays.'), controls,
-      h('div', 'notice inline between', h('span', '', `${all.filter(row => keptNames.has(row.name) || row.protected).length} kept · ${all.filter(row => !keptNames.has(row.name) && !row.protected).length} names to remove across the full inventory`), button('Keep shown names', () => { for (const row of rows) keptNames.add(row.name);keepDraftDirty = true;render(); }, 'small quiet', !rows.length)),
+      h('div', 'notice inline between', h('span', '', existing?.total!==undefined?'Saved choices on other pages stay in place.':`${all.filter(row => keptNames.has(row.name) || row.protected).length} kept · ${all.filter(row => !keptNames.has(row.name) && !row.protected).length} names to remove across the full inventory`), button('Keep shown names', () => { for (const row of rows){keptNames.add(row.name);keepDecisions.set(row.name,true);}keepDraftDirty = true;render(); }, 'small quiet', !rows.length)),
       keepDraftStale ? h('div', 'notice warning', h('p', '', 'The inventory or protected choices changed. Reload saved Keep choices before previewing removals.'), button('Reload saved Keep choices', () => { keepDraftDirty = false;keepPlanId = '';render(); }, 'small')) : null,
       list, h('div', 'actions', button('Preview removal of other tags', async () => {
-        keepPreviewPage = 0;await run('set-kept-existing-tags', { planId: existing!.id, names: [...keptNames] });keepDraftDirty = false;
+        keepPreviewPage = 0;await run('set-kept-existing-tags', { planId: existing!.id, ...(existing!.total!==undefined?{changes:[...keepDecisions].map(([name,kept])=>({name,kept}))}:{names:[...keptNames]}) });keepDraftDirty = false;keepDecisions.clear();
         await run('preview-keep-removals', { planId: currentState().existingTags!.id });
       }, 'primary', !existing || running || keepDraftStale), button('Define kept topics…', async () => {
-        if (keepDraftDirty) { await run('set-kept-existing-tags', { planId: existing!.id, names: [...keptNames] });keepDraftDirty = false; }
+        if (keepDraftDirty) { await run('set-kept-existing-tags', { planId: existing!.id, ...(existing!.total!==undefined?{changes:[...keepDecisions].map(([name,kept])=>({name,kept}))}:{names:[...keptNames]}) });keepDraftDirty = false;keepDecisions.clear(); }
         existingTagView = 'compare';existingTagFilter = 'kept';existingTagQuery = '';existingTagFacet = 'all';existingTagAction = 'replace';existingTagPage = 0;selectedExistingTags.clear();render();
       }, '', !existing || running || keepDraftStale || !all.some(row => keptNames.has(row.name) && !row.protected))),
-      preview ? card('Review removal of other tags', `${preview.removedNames.length} names · ${preview.paperCount} papers · ${preview.overrideCount} earlier protections explicitly replaced`, h('div', '', keepDraftDirty || keepDraftStale ? h('p', 'notice warning', 'Keep choices changed. Preview again before applying.') : null, h('p', '', `Names to remove: ${preview.removedNames.join(', ') || 'None'}`), nativeChanges(preview.changes, keepPreviewPage, next => { keepPreviewPage = next; }, 'removal changes')), button('Apply reviewed removals', () => run('apply-keep-removals', { previewId: preview.id }, 'Reviewed tag removals applied. Undo is available in Activity.'), 'primary', keepDraftDirty || keepDraftStale || !preview.changes.length)) : null);
+      preview ? card('Review removal of other tags', `${preview.removedNames.length} names · ${preview.paperCount} papers · ${preview.overrideCount} earlier protections explicitly replaced`, h('div', '', keepDraftDirty || keepDraftStale ? h('p', 'notice warning', 'Keep choices changed. Preview again before applying.') : null, h('p', '', `Names to remove: ${preview.removedNames.join(', ') || 'None'}`), nativeChanges(preview.changes, keepPreviewPage, next => { keepPreviewPage = next; }, 'removal changes',preview.total,preview.pageSize)), button('Apply reviewed removals', () => run('apply-keep-removals', { previewId: preview.id }, 'Reviewed tag removals applied. Undo is available in Activity.'), 'primary', keepDraftDirty || keepDraftStale || !preview.changes.length)) : null);
   }
   function renderDIYComparison() {
     const comparison = currentState().diyComparison;
@@ -1313,13 +1455,13 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const labels = { equivalent: 'Same meaning', broader: 'This tag is broader', narrower: 'This tag is narrower', related: 'Related topics', distinct: 'Different meanings', uncertain: 'Needs your choice' };
     const heading = h('h2', '', 'Compare saved tags');heading.id = 'diy-comparison-heading';heading.tabIndex = -1;
     const body = h('div', 'card-body', h('p', 'card-description', 'Only equivalent meanings can be merged. All merges start unselected; broader, narrower, and related topics remain separate.'), comparison.message ? h('p', '', humanMessage(comparison.message)) : null);
-    diyComparisonPage = Math.min(diyComparisonPage, Math.max(0, Math.ceil(comparison.pairs.length / 20) - 1));
-    for (const pair of comparison.pairs.slice(diyComparisonPage * 20, (diyComparisonPage + 1) * 20)) body.append(h('article', 'tag-row', h('div', 'inline between', h('strong', '', `${pair.diyName} → ${pair.targetName}`), badge(labels[pair.relation])), h('p', '', pair.reason), pair.relation === 'equivalent' ? checkbox(`diy-merge-${pair.id}`, selectedDIYComparisons.has(pair.id), `Merge ${pair.diyName} into ${pair.targetName}`, checked => { if (checked) { for (const other of comparison.pairs) if (other.diyId === pair.diyId) selectedDIYComparisons.delete(other.id);selectedDIYComparisons.add(pair.id); }else selectedDIYComparisons.delete(pair.id);overrideDIYConflicts = false;render(); }) : null, pair.conflict ? h('p', 'card-description', 'This merge affects a remembered choice and requires an explicit override.') : null));
-    if (comparison.pairs.length > 20) body.append(pagination(comparison.pairs.length, diyComparisonPage, next => { diyComparisonPage = next; }, 20, 'comparisons'));
+    const total=comparison.total??comparison.pairs.length;diyComparisonPage = Math.min(diyComparisonPage, Math.max(0, Math.ceil(total / 20) - 1));
+    for (const pair of comparison.total!==undefined?comparison.pairs:comparison.pairs.slice(diyComparisonPage * 20, (diyComparisonPage + 1) * 20)) body.append(h('article', 'tag-row', h('div', 'inline between', h('strong', '', `${pair.diyName} → ${pair.targetName}`), badge(labels[pair.relation])), h('p', '', pair.reason), pair.relation === 'equivalent' ? checkbox(`diy-merge-${pair.id}`, selectedDIYComparisons.has(pair.id), `Merge ${pair.diyName} into ${pair.targetName}`, checked => { if (checked) { for (const other of comparison.pairs) if (other.diyId === pair.diyId) selectedDIYComparisons.delete(other.id);selectedDIYComparisons.add(pair.id); }else selectedDIYComparisons.delete(pair.id);overrideDIYConflicts = false;render(); }) : null, pair.conflict ? h('p', 'card-description', 'This merge affects a remembered choice and requires an explicit override.') : null));
+    if (total > 20) body.append(pagination(total, diyComparisonPage, next => { diyComparisonPage = next; }, 20, 'comparisons'));
     if (conflict) body.append(checkbox('diy-override-conflicts', overrideDIYConflicts, 'Replace conflicting remembered choices for these selected merges', value => { overrideDIYConflicts = value;render(); }));
     body.append(h('div', 'actions', button('Preview selected merges', async () => { diyPreviewPage = 0;await run('preview-diy-merges', { id: comparison.id, pairIds: selected.map(pair => pair.id), ...(overrideDIYConflicts ? { overrideConflicts: true } : {}) });diyPreviewKey = key;render(); }, 'primary', !selected.length || conflict && !overrideDIYConflicts || ['queued', 'running'].includes(comparison.status))));
     const preview = comparison.preview;
-    if (preview) body.append(card('Review tag merges', `${preview.mergeCount} definitions to merge · ${preview.overrideCount} earlier choices replaced`, h('div', '', diyPreviewKey !== key ? h('p', 'notice warning', 'Choose the matches and preview them before applying.') : null, nativeChanges(preview.changes, diyPreviewPage, next => { diyPreviewPage = next; }, 'merge changes')), button('Apply reviewed merges', () => run('apply-diy-merges', { previewId: preview.id }, 'Reviewed tag merges applied. Undo is available in Activity.'), 'primary', diyPreviewKey !== key || ['queued', 'running'].includes(comparison.status))));
+    if (preview) body.append(card('Review tag merges', `${preview.mergeCount} definitions to merge · ${preview.overrideCount} earlier choices replaced`, h('div', '', diyPreviewKey !== key ? h('p', 'notice warning', 'Choose the matches and preview them before applying.') : null, nativeChanges(preview.changes, diyPreviewPage, next => { diyPreviewPage = next; }, 'merge changes',preview.total,preview.pageSize)), button('Apply reviewed merges', () => run('apply-diy-merges', { previewId: preview.id }, 'Reviewed tag merges applied. Undo is available in Activity.'), 'primary', diyPreviewKey !== key || ['queued', 'running'].includes(comparison.status))));
     const panel = h('section', 'card', h('div', 'card-header', heading), body);panel.id = 'diy-comparison';return panel;
   }
   function renderExistingTags() {
@@ -1330,7 +1472,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   function renderCompareExistingTags() {
     const existing = currentState().existingTags;
     const sourceRows = existing?.rows || [];
-    const rows = sourceRows.filter(row => (existingTagFilter === 'all' || existingTagFilter === 'kept' && row.kept && !row.protected || row.status === existingTagFilter)
+    const rows = existing?.total!==undefined?sourceRows:sourceRows.filter(row => (existingTagFilter === 'all' || existingTagFilter === 'kept' && row.kept && !row.protected || row.status === existingTagFilter)
       && (!existingTagQuery || `${row.name} ${row.meaning || ''} ${row.targetNames.join(' ')}`.toLocaleLowerCase().includes(existingTagQuery.toLocaleLowerCase()))
       && (existingTagFacet === 'all' || row.facet === existingTagFacet || row.targetNames.some(name => currentState().tags.some(tag => tag.name === name && tag.facet === existingTagFacet))));
     const selectable = (row: typeof sourceRows[number]) => !row.protected && row.name !== 'no_tag';
@@ -1355,8 +1497,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       return { ...base, paperIds, paperTargets };
     };
     const running = existing?.status === 'running' || existing?.status === 'queued';
-    existingTagPage = Math.min(existingTagPage, Math.max(0, Math.ceil(rows.length / 30) - 1));
-    const visible = rows.slice(existingTagPage * 30, (existingTagPage + 1) * 30);
+    const total=existing?.total??rows.length;existingTagPage = Math.min(existingTagPage, Math.max(0, Math.ceil(total / 30) - 1));
+    const visible = existing?.total!==undefined?rows:rows.slice(existingTagPage * 30, (existingTagPage + 1) * 30);
     const toolbar = h('div', 'toolbar', input('existing-tag-search', existingTagQuery, value => { existingTagQuery = value;existingTagPage = 0;render(); }, 'Search existing names and meanings…', 'search'), select('existing-tag-status', existingTagFilter, [['all', 'All existing tags'], ['match', 'Matched to Smart Tags'], ['choice', 'Needs your choice'], ['unmatched', 'Other tags'], ['kept', 'Kept names']], value => { existingTagFilter = value;existingTagPage = 0;render(); }, 'Existing tag group'), select('existing-tag-category', existingTagFacet, [['all', 'All categories'], ...facets.map(facet => [facet, facetNames[facet]] as [string,string])], value => { existingTagFacet = value;existingTagPage = 0;render(); }, 'Existing tag category'));
     const controls = h('div', 'inline', button('Read library tags', () => run('refresh-existing-tags', {}, 'Existing tags refreshed.'), '', running), button('Analyze selected names', () => run('analyze-existing-tags', { groupIds: selected.map(row => row.id) }, 'Checking selected tag meanings.'), '', !selected.length || running || !canAnalyze() || !existing?.applied), button('Create tags from selected names…', () => { modalPage = 0;modal = { kind: 'create-diy', ids: selected.map(row => row.id) };render(); }, '', !selected.length || running));
     const bulk = h('div', 'notice inline between', h('span', '', `${selected.length} selected · ${rows.length} shown`), h('div', 'inline', button('Select this page', () => { for (const row of visible) if (selectable(row)) selectedExistingTags.add(row.id);render(); }, 'quiet'), button('Clear selection', () => { selectedExistingTags.clear();render(); }, 'quiet')));
@@ -1385,20 +1527,21 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     let review: HTMLElement | null = null;
     if (preview) {
       const changes = h('div', 'native-change-preview');
-      existingPreviewPage = Math.min(existingPreviewPage, Math.max(0, Math.ceil(preview.changes.length / 50) - 1));
-      for (const change of preview.changes.slice(existingPreviewPage * 50, (existingPreviewPage + 1) * 50)) changes.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
-      changes.append(pagination(preview.changes.length, existingPreviewPage, next => { existingPreviewPage = next; }, 50, 'paper changes'));
-      review = card('Review paper tag changes', preview.changes.length ? `${preview.changes.length} papers. These changes include any existing manual tags shown below.` : 'The selected choices leave paper tags unchanged.', changes, button(preview.changes.length ? 'Apply reviewed tag changes' : 'Confirm reviewed choices', async () => { await run('apply-existing-tag-changes', { previewId: preview.id }, 'Reviewed choices saved.');selectedExistingTags.clear();render(); }, 'primary'));
+      const total=preview.total??preview.changes.length,size=preview.pageSize??50;existingPreviewPage = Math.min(existingPreviewPage, Math.max(0, Math.ceil(total / size) - 1));
+      for (const change of preview.total!==undefined?preview.changes:preview.changes.slice(existingPreviewPage * size, (existingPreviewPage + 1) * size)) changes.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
+      changes.append(pagination(total, existingPreviewPage, next => { existingPreviewPage = next; }, size, 'paper changes'));
+      review = card('Review paper tag changes', total ? `${total} papers. These changes include any existing manual tags shown below.` : 'The selected choices leave paper tags unchanged.', changes, button(total ? 'Apply reviewed tag changes' : 'Confirm reviewed choices', async () => { await run('apply-existing-tag-changes', { previewId: preview.id }, 'Reviewed choices saved.');selectedExistingTags.clear();render(); }, 'primary'));
     }
-    return h('div', 'stack', toolbar, controls, existingTagFilter === 'kept' ? h('p', 'card-description', 'Select the scientific topics you want to define, then choose Create tags from selected names. Project and workflow names can stay ordinary tags.') : null, existing?.message ? h('p', 'card-description', humanMessage(existing.message)) : null, bulk, actions, list, pagination(rows.length, existingTagPage, next => { existingTagPage = next; }, 30, 'existing tags'), review);
+    return h('div', 'stack', toolbar, controls, existingTagFilter === 'kept' ? h('p', 'card-description', 'Select the scientific topics you want to define, then choose Create tags from selected names. Project and workflow names can stay ordinary tags.') : null, existing?.message ? h('p', 'card-description', humanMessage(existing.message)) : null, bulk, actions, list, pagination(total, existingTagPage, next => { existingTagPage = next; }, 30, 'existing tags'), review);
   }
 
   function paperAttention() {
+    const projection=currentState().paperAttention;
     const all = [...new Map((currentState().paperAttention?.papers || []).map(paper => [paper.id, paper])).values()];
-    const papers = all.filter(paper => (attentionFilter === 'all' || (attentionFilter === 'attention' ? paper.status === 'needsInformation' || paper.status === 'failed' : paper.status === attentionFilter))
+    const papers = projection?.total!==undefined?all:all.filter(paper => (attentionFilter === 'all' || (attentionFilter === 'attention' ? paper.status === 'needsInformation' || paper.status === 'failed' : paper.status === attentionFilter))
       && (!attentionQuery || paper.title.toLocaleLowerCase().includes(attentionQuery.toLocaleLowerCase())));
-    attentionPage = Math.min(attentionPage, Math.max(0, Math.ceil(papers.length / 25) - 1));
-    const visible = papers.slice(attentionPage * 25, (attentionPage + 1) * 25);
+    const total=projection?.total??papers.length;attentionPage = Math.min(attentionPage, Math.max(0, Math.ceil(total / 25) - 1));
+    const visible = projection?.total!==undefined?papers:papers.slice(attentionPage * 25, (attentionPage + 1) * 25);
     const selected = papers.filter(paper => selectedAttentionPapers.has(paper.id));
     const dismissible = (paper: typeof all[number]) => paper.canDismiss ?? (paper.status === 'needsInformation' || paper.status === 'failed');
     const dismiss = async (ids: string[]) => { await run('dismiss-paper-attention', { ids }, 'Current notices dismissed.');for (const id of ids) selectedAttentionPapers.delete(id);render(); };
@@ -1412,7 +1555,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const selectPage = checkbox('attention-select-page', visible.every(paper => selectedAttentionPapers.has(paper.id)), 'Select this page', checked => { for (const paper of visible) checked ? selectedAttentionPapers.add(paper.id) : selectedAttentionPapers.delete(paper.id);render(); });
     selectPage.querySelector('input')!.indeterminate = visible.some(paper => selectedAttentionPapers.has(paper.id)) && !visible.every(paper => selectedAttentionPapers.has(paper.id));
-    list.append(h('div', 'inline between attention-select-page', selectPage, h('span', 'muted', `${papers.length} ${papers.length === 1 ? 'paper' : 'papers'}`)));
+    list.append(h('div', 'inline between attention-select-page', selectPage, h('span', 'muted', `${total} ${total===1?'paper':'papers'}`)));
     if (selected.length) {
       const eligible = (predicate: (paper: typeof all[number]) => boolean) => selected.filter(predicate).map(paper => paper.id);
       const retryIds = eligible(paper => paper.canRetry && paper.status !== 'excluded');
@@ -1443,17 +1586,17 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       selection.querySelector('input')!.setAttribute('aria-label', `Select ${paper.title}`);
       list.append(h('article', 'paper-attention-row', selection, h('div', 'attention-row-content', paperButton(paper.id), h('div', 'inline attention-row-status', badge(labels[paper.status]), paper.queued ? badge('Queued') : null), h('p', 'card-description', humanMessage(paper.message))), h('div', 'attention-row-actions', primary ? button(primary.label, primary.run, 'small') : null, actionMenu(`attention-more-${paper.id}`, 'More', `More actions for ${paper.title}`, recovery))));
     }
-    if (papers.length > 25) list.append(pagination(papers.length, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
+    if (total > 25) list.append(pagination(total, attentionPage, next => { attentionPage = next; }, 25, 'papers'));
     return list;
   }
 
   function paperExclusionReview() {
     const preview = currentState().paperExclusionPreview;
     if (!preview) return null;
-    paperExclusionPage = Math.min(paperExclusionPage, Math.max(0, Math.ceil(preview.changes.length / 50) - 1));
+    const total=preview.total??preview.changes.length,size=preview.pageSize??50;paperExclusionPage = Math.min(paperExclusionPage, Math.max(0, Math.ceil(total / size) - 1));
     const body = h('div', 'paper-exclusion-preview');
-    for (const change of preview.changes.slice(paperExclusionPage * 50, (paperExclusionPage + 1) * 50)) body.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
-    body.append(pagination(preview.changes.length, paperExclusionPage, next => { paperExclusionPage = next; }, 50, 'exclusion changes'));
+    for (const change of preview.total!==undefined?preview.changes:preview.changes.slice(paperExclusionPage * size, (paperExclusionPage + 1) * size)) body.append(h('article', 'paper-card', h('strong', '', change.title), h('p', '', `Before: ${change.before.join(', ') || 'No tags'}`), h('p', '', `After: ${change.after.join(', ') || 'No tags'}`)));
+    body.append(pagination(total, paperExclusionPage, next => { paperExclusionPage = next; }, size, 'exclusion changes'));
     return card(preview.exclude ? 'Mark no_tag and exclude from tagging' : 'Include papers in tagging again', preview.exclude ? 'Apply this mark to leave the reviewed papers out of future builds and assignments. Undo is available in Activity.' : 'Remove no_tag from the reviewed papers so future builds can include them.', body, h('div', 'actions', button(preview.exclude ? 'Apply no_tag and exclude' : 'Apply inclusion', async () => { const result = await run('apply-paper-exclusion', { previewId: preview.id }, preview.exclude ? 'Papers excluded from tagging.' : 'Papers included in tagging again.');selectedAttentionPapers.clear();if (result?.page === 'cleanup') nav('cleanup');else render(); }, 'primary', !preview.changes.length), button('Cancel exclusion change', () => run('cancel-paper-exclusion'), 'quiet')));
   }
 
@@ -1473,7 +1616,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     check.checked = selectedSuggestions.has(suggestion.id);
     check.disabled = busy || !!suggestion.applied || suggestion.status === 'rejected';
     check.setAttribute('aria-label', `Select ${tag?.name || suggestion.tagId} for ${paperTitle(suggestion.paperId)}`);
-    check.addEventListener('change', () => { check.checked ? selectedSuggestions.add(suggestion.id) : selectedSuggestions.delete(suggestion.id); render(); });
+    listen(check,'change', event => { (event.currentTarget as HTMLInputElement).checked ? selectedSuggestions.add(suggestion.id) : selectedSuggestions.delete(suggestion.id); render(); });
     const body = h('div', '', h('div', 'suggestion-header', h('div', '', paperButton(suggestion.paperId), h('div', 'inline section-gap', h('strong', '', tag?.name || suggestion.tagId), suggestion.operation === 'remove' ? badge('remove managed tag', 'removal') : badge('add tag'), badge(suggestion.confidence, suggestion.confidence), tag?.builtin === 'no_tag' ? badge('Exclude from tagging') : null, suggestion.applied ? badge('applied', 'approved') : badge(suggestion.status, suggestion.status === 'accepted' ? 'approved' : suggestion.status === 'pending' ? 'draft' : ''))), suggestion.locked ? badge('locked') : null), h('p', 'suggestion-reason', suggestion.reason));
     for (const evidence of suggestion.evidence) body.append(h('blockquote', 'evidence', h('cite', '', evidence.source), evidence.text));
     if (!suggestion.evidence.length) body.append(h('p', 'card-description', tag?.builtin === 'no_tag' ? 'Review the completed analysis before excluding this paper from future tagging.' : 'No supporting passage is available. Inspect this paper before accepting.'));
@@ -1503,8 +1646,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const s = currentState();
     const reviews = assignmentReviews(), review = selectedAssignmentReview(), scope = scopedSuggestions(), scopeIds = new Set(scope.map(item => item.id));
     const suggestions = relevantSuggestions();
-    reviewPage = Math.min(reviewPage, Math.max(0, Math.ceil(suggestions.length / PAGE_SIZE) - 1));
-    const visible = suggestions.slice(reviewPage * PAGE_SIZE, (reviewPage + 1) * PAGE_SIZE);
+    if(!remotePage())reviewPage = Math.min(reviewPage, Math.max(0, Math.ceil(suggestions.length / PAGE_SIZE) - 1));
+    const visible = pageRows(suggestions,reviewPage,PAGE_SIZE);
     const applicableSelected = [...selectedSuggestions].filter(id => { const item = suggestionMap.get(id); return scopeIds.has(id) && !!item && !item.applied && item.status !== 'rejected'; });
     const accepted = scope.filter(item => item.status === 'accepted' && !item.applied && (!review || review.acceptedIds.includes(item.id))).map(item => item.id);
     const older = s.suggestions.some(item => !item.runId || !reviews.some(review => review.id === item.runId));
@@ -1588,15 +1731,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const s = currentState();
     const tags = approvedTags();
     const query = paperQuery.toLocaleLowerCase();
-    const matches = matchingPaperIds(conceptFilter);
-    const papers = s.papers.filter(paper => matches.has(paper.id) && (!query || searchable(paper).includes(query)));
-    libraryPage = Math.min(libraryPage, Math.max(0, Math.ceil(papers.length / PAGE_SIZE) - 1));
+    const matches = remotePage()?undefined:matchingPaperIds(conceptFilter);
+    const papers = remotePage()?s.papers:s.papers.filter(paper => matches!.has(paper.id) && (!query || searchable(paper).includes(query)));
+    const total=pageTotal(papers.length);
+    if(!remotePage())libraryPage = Math.min(libraryPage, Math.max(0, Math.ceil(total / PAGE_SIZE) - 1));
     const search = input('paper-search', paperQuery, value => { paperQuery = value; libraryPage = 0; render(); }, 'Search titles, abstracts, and summaries…', 'search');
     const focusResults = () => doc.getElementById('find-result-count')?.focus();
-    search.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault();focusResults(); } });
+    listen(search,'keydown', event => { if (event.key === 'Enter') { event.preventDefault();focusResults(); } });
     const reset = button('Clear search', () => { paperQuery = '';conceptQuery = '';conceptFilter = { ...conceptFilter, selections: [] };libraryPage = 0;render();doc.getElementById('paper-search')?.focus(); }, 'quiet small');reset.id = 'reset-find-filters';
     const toolbar = h('form', 'find-search-form',field('Search papers',search),paperQuery || conceptQuery || conceptFilter.selections.length ? reset : null);
-    toolbar.id = 'find-papers-form';toolbar.setAttribute('role','search');toolbar.addEventListener('submit',event => { event.preventDefault();focusResults(); });
+    toolbar.id = 'find-papers-form';toolbar.setAttribute('role','search');listen(toolbar,'submit',event => { event.preventDefault();focusResults(); });
     const filterContent = () => {
       const coreTags = tags;
       const relatedTags = tags.filter(tag => (tag.relatedIds || []).length > 0);
@@ -1605,7 +1749,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const counts = new Map<string, number>();
       const count = (conceptId: string, contextId?: string) => {
         const key = filterSelectionKey(conceptId, contextId);
-        if (!counts.has(key)) counts.set(key, matchingPaperIds({ mode: 'all', selections: [{ conceptId, ...(contextId ? { contextId } : {}) }] }).size);
+        if (!counts.has(key)) counts.set(key, s.conceptCounts?.[key]??(remotePage()?tagById(conceptId)?.currentlyTaggedCount??0:matchingPaperIds({ mode: 'all', selections: [{ conceptId, ...(contextId ? { contextId } : {}) }] }).size));
         return counts.get(key)!;
       };
       const conceptQueryKey = conceptQuery.toLocaleLowerCase();
@@ -1628,7 +1772,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         if (!subtypes.length && !sharedDetails.length) return h('div', 'concept-tree-node', row);
         const branch = h('details', 'concept-tree-branch', h('summary', '', h('span', 'branch-label', conceptLabel(tag)), h('span', 'concept-count', String(count(tag.id)))));
         branch.open = !!conceptQueryKey || expandedConcepts.has(tag.id);
-        branch.addEventListener('toggle', () => { if (branch.isConnected) branch.open ? expandedConcepts.add(tag.id) : expandedConcepts.delete(tag.id); });
+        listen(branch,'toggle', event => { const current=event.currentTarget as HTMLDetailsElement;if (current.isConnected) { current.open ? expandedConcepts.add(tag.id) : expandedConcepts.delete(tag.id);ensureView(); } });
         const nested = h('div', 'concept-tree-children', row);
         for (const child of subtypes) nested.append(renderNode(child, nextPath));
         if (sharedDetails.length) {
@@ -1660,29 +1804,30 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const filterPanel = details('Filter by tags',libraryFiltersOpen,value => { libraryFiltersOpen = value; },filterContent);
     filterPanel.id = 'find-tag-filters';filterPanel.classList.add('find-tag-filters');
-    const countLabel = h('h2', '', `${papers.length} ${papers.length === 1 ? 'paper' : 'papers'}`);countLabel.id = 'find-result-count';countLabel.tabIndex = -1;countLabel.setAttribute('aria-live','polite');
+    const countLabel = h('h2', '', `${total} ${total === 1 ? 'paper' : 'papers'}`);countLabel.id = 'find-result-count';countLabel.tabIndex = -1;countLabel.setAttribute('aria-live','polite');
     const saveSearch = conceptFilter.selections.length ? button('Save tag search…', () => { modal = { kind: 'search' };searchName = conceptFilter.selections.map(selection => `${tagName(selection.conceptId)}${selection.contextId ? ` in ${tagName(selection.contextId)}` : ''}`).join(conceptFilter.mode === 'all' ? ' + ' : ' or ');render(); }) : null;
     const resultHeader = h('div','inline between find-result-header',countLabel,saveSearch);
     const list = h('section', 'paper-results');list.setAttribute('aria-label','Matching papers');
-    if (!papers.length) list.append(empty('No papers match', s.papers.length ? 'Try fewer tags or a broader search.' : 'Analyze a pilot or your library to create a local content index.'));
-    for (const paper of papers.slice(libraryPage * PAGE_SIZE, (libraryPage + 1) * PAGE_SIZE)) {
+    if (!papers.length) list.append(empty('No papers match', (s.totals?.papers??s.papers.length) ? 'Try fewer tags or a broader search.' : 'Analyze a pilot or your library to create a local content index.'));
+    for (const paper of pageRows(papers,libraryPage,PAGE_SIZE)) {
       const chips = h('div', 'chips');
       for (const tag of (paper.tags || []).slice(0, 12)) chips.append(h('span', 'tag-chip', tag));
       const triggerId = `related-papers-${encodeURIComponent(paper.id)}`,panelId = `related-paper-results-${encodeURIComponent(paper.id)}`;
       const closeRelated = () => { selectedPaper = '';render();doc.getElementById(triggerId)?.focus(); };
       const trigger = button('Related papers', () => { selectedPaper = selectedPaper === paper.id ? '' : paper.id;render(); }, 'quiet small');trigger.id = triggerId;trigger.setAttribute('aria-label',`Related papers for ${paper.title}`);trigger.setAttribute('aria-expanded',String(selectedPaper === paper.id));trigger.setAttribute('aria-controls',panelId);
       const row = h('article', 'paper-card', paperButton(paper.id), paper.summary ? h('p', 'muted', paper.summary) : null, chips, paper.evidenceStatus ? h('p', 'muted', paper.evidenceStatus) : null, h('div', 'actions',trigger));
+      row.setAttribute('data-ui-key',`paper:${paper.id}`);
       if (selectedPaper === paper.id) {
         const related = h('section','related-paper-results',h('div','inline between',h('h3','','Related papers'),button('Close related papers',closeRelated,'quiet small')),h('p','card-description','Content similarity suggests related reading, not citation relationships.'));
         related.id = panelId;related.setAttribute('aria-label',`Related papers for ${paper.title}`);
         const neighbors = s.neighbors[paper.id] || [];
         if (!neighbors.length) related.append(h('p','muted','No content neighbors are available yet. Analyze more papers to expand the index.'));
         for (const neighbor of neighbors.slice(0,10)) related.append(h('div','related-paper-row',paperButton(neighbor.paperId),h('span','muted',`Content similarity · ${Math.round(neighbor.score * 100)}%`)));
-        row.addEventListener('keydown',event => { if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();closeRelated(); } });row.append(related);
+        listen(row,'keydown',event => { if (event.key === 'Escape') { event.preventDefault();event.stopPropagation();closeRelated(); } });row.append(related);
       }
       list.append(row);
     }
-    return h('div', 'stack find-papers',toolbar,filterPanel,conceptFilter.selections.length ? selections : null,resultHeader,list,papers.length > PAGE_SIZE ? pagination(papers.length, libraryPage, next => { libraryPage = next; }) : null);
+    return h('div', 'stack find-papers',toolbar,filterPanel,conceptFilter.selections.length ? selections : null,resultHeader,list,hasPages(papers.length,PAGE_SIZE) ? pagination(papers.length, libraryPage, next => { libraryPage = next; }) : null);
   }
 
   function renderActivity() {
@@ -1709,26 +1854,28 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (!s.history.length) history.append(empty('No applied changes yet', 'Approved tag assignments and cleanup batches will appear here with their undo status.'));
     else {
       const query = activityHistoryQuery.toLocaleLowerCase();
-      const records = s.history.filter(record => !query || `${record.label} ${record.status || ''}`.toLocaleLowerCase().includes(query));
-      activityHistoryPage = Math.min(activityHistoryPage,Math.max(0,Math.ceil(records.length / PAGE_SIZE) - 1));
+      const records = remotePage('changes')?s.history:s.history.filter(record => !query || `${record.label} ${record.status || ''}`.toLocaleLowerCase().includes(query));
+      if(!remotePage('changes'))activityHistoryPage = Math.min(activityHistoryPage,Math.max(0,Math.ceil(records.length / PAGE_SIZE) - 1));
       const search = input('history-search',activityHistoryQuery,value => { activityHistoryQuery = value;activityHistoryPage = 0;render(); },'Find a change…','search');search.setAttribute('aria-label','Search applied changes');history.append(search);
       const table = h('table', '', h('thead', '', h('tr', '', h('th', '', 'Change'), h('th', '', 'Date'), h('th', '', 'Items'), h('th', '', 'Action'))));
       const tbody = h('tbody');
-      for (const record of records.slice(activityHistoryPage * PAGE_SIZE,(activityHistoryPage + 1) * PAGE_SIZE)) {
+      for (const record of pageRows(records,activityHistoryPage,PAGE_SIZE,'changes')) {
         const date = new Date(record.date);
-        tbody.append(h('tr', '', h('td', '', h('strong', '', record.label), record.status ? h('span', 'muted', record.status) : null), h('td', '', Number.isNaN(date.getTime()) ? record.date : date.toLocaleString()), h('td', '', String(record.count)), h('td', '', button('Undo', () => run('undo', { id: record.id }, 'Undo completed. Later manual edits are preserved.'), 'small', !record.canUndo))));
+        tbody.append(keyed(h('tr', '', h('td', '', h('strong', '', record.label), record.status ? h('span', 'muted', record.status) : null), h('td', '', Number.isNaN(date.getTime()) ? record.date : date.toLocaleString()), h('td', '', String(record.count)), h('td', '', button('Undo', () => run('undo', { id: record.id }, 'Undo completed. Later manual edits are preserved.'), 'small', !record.canUndo))),`history:${record.id}`));
       }
       table.append(tbody);history.append(records.length ? h('div', 'table-wrap', table) : empty('No matching changes','Try a different name or clear the search.'));
-      if (records.length > PAGE_SIZE) history.append(pagination(records.length,activityHistoryPage,next => { activityHistoryPage = next; },PAGE_SIZE,'changes'));
+      if (hasPages(records.length,PAGE_SIZE,'changes')) history.append(pagination(records.length,activityHistoryPage,next => { activityHistoryPage = next; },PAGE_SIZE,'changes'));
     }
     const active = (s.warnings || []).filter(warning => warning.status === 'active' && !warning.legacy && !['evidence-gap', 'unapproved-topics'].includes(warning.code));
     const notices = active.length ? h('section','activity-notices',h('div','inline between',h('h3','','Notices'),button('Dismiss all',() => run('dismiss-warnings',undefined,'Notices dismissed.'),'quiet small')),...active.map(warning => warningEntry(warning, true))) : null;
     const tasks = s.activityTasks;
     const paperWork = !tasks && (!!s.tagPreparation || q.total > 0) || (q.status === 'running' || q.status === 'paused') && q.ownerPage !== 'vocabulary' ? h('section','activity-task',h('h2','',q.taskLabel || 'Paper analysis'),h('p','card-description','Completed work is kept if you pause or close Zotero.'),progress) : null;
-    const currentTasks = tasks?.filter(task => task.state !== 'completed' && !(task.state === 'needs-choice' && s.reviewItems?.some(item => item.state !== 'resolved' && (item.taskId === task.id || !!task.workId && (item.taskId === task.workId || item.workId === task.workId)))) && (task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
+    const isQueuedFailure=(task:NonNullable<ManagerSnapshot['activityTasks']>[number])=>task.state==='paused'&&!task.workId&&(task.queuedAttempt||task.id.startsWith('task-'));
+    const currentTasks = tasks?.filter(task => task.state !== 'completed' && !(task.state === 'needs-choice' && s.reviewItems?.some(item => item.state !== 'resolved' && (item.taskId === task.id || !!task.workId && (item.taskId === task.workId || item.workId === task.workId)))) && (isQueuedFailure(task)||task.kind === 'meanings' || !['running','paused'].includes(task.state) || !paperWork)) || [];
     const current = currentTasks.map(task => {
       const meaning = task.kind === 'meanings';
-      const title = meaning ? task.state === 'needs-choice' ? `${task.questionCount ?? 1} ${(task.questionCount ?? 1) === 1 ? 'tag meaning needs' : 'tag meanings need'} your choice` : task.state === 'ready-to-save' ? `${task.readyCount ?? 0} ${(task.readyCount ?? 0) === 1 ? 'meaning ready' : 'meanings ready'} to save` : task.state === 'queued' ? 'Meanings queued' : task.state === 'paused' ? 'Meaning preparation paused' : 'Preparing meanings…' : task.label;
+      const queuedFailure=isQueuedFailure(task);
+      const title = queuedFailure?task.label:meaning ? task.state === 'needs-choice' ? `${task.questionCount ?? 1} ${(task.questionCount ?? 1) === 1 ? 'tag meaning needs' : 'tag meanings need'} your choice` : task.state === 'ready-to-save' ? `${task.readyCount ?? 0} ${(task.readyCount ?? 0) === 1 ? 'meaning ready' : 'meanings ready'} to save` : task.state === 'queued' ? 'Meanings queued' : task.state === 'paused' ? 'Meaning preparation paused' : 'Preparing meanings…' : task.label;
       const currentMeanings = meaning && (!task.workId || task.workId === s.nativeDefinitionPreparation?.id);
       const sourceProgress = currentMeanings && q.ownerPage === 'vocabulary' && ['running','queued','paused'].includes(task.state) && q.phaseProgress && q.phaseProgress.total > 0 ? q.phaseProgress : null;
       const body = h('div','',task.message ? h('p','',humanMessage(task.message)) : null,sourceProgress ? h('p','card-description',`${sourceProgress.label}: ${sourceProgress.completed} of ${sourceProgress.total}`) : meaning && task.total !== undefined && ['running','queued'].includes(task.state) ? h('p','card-description',`${task.completed ?? 0} of ${task.total} names prepared`) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
@@ -1738,7 +1885,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         else if (task.ownerPage === 'assignment') { assignmentRunSelection = task.workId || null;assignmentView = 'suggestions';nav('assignment'); }
         else nav(task.ownerPage === 'activity' ? 'activity' : task.ownerPage);
       },ownsQueue ? 'small' : 'primary small');
-      const actions = h('div','inline',ownsQueue && q.status === 'paused' ? resumeQueueButton('primary small') : null,open,ownsQueue && q.status === 'running' ? button('Pause',() => run('pause'),'small') : null,ownsQueue ? actionMenu('meaning-queue-actions','More','More meaning task actions',[{id:'cancel',label:'Cancel remaining',run:() => run('cancel',undefined,'Remaining jobs canceled. Completed analysis is kept.')}]) : null);
+      const actions = queuedFailure?h('div','inline',button('Stop this attempt',()=>run('stop-queued-task',{id:task.id},'Attempt stopped. Completed results are kept.'),'quiet small')):h('div','inline',ownsQueue && q.status === 'paused' ? resumeQueueButton('primary small') : null,open,ownsQueue && q.status === 'running' ? button('Pause',() => run('pause'),'small') : null,ownsQueue ? actionMenu('meaning-queue-actions','More','More meaning task actions',[{id:'cancel',label:'Cancel remaining',run:() => run('cancel',undefined,'Remaining jobs canceled. Completed analysis is kept.')}]) : null);
       return h('article','activity-task',h('div','inline between',h('div','',h('h2','',title),h('p','card-description',meaning ? 'Tag library' : pageNames[task.ownerPage])),actions),body);
     });
     const completed = tasks?.filter(task => task.state === 'completed') || [];
@@ -1749,9 +1896,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const inbox = reviewInbox(s.reviewItems || []);
     const hasPaperProblems = s.paperAttention?.papers.some(paper => paper.status === 'needsInformation' || paper.status === 'failed');
     const paperInfo = details('Paper information',activityPaperInfoOpen,value => { activityPaperInfoOpen = value; },paperAttention);paperInfo.id = 'activity-paper-information';
-    const recovery = h('section','activity-recovery',h('h2','','Recovery'),notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
+    const requests=(s.recoveryRequests??[]).map(request=>keyed(h('article','activity-task',h('h3','',request.status==='stopped'?'AI request stopped':'AI request interrupted'),h('p','card-description',request.message),h('div','',h('p','card-description','The provider may already have charged for this request. Retry only if you want to send it again.'),h('div','actions',button('Retry request',()=>run('retry-unknown-request',{id:request.id},'Retry authorized. Resuming the saved work.'),'primary small'),request.status==='unknown'?button('Stop this attempt',()=>run('stop-unknown-request',{id:request.id},'Attempt stopped. Completed results are kept.'),'quiet small'):null))),`request-recovery:${request.id}`));
+    const recovery = h('section','activity-recovery',h('h2','','Recovery'),...requests,notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
     const past = details('History',activityHistoryOpen,value => { activityHistoryOpen = value; },() => h('div','activity-history-body',h('section','',h('h3','','Applied changes'),h('p','card-description','Undo checks for later edits before changing a saved batch.'),history),completedWork,warningHistory()));past.id = 'activity-history';
-    const hasRecovery = hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
+    const hasRecovery = hasPaperProblems || requests.length || active.length || s.paperExclusionPreview || s.metadataPreview;
     return h('div', 'stack activity-page',inbox,paperWork,...current,!paperWork && !current.length && !inbox && !hasRecovery ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,hasRecovery ? recovery : paperInfo,past);
   }
 
@@ -1840,15 +1988,22 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const form = h('form',connectionOnly ? 'connection-form' : 'settings-form');form.id = 'settings-form';form.noValidate = true;
     const feedback = h('div','settings-feedback');feedback.id = 'settings-feedback';
     const submit = () => { if (!busy && settingsDirty) void saveSettings().catch(showError); };
-    form.addEventListener('submit',event => { event.preventDefault();submit(); });
-    form.addEventListener('keydown',event => { if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 's') { event.preventDefault();submit(); } });
+    listen(form,'submit',event => { event.preventDefault();submit(); });
+    listen(form,'keydown',event => { if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === 's') { event.preventDefault();submit(); } });
     if (connectionOnly) { form.append(h('section','task-setup',connection));if (draft.provider !== 'chatgpt') form.append(h('section','task-setup',h('h2','',`${providerName} API budget`),budgets));form.append(feedback);if (save) form.append(save);if (canAnalyze() && !settingsDirty) form.append(h('div', 'task-actions', button('Continue to Build tags', () => nav('build'))));return form; }
     const savedProviderName = s.settings.provider === 'deepseek' ? 'DeepSeek' : s.settings.provider === 'api' ? 'OpenAI' : 'ChatGPT';
     const connectionSummary = h('section','settings-row',h('div','',h('h2','','AI connection'),h('p','card-description',`${savedProviderName} · ${s.settings.model || 'Choose a model'}`),h('p','card-description',connectionReady(s) ? 'Connected' : 'Connection needed')),button('AI connection and budget',() => nav('connection'),connectionReady(s) ? '' : 'primary'));
     const incoming = h('section','settings-row',h('div','',h('h2','','New papers'),h('p','card-description',s.settings.autoAssign ? 'Automatic tagging is on.' : 'Automatic tagging is off.')),button('Routine assignment',() => { assignmentView = 'setup';nav('assignment'); }));
     const tags = details('Tag limits',settingsTagsOpen,value => { settingsTagsOpen = value; },() => vocabulary);tags.id = 'settings-tags';
     const integration = details('Zotero integration',settingsIntegrationOpen,value => { settingsIntegrationOpen = value; },() => integrationStatus);integration.id = 'settings-integration';
-    const data = details('Data',dataDetailsOpen,value => { dataDetailsOpen = value; },() => h('div','section-gap',button('Reset paper analysis…',() => { modal = { kind: 'reset-analysis' };render(); },'quiet')));data.id = 'settings-data';
+    const storage=s.storage;
+    const sizes=storage?h('div','section-gap',storage.databaseBytes!==undefined?h('div','inline between',h('strong','','Database on disk'),h('strong','',formatBytes(storage.databaseBytes))):null,h('p','card-description','The categories below describe the content before sharing and compression. Shared content appears in each category that uses it.'),...([['Active data',storage.activeBytes],['Recent history and Undo',storage.historyBytes],['Unused AI results',storage.cacheBytes],['Separate migration backup',storage.backupBytes]] as const).map(([label,bytes])=>h('div','inline between',h('span','',label),h('span','muted',formatBytes(bytes)))),h('p','card-description',`Completed history and Undo expire after ${storage.retentionDays} days. Unused AI results expire ${storage.retentionDays} days after their last reuse. Saved meanings, supporting evidence and unfinished work are kept.`),storage.backupBytes?h('p','card-description','The migration backup is removed after seven days and two successful restarts, once recovery is complete.'):null):null;
+    const data = details('Data',dataDetailsOpen,value => { dataDetailsOpen = value; },() => h('div','',sizes,h('div','actions section-gap',storage?button('Clean up expired data',()=>run('clean-expired-data',undefined,'Cleaning up expired data. Saved meanings and unfinished work are kept.'),'quiet'):button('Clean up old processing history…',async () => {
+      const summary = await run('inspect-old-processing-history');
+      if (!summary) return;
+      if (!summary.records) { await run('clean-old-processing-history', { expectEmpty: true }, 'History is already clean. Future history stays compact.');return; }
+      modal = { kind: 'cleanup-history',records: summary.records,bytes: summary.bytes };render();
+    },'quiet'),button('Reset paper analysis…',() => { modal = { kind: 'reset-analysis' };render(); },'quiet'))));data.id = 'settings-data';
     form.append(connectionSummary,incoming,tags,integration,transfers,data,feedback);if (save) form.append(save);return form;
   }
   async function saveSettings() {
@@ -1915,10 +2070,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       }
       body.append(pagination(active.ids.length, modalPage, next => { modalPage = next; }, 25, 'names'));
       apply = async () => { await run('create-diy-from-existing', { groupIds: active.ids, choices: active.ids.map(groupId => ({ groupId, ...(existingDIYDrafts.get(groupId) || { name: currentState().existingTags?.rows.find(row => row.id === groupId)?.name, description: '' }) })) }, 'Tag meanings are being checked.');modal = null;render(); };
+    } else if (active.kind === 'cleanup-history') {
+      title = 'Clean up old processing history?';
+      applyLabel = 'Clean up history';
+      const size = active.bytes < 1_000_000 ? `${Math.max(1,Math.round(active.bytes / 1000))} KB` : `${(active.bytes / 1_000_000).toFixed(1)} MB`;
+      body.append(h('p', '', `${active.records} ${active.records === 1 ? 'record' : 'records'} · about ${size} of saved data.`),h('p', 'section-gap', 'Permanently remove obsolete analysis, vocabulary and tag-comparison audit copies, superseded paper facts, and duplicate meaning checkpoints.'),h('p', 'section-gap', 'Current paper analysis, saved tags, unfinished reviews, reusable vocabulary progress, and Undo records stay in place.'),h('p', 'section-gap', 'Future saves will also stop accumulating these obsolete copies.'));
+      apply = async () => { await run('clean-old-processing-history', undefined, 'Old processing history removed. Future history stays compact.');modal = null;render(); };
     } else if (active.kind === 'reset-analysis') {
       title = 'Reset paper analysis?';
       applyLabel = 'Reset paper analysis';
-      body.append(h('p', '', 'This clears reusable paper analyses and paper-tag suggestions. Your Zotero items, PDFs, paper tags, saved tag definitions, credentials, spending records, and audit history stay in place.'), h('p', 'section-gap', 'The next build will read the papers afresh.'));
+      body.append(h('p', '', 'This clears reusable paper analyses and paper-tag suggestions. Your Zotero items, PDFs, paper tags, saved tag definitions, credentials, spending records, and Undo history stay in place.'), h('p', 'section-gap', 'The next build will read the papers afresh.'));
       apply = async () => { await run('reset-paper-analysis', undefined, 'Paper analysis reset. The next build will start fresh.');modal = null;render(); };
     } else {
       title = 'Save a Zotero tag search';
@@ -1931,10 +2092,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     content.setAttribute('role', 'dialog');
     content.setAttribute('aria-modal', 'true');
     content.setAttribute('aria-label', title);
-    content.addEventListener('keydown', event => {
+    listen(content,'keydown', event => {
       if (event.key === 'Escape' && !busy) { event.preventDefault(); close(); }
       if (event.key === 'Tab') {
-        const focusable = [...content.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')];
+        const focusable = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')];
         const first = focusable[0], last = focusable[focusable.length - 1];
         if (first && last && event.shiftKey && doc.activeElement === first) { event.preventDefault(); last.focus(); }
         else if (first && last && !event.shiftKey && doc.activeElement === last) { event.preventDefault(); first.focus(); }
@@ -1959,7 +2120,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (toastError) {
         app!.setAttribute('data-smart-tags-state', 'error');
         app!.replaceChildren(h('div', 'boot-message', h('strong', '', 'Smart Tags could not load local settings'), h('p', '', toast), button('Retry loading', () => refresh())));
-      } else app!.replaceChildren(h('div', 'boot-message', toast || 'Opening Smart Tags…'));
+      } else {
+        const box=h('div','boot-message',toast||loadingMessage||'Opening Smart Tags…');
+        if(loadingProgress){const meter=h('progress');if(loadingProgress.total>0){meter.max=loadingProgress.total;meter.value=Math.min(meter.max,loadingProgress.completed);}box.append(h('p','muted',loadingProgress.label),meter);}
+        app!.replaceChildren(box);
+      }
       return;
     }
     const s = state;
@@ -1978,9 +2143,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (count !== undefined && count > 0) navButton.append(h('span', 'nav-count', count.toLocaleString()));
       if (activePage === target) navButton.setAttribute('aria-current', 'page');container.append(navButton);
     };
-    (['cleanup', 'vocabulary', 'assignment'] as const).forEach(target => addNavigation(workflow, target, target === 'vocabulary' ? s.tagLibraryEntries?.length ?? approvedTags().length : undefined));
+    (['cleanup', 'vocabulary', 'assignment'] as const).forEach(target => addNavigation(workflow, target, target === 'vocabulary' ? s.totals?.tags??s.tagLibraryEntries?.length??approvedTags().length : undefined));
     addNavigation(navigation, 'library');
-    addNavigation(utilities, 'activity',s.reviewItems?.filter(item => item.state === 'open').length);addNavigation(utilities, 'settings');
+    addNavigation(utilities, 'activity',s.totals?.openChoices??s.reviewItems?.filter(item => item.state === 'open').length);addNavigation(utilities, 'settings');
     const connected = connectionReady(s);
     const connectionLabel = s.settings.provider === 'deepseek' ? 'DeepSeek API connected' : s.settings.provider === 'api' ? 'OpenAI API connected' : 'ChatGPT connected';
     sidebar.append(h('div', '', h('div', 'sidebar-section-label', 'Workflow'), workflow), h('div', '', h('div', 'sidebar-section-label', 'Library'), navigation), h('div', 'sidebar-utilities', h('div', 'sidebar-section-label', 'Tools'), utilities), h('div', 'sidebar-footer', h('p', '', connected ? h('span', 'status-dot') : null, connected ? connectionLabel : 'Connection needed'), h('p', '', 'Stored on this computer')));
@@ -1995,8 +2160,10 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const workspace = h('main', `workspace ${page === 'vocabulary' || page === 'cleanup' ? 'tag-workspace-page' : ''}`, h('header', 'page-header',h('h1', '', pageTitles[page][0]),page === 'vocabulary' ? null : h('p', 'subtitle', pageTitles[page][1])));
     const strip = queueStrip();
     if (strip) workspace.append(strip);
+    const indexing=s.libraryIndexProgress;
+    if(indexing&&indexing.phase!=='completed'&&['library','vocabulary','activity'].includes(page)){const progress=h('div','notice info inline between',h('span','',indexing.error?'Library reading paused. Your saved work is kept.':`Reading your library · ${indexing.checked.toLocaleString()} of ${indexing.total.toLocaleString()} papers`),indexing.error?button('Retry library reading',()=>run('refresh-library-index',undefined,'Reading your library.'),'small'):null);progress.id='library-index-progress';progress.setAttribute('role','status');progress.setAttribute('aria-live','polite');workspace.append(progress);}
     if (signingIn) {
-      const cancel = button('Cancel sign-in', async () => { await api.invoke('cancel-sign-in'); }, 'small');
+      const cancel = button('Cancel sign-in', async () => { await invoke('cancel-sign-in'); }, 'small');
       cancel.disabled = false;
       workspace.append(h('div', 'notice info inline between', h('span', '', 'Complete sign-in in your browser, or cancel this attempt.'), cancel));
     }
@@ -2015,7 +2182,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       activity: renderActivity,
       settings: renderSettings,
     };
-    workspace.append(renderers[page]());
+    const pageBody=renderers[page]();if(pageBody.nodeType===1)(pageBody as HTMLElement).setAttribute('data-ui-key',`page:${page}`);workspace.append(pageBody);
     if(page === 'vocabulary') {
       const header=workspace.querySelector('.page-header'),overview=workspace.querySelector('.library-overview');
       if(header && overview){header.classList.add('library-page-header');header.append(overview);}
@@ -2029,7 +2196,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     const modalElement = renderModal();
     if (modalElement) shell.append(modalElement);
-    app!.replaceChildren(shell);
+    shell.id='smart-tags-shell';patchRoot(shell);
     updateTagApplyState();
     const proposalRows = doc.getElementById('tag-list-scroll');
     const editor = doc.getElementById('tag-editor-form');
@@ -2055,9 +2222,9 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     if (proposalRows) proposalRows.scrollTop = tagScrollPositions.get(proposalRows.getAttribute('data-view-key') || '') || 0;
     if (editor) editor.scrollTop = editorScrollPositions.get(editor.getAttribute('data-view-key') || '') || 0;
   }
-  function render() {
-    closeActionMenu?.();
-    cleanupDropdowns(doc);
+  function render(preserveMenu=false) {
+    ensureView();
+    if(!preserveMenu)closeActionMenu?.();
     try { renderContent(); }
     catch (error) {
       closeActionMenu?.();
@@ -2067,7 +2234,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         app!.setAttribute('data-smart-tags-state', 'error');
         const retry = doc.createElementNS('http://www.w3.org/1999/xhtml', 'button');
         retry.textContent = 'Retry loading';
-        retry.addEventListener('click', () => { void refresh(); });
+        listen(retry,'click', () => { void refresh(); });
         const details = doc.createElementNS('http://www.w3.org/1999/xhtml', 'p');
         details.textContent = `${error instanceof Error ? error.message : String(error)} Close and reopen Smart Tags if retry does not help. Details are logged in Zotero’s Error Console.`;
         app!.replaceChildren(h('div', 'boot-message', h('strong', '', 'Smart Tags could not render'), details, retry));
@@ -2101,14 +2268,14 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   };
   win.addEventListener('keydown',libraryShortcut);
 
-  const unsubscribe = api.subscribe(() => { if (busy) refreshDeferred = true;else void refresh(); });
   const destroy = () => {
     if (disposed) return;
     disposed = true;
     closeActionMenu?.(false);
     cleanupDropdowns(doc);
-    unsubscribe();
-    if (signingIn) void api.invoke('cancel-sign-in').catch(() => {});
+    ++viewEpoch;viewController?.abort();stopView?.();stopView=null;
+    if(searchTimer)win.clearTimeout(searchTimer);
+    if (signingIn) void invoke('cancel-sign-in').catch(() => {});
     if (toastTimer) win.clearTimeout(toastTimer);
     apiKeyDrafts.api = '';
     apiKeyDrafts.deepseek = '';

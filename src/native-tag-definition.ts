@@ -5,6 +5,7 @@ import {isNoTagDefinition,NO_TAG_NAME} from './tag-policy.ts';
 import {validateTaxonomy} from './taxonomy.ts';
 import type {ReconciliationInput} from './tag-reconciliation.ts';
 import {isPersonalNativeTagName,validNativeTagTreatments} from './native-meaning-policy.ts';
+import {compactNativeDefinitionHistory} from './native-history-cleanup.ts';
 import type {NativeTagTreatment} from './native-meaning-policy.ts';
 export type {NativeTagTreatment} from './native-meaning-policy.ts';
 
@@ -32,6 +33,9 @@ export interface NativeTagDefinitionWork {
   id:string;protocolVersion:1|2;createdAt:string;fingerprint:string;snapshot:ReconciliationInput;maxOutputTokens:number;
   entries:NativeTagDefinitionEntry[];tasks:NativeTagDefinitionTask[];status:'pending'|'running'|'ready'|'failed';diagnostics:string[];
   history?:NativeTagDefinitionRevision[];
+  /** Worker-only lookup projection; excluded from snapshots and persisted work. */
+  cachedJudgments?:{entryId:string;paperId:string;judgment:NativeTagDefinitionJudgment;cacheId?:string}[];
+  reusedJudgmentIds?:string[];
   selectionPolicyVersion?:1;treatments?:Record<string,NativeTagTreatment>;
 }
 export interface NativeTagDefinitionRevision {
@@ -52,6 +56,43 @@ export interface PreparedNativeTagMeanings {
 }
 export const NATIVE_DEFINITION_REQUEST_BYTE_LIMIT=90_000;
 const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
+const retainedSnapshots=new WeakSet<ReconciliationInput>(),retainedRevisions=new WeakSet<NativeTagDefinitionRevision>();
+const readonlySources=new WeakSet<object>();
+interface SnapshotIndex {papers:Map<string,ReconciliationInput['papers'][number]>;sourcePapers:Map<string,string[]>;metadata:Map<string,string>;inputs:Map<string,string>;facts:Map<string,ReconciliationInput['facts'][string]|undefined>;sources:Map<string,Map<string,string>>}
+const snapshotIndexes=new WeakMap<ReconciliationInput,SnapshotIndex>();
+
+/** Worker-owned persisted provenance is read-only. Ordinary callers keep independent clones. */
+export function retainNativeTagDefinitionSnapshot(work:NativeTagDefinitionWork):NativeTagDefinitionWork {
+  retainReadonly(work.snapshot);retainedSnapshots.add(work.snapshot);
+  for(const revision of work.history??[]){retainReadonly(revision);retainedSnapshots.add(revision.snapshot);retainedRevisions.add(revision);}
+  return work;
+}
+function retainReadonly(value:object){const pending=[value];for(let index=0;index<pending.length;index++){const current=pending[index];if(readonlySources.has(current))continue;for(const value of Object.values(current))if(value&&typeof value==='object')pending.push(value);Object.freeze(current);readonlySources.add(current);}}
+export function isRetainedNativeTagDefinitionSnapshot(value:unknown):boolean {return !!value&&typeof value==='object'&&retainedSnapshots.has(value as ReconciliationInput);}
+function snapshotIndex(input:ReconciliationInput):SnapshotIndex|undefined {
+  if(!retainedSnapshots.has(input))return;
+  let index=snapshotIndexes.get(input);if(index)return index;
+  const papers=new Map<string,ReconciliationInput['papers'][number]>(),sourcePapers=new Map<string,string[]>();for(const paper of input.papers)if(!papers.has(paper.id))papers.set(paper.id,paper);
+  for(const [id,tags] of Object.entries(input.nativeTags))if(papers.has(id))for(const name of new Set(tags.map(tag=>tag.tag))){const ids=sourcePapers.get(name)??[];ids.push(id);sourcePapers.set(name,ids);}
+  for(const ids of sourcePapers.values())ids.sort();
+  index={papers,sourcePapers,metadata:new Map(),inputs:new Map(),facts:new Map(),sources:new Map()};snapshotIndexes.set(input,index);return index;
+}
+function cloneRevision(revision:NativeTagDefinitionRevision):NativeTagDefinitionRevision {
+  if(retainedRevisions.has(revision))return revision;
+  if(!retainedSnapshots.has(revision.snapshot))return clone(revision);
+  const {snapshot,...mutable}=revision,next={...clone(mutable),snapshot};retainReadonly(next);retainedRevisions.add(next);return next;
+}
+function cloneWork(work:NativeTagDefinitionWork):NativeTagDefinitionWork {
+  const {cachedJudgments,reusedJudgmentIds,...stored}=work;
+  let next:NativeTagDefinitionWork;
+  if(!retainedSnapshots.has(work.snapshot))next=clone(stored);
+  else{const {snapshot,history,...mutable}=stored;next={...clone(mutable),snapshot,...(history?{history:history.map(cloneRevision)}:{})};}
+  if(cachedJudgments)next.cachedJudgments=cachedJudgments;
+  if(reusedJudgmentIds)next.reusedJudgmentIds=[...reusedJudgmentIds];
+  return next;
+}
+/** Copy mutable workflow records while keeping explicitly retained provenance read-only. */
+export function copyNativeTagDefinitionWork(work:NativeTagDefinitionWork):NativeTagDefinitionWork {return cloneWork(work);}
 const object=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;
 const strings=(value:unknown):string[]=>Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>typeof entry==='string'))]:[];
 const text=(value:unknown,max=2000)=>typeof value==='string'&&value.trim().length<=max?value.trim():'';
@@ -60,15 +101,21 @@ function responseResolution(value:unknown):NativeTagDefinitionResolution|undefin
 const labels=(tag:TagDefinition)=>[tag.name,tag.fullName??'',...tag.aliases].filter(Boolean);
 const labelKey=(label:string)=>label.length>160?label:canonicalTagKey(label);
 const bytes=(value:string)=>new TextEncoder().encode(value).length;
-const paperById=(input:ReconciliationInput,id:string)=>input.papers.find(paper=>paper.id===id);
+const paperById=(input:ReconciliationInput,id:string)=>snapshotIndex(input)?.papers.get(id)??input.papers.find(paper=>paper.id===id);
 function factsFor(input:ReconciliationInput,paperId:string) {
-  const paper=paperById(input,paperId),facts=input.facts[paperId];return paper&&facts&&facts.metadataFingerprint===paperFingerprint({...paper,pdfText:undefined})&&(!paper.pdfText||facts.inputFingerprint===paperFingerprint(paper))?facts:undefined;
+  const index=snapshotIndex(input);if(index?.facts.has(paperId))return index.facts.get(paperId);
+  const paper=paperById(input,paperId),facts=input.facts[paperId];let result:ReconciliationInput['facts'][string]|undefined;
+  if(paper&&facts){let metadata=index?.metadata.get(paperId);if(metadata===undefined){metadata=paperFingerprint({...paper,pdfText:undefined});index?.metadata.set(paperId,metadata);}let actual=index?.inputs.get(paperId);if(paper.pdfText&&actual===undefined){actual=paperFingerprint(paper);index?.inputs.set(paperId,actual);}if(facts.metadataFingerprint===metadata&&(!paper.pdfText||facts.inputFingerprint===actual))result=facts;}
+  index?.facts.set(paperId,result);return result;
 }
 function sourceFingerprint(input:ReconciliationInput,sourceName:string,paperId:string) {
-  const paper=paperById(input,paperId);
-  return fingerprint({sourceName,paper:paper?paperFingerprint(paper):null,facts:factsFor(input,paperId),assignment:(input.nativeTags[paperId]??[]).filter(tag=>tag.tag===sourceName)});
+  const index=snapshotIndex(input),cached=index?.sources.get(sourceName)?.get(paperId);if(cached!==undefined)return cached;
+  const paper=paperById(input,paperId);let actual=paper?index?.inputs.get(paperId):null;if(paper&&actual===undefined){actual=paperFingerprint(paper);index?.inputs.set(paperId,actual);}
+  const value=fingerprint({sourceName,paper:actual,facts:factsFor(input,paperId),assignment:(input.nativeTags[paperId]??[]).filter(tag=>tag.tag===sourceName)});
+  if(index){const values=index.sources.get(sourceName)??new Map<string,string>();values.set(paperId,value);index.sources.set(sourceName,values);}return value;
 }
 function sourcePaperIds(input:ReconciliationInput,sourceName:string):string[] {
+  const retained=snapshotIndex(input);if(retained)return [...retained.sourcePapers.get(sourceName)??[]];
   const papers=new Set(input.papers.map(paper=>paper.id));return Object.keys(input.nativeTags).filter(id=>papers.has(id)&&input.nativeTags[id].some(tag=>tag.tag===sourceName)).sort();
 }
 function snapshotFor(input:ReconciliationInput,names:readonly string[]):ReconciliationInput {
@@ -114,6 +161,7 @@ function createWork(input:ReconciliationInput,names:readonly string[],options:Na
   if(!names.length||names.length>500||new Set(names).size!==names.length||names.some(name=>typeof name!=='string'||!name||name===NO_TAG_NAME))throw new Error('Choose one or more distinct native tag names; no_tag cannot be defined.');
   if(options.selectionPolicyVersion!==undefined&&options.selectionPolicyVersion!==1||options.treatments!==undefined&&!validNativeTagTreatments(options.treatments))throw new Error('Choose a supported native-meaning policy and tag treatment.');
   const snapshot=snapshotFor(input,names),treatments=options.treatments===undefined?undefined:Object.fromEntries(Object.entries(options.treatments).filter(([name])=>names.includes(name))),personalPolicy=options.selectionPolicyVersion===1||treatments!==undefined;
+  if(previous&&retainedSnapshots.has(previous.snapshot)){retainReadonly(snapshot);retainedSnapshots.add(snapshot);}
   const entries:NativeTagDefinitionEntry[]=names.map(sourceName=>{
     const paperIds=sourcePaperIds(snapshot,sourceName),saved=snapshot.definitions.some(tag=>tag.status==='approved'&&!isNoTagDefinition(tag)&&labels(tag).includes(sourceName)),prior=previous?.entries.find(entry=>entry.sourceName===sourceName),entry:NativeTagDefinitionEntry={id:prior?.id??allocateOpaqueId('native-definition-entry'),sourceName,tagId:prior?.tagId??allocateOpaqueId('tag'),paperIds,status:'pending',judgments:{}};
     if(treatments?.[sourceName]==='personal'){entry.status='left-undefined';entry.resolution='personal';}
@@ -135,7 +183,7 @@ export function nextNativeTagDefinitionRequests(work:NativeTagDefinitionWork,lim
   if(work.status==='failed'||work.status==='ready')return [];return work.tasks.filter(task=>task.status==='pending').slice(0,Math.max(0,limit)).map(task=>({id:task.id,prompt:promptFor(work,task)}));
 }
 export function noteNativeTagDefinitionDispatch(work:NativeTagDefinitionWork,id:string):NativeTagDefinitionWork {
-  const next=clone(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status!=='pending')throw new Error('This definition request is no longer pending.');task.dispatches++;task.status='running';next.status='running';return next;
+  const next=cloneWork(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status!=='pending')throw new Error('This definition request is no longer pending.');task.dispatches++;task.status='running';next.status='running';return next;
 }
 function scientificQuestion(entry:NativeTagDefinitionEntry,definition:TagDefinition):string|undefined {
   const source=terminologyFor(entry.sourceName)?.name,named=terminologyFor(definition.name)?.name,expanded=terminologyFor(definition.fullName??'')?.name,meaning=named??expanded;
@@ -189,6 +237,7 @@ function protectedTarget(work:NativeTagDefinitionWork,entry:NativeTagDefinitionE
 function restoreCompatibleJudgments(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry) {
   if(!entry.definition)return;
   const meaning=fingerprint(entry.definition),sources=sourceFingerprints(work,entry);
+  for(const {entryId,paperId,judgment,cacheId} of work.cachedJudgments??[])if(entryId===entry.id&&!entry.judgments[paperId]&&judgment.relation!=='uncertain'&&judgment.definitionFingerprint===meaning&&judgment.sourceFingerprint===sources[paperId]){entry.judgments[paperId]=clone(judgment);if(cacheId&&!(work.reusedJudgmentIds??=[]).includes(cacheId))work.reusedJudgmentIds.push(cacheId);}
   for(const prior of [...(work.history??[])].reverse().flatMap(revision=>revision.entries.filter(prior=>prior.id===entry.id)))for(const [paperId,judgment] of Object.entries(prior.judgments))if(!entry.judgments[paperId]&&judgment.relation!=='uncertain'&&judgment.definitionFingerprint===meaning&&judgment.sourceFingerprint===sources[paperId])entry.judgments[paperId]=clone(judgment);
 }
 function questionChoices(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry,value:unknown,permittedTargetIds:Set<string>):NativeTagDefinitionChoice[] {
@@ -241,7 +290,7 @@ function updateWork(work:NativeTagDefinitionWork) {
   work.status=work.tasks.some(task=>task.status==='failed')?'failed':work.tasks.some(task=>task.status==='running')?'running':work.tasks.some(task=>task.status==='pending')?'pending':'ready';
 }
 export function acceptNativeTagDefinitionResult(work:NativeTagDefinitionWork,id:string,raw:unknown,metadata:{provider?:string;model?:string}={}):NativeTagDefinitionWork {
-  const next=clone(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status==='completed')throw new Error('This definition reply is no longer current.');
+  const next=cloneWork(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status==='completed')throw new Error('This definition reply is no longer current.');
   const attempt:{raw:unknown;provider?:string;model?:string;error?:string}={raw:clone(raw),...metadata};task.attempts.push(attempt);
   try{
     const data=object(typeof raw==='string'?parseModelJSON(raw):raw);if(!data||data.workId!==next.id||data.fingerprint!==next.fingerprint||data.taskId!==task.id)throw new Error('This definition reply belongs to another saved request.');
@@ -272,10 +321,10 @@ export function acceptNativeTagDefinitionResult(work:NativeTagDefinitionWork,id:
   updateWork(next);return next;
 }
 export function failNativeTagDefinitionTask(work:NativeTagDefinitionWork,id:string,raw:unknown,error:unknown,options:{retryable?:boolean;provider?:string;model?:string}={}):NativeTagDefinitionWork {
-  const next=clone(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status==='completed')throw new Error('This failed definition request is no longer current.');const message=error instanceof Error?error.message:String(error);task.attempts.push({raw:raw===undefined?null:clone(raw),error:message,...(options.provider?{provider:options.provider}:{}),...(options.model?{model:options.model}:{}),...(options.retryable?{transport:true}:{})});task.error=message;task.status='failed';if(!options.retryable)task.invalidResponses++;updateWork(next);return next;
+  const next=cloneWork(work),task=next.tasks.find(task=>task.id===id);if(!task||task.status==='completed')throw new Error('This failed definition request is no longer current.');const message=error instanceof Error?error.message:String(error);task.attempts.push({raw:raw===undefined?null:clone(raw),error:message,...(options.provider?{provider:options.provider}:{}),...(options.model?{model:options.model}:{}),...(options.retryable?{transport:true}:{})});task.error=message;task.status='failed';if(!options.retryable)task.invalidResponses++;updateWork(next);return next;
 }
 export function resumeNativeTagDefinitionWork(work:NativeTagDefinitionWork):NativeTagDefinitionWork {
-  let next=clone(work);
+  let next=cloneWork(work);
   for(const task of work.tasks)if(task.kind==='check'&&task.status==='failed')for(const attempt of [...task.attempts].reverse()){
     if(attempt.transport||!['Supporting checks cannot change the frozen tag meanings.','The proposed saved tag is outside this request snapshot.'].includes(attempt.error??''))continue;
     const replay=acceptNativeTagDefinitionResult(next,task.id,attempt.raw,{provider:attempt.provider,model:attempt.model}),replayed=replay.tasks.find(value=>value.id===task.id)!;
@@ -286,7 +335,8 @@ export function resumeNativeTagDefinitionWork(work:NativeTagDefinitionWork):Nati
 export function retryNativeTagDefinitionWork(work:NativeTagDefinitionWork):NativeTagDefinitionWork {const next=resumeNativeTagDefinitionWork(work);for(const task of next.tasks)if(task.status==='failed'){task.status='pending';task.generation++;task.invalidResponses=0;delete task.error;}updateWork(next);return next;}
 function archiveRevision(work:NativeTagDefinitionWork,reason:NativeTagDefinitionRevision['reason']) {
   const {protocolVersion,fingerprint,snapshot,entries,tasks,status,diagnostics,selectionPolicyVersion,treatments}=work;
-  (work.history??=[]).push(clone({reason,protocolVersion,fingerprint,snapshot,entries,tasks,status,diagnostics,selectionPolicyVersion,treatments}));
+  (work.history??=[]).push(cloneRevision({reason,protocolVersion,fingerprint,snapshot,entries,tasks,status,diagnostics,selectionPolicyVersion,treatments}));
+  work.history=compactNativeDefinitionHistory(work).history;
 }
 function retireEntryTasks(work:NativeTagDefinitionWork,entryIds:Set<string>) {
   for(const task of work.tasks){task.pairs=task.pairs.filter(pair=>!entryIds.has(pair.entryId));task.entryIds=task.entryIds.filter(id=>!entryIds.has(id));if(!task.entryIds.length){task.status='completed';delete task.error;}}
@@ -329,7 +379,7 @@ function selectClearChoices(work:NativeTagDefinitionWork,input:ReconciliationInp
   if(new Set(entryIds).size!==entryIds.length)throw new Error('Choose each clear meaning once.');
   const entries=entryIds.map(id=>work.entries.find(entry=>entry.id===id));
   if(entries.some(entry=>!entry||!clearChoice(work,entry,automatic)||!currentClearChoice(work,entry,input)))throw new Error('These clear meanings or their sources changed. Review the current choices.');
-  const next=clone(work);archiveRevision(next,automatic?'automatic':'answer');
+  const next=cloneWork(work);archiveRevision(next,automatic?'automatic':'answer');
   for(const original of entries){const entry=next.entries.find(entry=>entry.id===original!.id)!,choice=clearChoice(work,original!,automatic)!,binding={questionFingerprint:original!.questionDetails!.fingerprint,choiceId:choice.id,meaningFingerprint:fingerprint(entry.definition),sourceFingerprints:sourceFingerprints(next,entry)};
     if(automatic){entry.automaticAnswer={origin:'single-clear-choice',policyVersion:1,...binding};delete entry.humanAnswer;}else {entry.humanAnswer={origin:'choice',policyVersion:2,sourceCheckPolicy:'unchecked-only',meaningAdmissionPolicy:1,...binding};delete entry.automaticAnswer;}
     entry.status='pending';delete entry.question;delete entry.questionDetails;
@@ -354,9 +404,9 @@ export function resolveNativeTagDefinition(work:NativeTagDefinitionWork,currentI
   if(nativeTagDefinitionMeaningChosen(work,source)&&(repeatedChoice||repeatedEdit)){
     if(source.targetTagId&&fingerprint(currentInput.definitions.find(tag=>tag.id===source.targetTagId))!==fingerprint(source.definition))throw new Error('The saved meaning changed. Prepare this question again before choosing it.');
     if(protectedTarget(work,source)||source.targetTagId&&source.paperIds.some(paperId=>{const decision=currentInput.decisions[`${paperId}|${source.targetTagId}`];return decision?.locked||decision?.rejected;}))throw new Error('An earlier lock or rejection protects this saved tag choice. Leave this name undefined or revise that choice first.');
-    const next=clone(work);if(source.automaticAnswer&&!source.humanAnswer){archiveRevision(next,'answer');const entry=next.entries.find(entry=>entry.id===source.id)!;entry.humanAnswer={origin:answer.choiceId?'choice':'edit',questionFingerprint:answerBinding(work,source),meaningFingerprint:fingerprint(source.definition),...(answer.choiceId?{choiceId:answer.choiceId}:{}),...(answer.meaningAdmissionPolicy?{meaningAdmissionPolicy:answer.meaningAdmissionPolicy}:{}),sourceFingerprints:sourceFingerprints(next,entry),policyVersion:2};delete entry.automaticAnswer;}else if(answer.meaningAdmissionPolicy===1&&source.humanAnswer?.meaningAdmissionPolicy!==1){archiveRevision(next,'answer');next.entries.find(entry=>entry.id===source.id)!.humanAnswer={...clone(source.humanAnswer!),meaningAdmissionPolicy:1};}updateWork(next);return next;
+    const next=cloneWork(work);if(source.automaticAnswer&&!source.humanAnswer){archiveRevision(next,'answer');const entry=next.entries.find(entry=>entry.id===source.id)!;entry.humanAnswer={origin:answer.choiceId?'choice':'edit',questionFingerprint:answerBinding(work,source),meaningFingerprint:fingerprint(source.definition),...(answer.choiceId?{choiceId:answer.choiceId}:{}),...(answer.meaningAdmissionPolicy?{meaningAdmissionPolicy:answer.meaningAdmissionPolicy}:{}),sourceFingerprints:sourceFingerprints(next,entry),policyVersion:2};delete entry.automaticAnswer;}else if(answer.meaningAdmissionPolicy===1&&source.humanAnswer?.meaningAdmissionPolicy!==1){archiveRevision(next,'answer');next.entries.find(entry=>entry.id===source.id)!.humanAnswer={...clone(source.humanAnswer!),meaningAdmissionPolicy:1};}updateWork(next);return next;
   }
-  const next=clone(work);archiveRevision(next,'answer');next.protocolVersion=2;const entry=next.entries.find(entry=>entry.id===source.id)!;
+  const next=cloneWork(work);archiveRevision(next,'answer');next.protocolVersion=2;const entry=next.entries.find(entry=>entry.id===source.id)!;
   const binding=answerBinding(work,source);
   delete entry.automaticAnswer;
   if(answer.leaveUndefined){entry.status='left-undefined';entry.humanAnswer={origin:'leave',questionFingerprint:binding,sourceFingerprints:sourceFingerprints(next,entry),policyVersion:2};delete entry.question;delete entry.questionDetails;retireEntryTasks(next,new Set([entry.id]));updateWork(next);return next;}
@@ -376,7 +426,7 @@ export function resolveNativeTagTreatment(work:NativeTagDefinitionWork,currentIn
   assertSettled(work);const source=work.entries.find(entry=>entry.id===answer.entryId);
   if(!source||source.meaningAdmission||!['question','left-undefined'].includes(source.status)||!['personal','scientific'].includes(answer.treatment))throw new Error('Choose a personal or scientific treatment for a current tag.');
   if(answer.treatment==='scientific'&&!unchangedSources(work,source,currentInput))throw new Error('This tag’s papers or information changed. Prepare it again before defining its meaning.');
-  const next=clone(work);archiveRevision(next,'answer');const entry=next.entries.find(entry=>entry.id===answer.entryId)!,binding=answerBinding(work,source);(next.treatments??={})[entry.sourceName]=answer.treatment;delete entry.automaticAnswer;
+  const next=cloneWork(work);archiveRevision(next,'answer');const entry=next.entries.find(entry=>entry.id===answer.entryId)!,binding=answerBinding(work,source);(next.treatments??={})[entry.sourceName]=answer.treatment;delete entry.automaticAnswer;
   retireEntryTasks(next,new Set([entry.id]));
   if(answer.treatment==='personal'){entry.status='left-undefined';entry.resolution='personal';entry.humanAnswer={origin:'leave',policyVersion:2,questionFingerprint:binding,sourceFingerprints:sourceFingerprints(next,entry)};delete entry.question;delete entry.questionDetails;}
   else {delete entry.resolution;delete entry.definition;delete entry.targetTagId;delete entry.humanAnswer;delete entry.question;delete entry.questionDetails;entry.judgments={};entry.status='pending';if(entry.paperIds.length)addTasks(next,'draft',[{entryId:entry.id,paperIds:entry.paperIds.slice(0,3)}]);else setQuestion(next,entry,'No linked papers are available for AI to establish a scientific meaning. Leave this name undefined.','information');}
@@ -390,7 +440,7 @@ export function recheckNativeTagDefinitionSources(work:NativeTagDefinitionWork,c
   if(source.questionDetails?.kind==='protection'||protectedTarget(work,source)||source.targetTagId&&source.paperIds.some(paperId=>{const decision=currentInput.decisions[`${paperId}|${source.targetTagId}`];return decision?.locked||decision?.rejected;}))throw new Error('An earlier lock or rejection protects this saved tag choice. Leave this name undefined or revise that choice first.');
   if(Object.values(source.judgments).some(judgment=>judgment.relation==='different'))throw new Error('A checked source establishes a different meaning. Clarify this conflict or leave the name undefined.');
   if(source.paperIds.every(id=>source.judgments[id]?.relation==='same-meaning'))throw new Error('No uncertain or unchecked sources remain for this chosen meaning.');
-  const next=clone(work);archiveRevision(next,'continue');const entry=next.entries.find(entry=>entry.id===entryId)!;
+  const next=cloneWork(work);archiveRevision(next,'continue');const entry=next.entries.find(entry=>entry.id===entryId)!;
   entry.judgments=Object.fromEntries(Object.entries(entry.judgments).filter(([,judgment])=>judgment.relation!=='uncertain'));entry.status='pending';delete entry.question;delete entry.questionDetails;
   retireEntryTasks(next,new Set([entryId]));addTasks(next,'check',[{entryId,paperIds:entry.paperIds.filter(id=>!entry.judgments[id])}]);updateWork(next);return next;
 }
@@ -398,10 +448,10 @@ export function continueNativeTagDefinitionWork(work:NativeTagDefinitionWork,cur
   assertSettled(work);
   if(!entryIds.length||new Set(entryIds).size!==entryIds.length||entryIds.some(id=>!work.entries.some(entry=>entry.id===id&&entry.status==='question'&&!entry.meaningAdmission)))throw new Error('Choose current unanswered meanings to prepare again.');
   if(work.entries.some(entry=>entry.meaningAdmission&&(!unchangedSources(work,entry,currentInput)||entry.targetTagId&&fingerprint(currentInput.definitions.find(tag=>tag.id===entry.targetTagId))!==fingerprint(entry.definition))))throw new Error('A saved meaning’s original source context changed. Start a new preparation for the remaining names; saved meanings are retained.');
-  const next=clone(work);archiveRevision(next,'continue');const selected=new Set(entryIds),changed=new Set<string>();next.protocolVersion=2;
+  const next=cloneWork(work);archiveRevision(next,'continue');const selected=new Set(entryIds),changed=new Set<string>();next.protocolVersion=2;
   const snapshot=snapshotFor(currentInput,next.entries.map(entry=>entry.sourceName));
   for(const entry of next.entries){const old=work.entries.find(prior=>prior.id===entry.id)!;if(!unchangedSources(work,old,currentInput)||entry.targetTagId&&fingerprint(snapshot.definitions.find(tag=>tag.id===entry.targetTagId))!==fingerprint(entry.definition)||entry.questionDetails?.choices.some(choice=>choice.targetTagId&&fingerprint(snapshot.definitions.find(tag=>tag.id===choice.targetTagId))!==fingerprint(choice.definition)))changed.add(entry.id);}
-  next.snapshot=snapshot;next.fingerprint=fingerprint(snapshot);
+  if(retainedSnapshots.has(work.snapshot)){retainReadonly(snapshot);retainedSnapshots.add(snapshot);}next.snapshot=snapshot;next.fingerprint=fingerprint(snapshot);
   for(const entry of next.entries)if(selected.has(entry.id)||changed.has(entry.id)){
     entry.paperIds=sourcePaperIds(snapshot,entry.sourceName);delete entry.definition;delete entry.targetTagId;delete entry.humanAnswer;delete entry.automaticAnswer;delete entry.resolution;delete entry.question;delete entry.questionDetails;entry.judgments={};entry.status='pending';
     if(!selected.has(entry.id))setQuestion(next,entry,'This tag’s papers or saved meaning changed. Prepare this meaning again.','information');
@@ -505,7 +555,7 @@ export function settleNativeTagMeaningAdmissions(work:NativeTagDefinitionWork,ad
   assertSettled(work);const ids=Object.keys(admissions);if(!ids.length)return work;
   for(const id of ids){const entry=work.entries.find(entry=>entry.id===id),marker=admissions[id];if(!entry||!entry.definition||!nativeTagDefinitionMeaningChosen(work,entry)||!entry.meaningAdmission&&!canUseNativeTagMeaning(work,id)||!supportedMeaningPapers(work,entry).length&&entry.humanAnswer?.meaningAdmissionPolicy!==1||marker.bindingVerified!==false||marker.candidateFingerprint!==fingerprint(entry.definition)||![marker.tagId,marker.definitionFingerprint,marker.changeId].every(value=>typeof value==='string'&&!!value))throw new Error('The saved scientific meaning does not match this preparation.');if(entry.meaningAdmission&&fingerprint(entry.meaningAdmission)!==fingerprint(marker))throw new Error('This scientific meaning was already saved by another change.');}
   if(ids.every(id=>fingerprint(work.entries.find(entry=>entry.id===id)!.meaningAdmission)===fingerprint(admissions[id])))return work;
-  const next=clone(work);retireAdmittedEntryTasks(next,new Set(ids));for(const id of ids){const entry=next.entries.find(entry=>entry.id===id)!;entry.meaningAdmission=clone(admissions[id]);setQuestion(next,entry,'The scientific meaning is saved. Existing native assignments have not been approved.','information');}
+  const next=cloneWork(work);retireAdmittedEntryTasks(next,new Set(ids));for(const id of ids){const entry=next.entries.find(entry=>entry.id===id)!;entry.meaningAdmission=clone(admissions[id]);setQuestion(next,entry,'The scientific meaning is saved. Existing native assignments have not been approved.','information');}
   updateWork(next);return next;
 }
 function validDefinition(work:NativeTagDefinitionWork,entry:NativeTagDefinitionEntry,tag:TagDefinition,targetTagId?:string):boolean {

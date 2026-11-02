@@ -1,5 +1,6 @@
 import {allocateOpaqueId,paperFingerprint} from './core.ts';
 import type {AppState} from './controller.ts';
+import {hasCompactProcessingHistory} from './history-cleanup.ts';
 
 export interface AnalysisResetRecord {
   id:string;date:string;factsCount:number;analysesCount:number;
@@ -24,7 +25,7 @@ function retireRun(run:NonNullable<AppState['run']>):NonNullable<AppState['run']
 export function resetPaperAnalysis<T extends ResettableState>(state:T,date=new Date().toISOString()):T {
   const next=copy(state),unfinished=(next.assignmentRuns??[]).filter(review=>review.status!=='finished'),discarded=next.suggestions.filter(suggestion=>!suggestion.applied);
   const record:AnalysisResetRecord={id:allocateOpaqueId('analysis-reset'),date,factsCount:Object.keys(next.facts).length,analysesCount:Object.keys(next.analyses).length,analyses:next.analyses,discardedSuggestions:discarded,unfinishedReviews:unfinished,...(next.run?{run:next.run}:{}),...(next.maintenanceTasks?.length?{maintenanceTasks:next.maintenanceTasks}:{}),...(next.taxonomyProposal?{proposal:next.taxonomyProposal}:{}),...(next.tagPreparation?{preparation:next.tagPreparation}:{}),...(next.diyComparison?{diyComparison:next.diyComparison}:{}),...(next.reconciliation?{reconciliation:next.reconciliation}:{}),...(next.nativeDefinitionPreparation?{nativeDefinitionPreparation:next.nativeDefinitionPreparation}:{})};
-  next.analysisResetHistory=[...(next.analysisResetHistory??[]),record];
+  next.analysisResetHistory=hasCompactProcessingHistory(state)?[]:[...(next.analysisResetHistory??[]),record];
   if(next.reviewItems){record.reviewItems=copy(next.reviewItems);next.reviewItems=next.reviewItems.map(item=>({...item,state:'resolved'}));}
   next.facts={};next.analyses={};next.factHistory=[];next.neighbors={};next.paperInputs={};next.cleanup=[];next.deferredItemIDs=[];
   for(const paper of Object.values(next.papers)){delete paper.summary;delete paper.concepts;delete paper.pdfText;paper.fingerprint=paperFingerprint(paper);}

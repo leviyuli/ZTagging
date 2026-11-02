@@ -471,6 +471,13 @@ function terms(text: string): string[] {
   return result;
 }
 
+/** Shared source weighting for batch and incremental related-paper retrieval. */
+export function similarityTermCounts(paper:Pick<PaperRecord,'title'|'abstract'|'keywords'|'summary'|'concepts'>):Map<string,number>{
+  const bag=new Map<string,number>();
+  for(const term of terms([paper.title,paper.title,paper.abstract,...paper.keywords,paper.summary??'',...(paper.concepts??[])].join(' ')))bag.set(term,(bag.get(term)??0)+1);
+  return bag;
+}
+
 const compareId = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 type Posting = { id: string; weight: number };
 
@@ -524,8 +531,7 @@ export function buildSimilarityNetwork(papers: readonly PaperRecord[], limit = 1
   }
   const counts = new Map<string, Map<string, number>>(), documentFrequency = new Map<string, number>();
   for (const paper of unique) {
-    const bag = new Map<string, number>();
-    for (const term of terms([paper.title, paper.title, paper.abstract, ...paper.keywords, paper.summary ?? "", ...(paper.concepts ?? [])].join(" "))) bag.set(term, (bag.get(term) ?? 0) + 1);
+    const bag = similarityTermCounts(paper);
     counts.set(paper.id, bag);
     for (const term of bag.keys()) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
     result[paper.id] = [];

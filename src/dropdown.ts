@@ -12,6 +12,12 @@ export type DropdownOptions = {
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 const openDropdowns = new WeakMap<Document, () => void>();
+const dropdownUpdates = new WeakMap<HTMLButtonElement, (options:DropdownOptions)=>void>();
+
+/** Update a mounted control without losing focus or rebuilding its event listeners. */
+export function updateDropdown(trigger:HTMLButtonElement,options:DropdownOptions):boolean {
+  const update=dropdownUpdates.get(trigger);if(!update)return false;update(options);return true;
+}
 
 /** Call before replacing manager content, and when destroying its window. */
 export function cleanupDropdowns(doc: Document): void {
@@ -20,7 +26,8 @@ export function cleanupDropdowns(doc: Document): void {
 
 export function createDropdown(win: Window, options: DropdownOptions): HTMLButtonElement {
   const doc = win.document;
-  const choices = [...options.choices];
+  let choices = [...options.choices];
+  let currentOptions=options;
   const trigger = doc.createElementNS(HTML_NAMESPACE, 'button') as HTMLButtonElement;
   const label = doc.createElementNS(HTML_NAMESPACE, 'span') as HTMLSpanElement;
   trigger.id = options.id;
@@ -138,7 +145,7 @@ export function createDropdown(win: Window, options: DropdownOptions): HTMLButto
     updateLabel();
     // The callback may synchronously rebuild the manager and remove the trigger.
     close(true);
-    if (changed) options.onChange(value);
+    if (changed) currentOptions.onChange(value);
   }
 
   function open(fallbackIndex = 0): void {
@@ -242,5 +249,11 @@ export function createDropdown(win: Window, options: DropdownOptions): HTMLButto
     }
   });
 
+  dropdownUpdates.set(trigger,next=>{
+    const changed=value!==next.value||choices.length!==next.choices.length||choices.some(([key,text],index)=>key!==next.choices[index]?.[0]||text!==next.choices[index]?.[1])||trigger.disabled!==(Boolean(next.disabled)||!next.choices.length);
+    if(changed)close();
+    currentOptions=next;choices=[...next.choices];value=next.value;
+    trigger.disabled=Boolean(next.disabled)||!choices.length;updateLabel();
+  });
   return trigger;
 }

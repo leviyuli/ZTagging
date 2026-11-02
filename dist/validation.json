@@ -1,246 +1,373 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.0.7",
-  "verifiedAt": "2026-11-02T08:39:37.318Z",
-  "target": "Zotero 10.0.6 on Windows",
-  "scope": "Remove Collections sidebar, keep plugin Find papers, and reduce background notification, persistence and definition lookup work",
-  "schemaVersion": 13,
+  "version": "1.1.0",
+  "verifiedAt": "2026-11-02T13:38:37.011Z",
+  "repository": "https://github.com/leviyuli/ZTagging",
+  "schemaVersion": 14,
   "nativeDefinitionProtocolVersion": 2,
-  "migrationRequiredFromVersion106": false,
+  "target": {
+    "zotero": "10.0.7",
+    "gecko": "140.17.0",
+    "os": {
+      "Caption": "Microsoft Windows 11 专业版",
+      "Version": "10.0.26300",
+      "BuildNumber": "26300"
+    },
+    "cpu": "13th Gen Intel(R) Core(TM) i5-13400F",
+    "ramBytes": 42777710592
+  },
+  "scope": "Responsive record-based Workspace, background workers, shared compressed SQLite storage, seven-day retention, durable queue/recovery and grouped Undo",
   "automatedTests": {
     "command": "npm test",
-    "passed": 1195,
-    "managerUITests": 151,
+    "passed": 1499,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
   },
   "typeChecks": {
     "standard": "passed",
-    "unusedBindings": "passed",
-    "unusedBindingsCommand": "tsc --noEmit --noUnusedLocals --noUnusedParameters"
+    "unusedBindings": "passed"
   },
   "inMemoryBundle": {
     "status": "passed",
-    "outputBytesMatchProductionJSAndMap": true
+    "entries": 3,
+    "write": false
   },
-  "productionBuild": {
-    "command": "npm run build",
-    "status": "passed"
-  },
-  "nativeSmoke": {
-    "status": "passed",
-    "passed": 86,
-    "failed": 0,
-    "scenarios": {
-      "library": {
-        "passed": 86,
-        "failed": 0,
-        "themes": {
-          "light": {
-            "status": "passed",
-            "version": "1.0.7",
-            "addonSource": "production-build",
-            "completedAt": "2026-11-02T08:38:39.751Z",
-            "passed": 43,
-            "failed": 0,
-            "checks": [
-              "isolatedDataDirectory",
-              "isolatedProfile",
-              "extensionStartup",
-              "menuAPI",
-              "sourceGlobals",
-              "automaticAssignmentInitiallyOff",
-              "managerSnapshot",
-              "nativeCollectionsPanelUnchanged",
-              "noNativeNavigatorAPI",
-              "automaticIsolatedProfileAndData",
-              "automaticProductionVersion",
-              "automaticProductionManagerResourceVersions",
-              "backgroundUnchangedNotificationsDoNotPersist",
-              "backgroundNotificationBatchYieldsToZotero",
-              "libraryRefinementCompactAccessibleToolbar",
-              "libraryRefinementDropdownEscapesScrollableContainers",
-              "libraryRefinementDropdownEscapeRestoresFocus",
-              "libraryRefinementSlashFocusesSearch",
-              "libraryRefinementEmptySearchHasClearAction",
-              "libraryRefinementEscapeClearsSearchWithoutProcessing",
-              "libraryRefinementSelectionSurvivesSearch",
-              "libraryRefinementLinkedPapersStayOptional",
-              "libraryRefinementLinkedPapersExpandWithKeyboard",
-              "libraryRefinementShelfChangesRemainLocal",
-              "libraryRefinementShelfManagementIsDiscoverable",
-              "libraryRefinementShelfManagementKeepsMergeAction",
-              "libraryRefinementReviewHasSingleHierarchy",
-              "libraryRefinementmediumControlsAndChoicesFit",
-              "libraryRefinementnarrowControlsAndChoicesFit",
-              "libraryRefinementSavedMeaningConflictHasDirectKeep",
-              "libraryRefinementSearchReturnsToBrowsing",
-              "libraryRefinementEditorReturnsFocusAndKeepsDraft",
-              "libraryRefinementEditorReopensDraftWithReachableControls",
-              "libraryRefinementBrowsingAndEditingDoNotProcess",
-              "libraryRefinementKeepSavedClosesOnlyDuplicate",
-              "libraryRefinementUndoRemainsReachable",
-              "libraryRefinementUndoDoesNotTouchNativeLabels",
-              "libraryFindPageStartsWithWholeLibrary",
-              "libraryFindQueryAndEnterFocusResults",
-              "libraryFindSavedTagFilterKeepsGroundedMatch",
-              "libraryFindClearRestoresWholeLibrary",
-              "librarySettingsKeepsUpdatesWithoutNativeSidebarControls",
-              "libraryFindAndSettingsStayLocal"
-            ],
-            "screenshots": 9,
-            "viewports": [
-              "1266x862",
-              "1046x722",
-              "806x582"
-            ],
-            "pointerActions": 19,
-            "keyboardActions": 13,
-            "keyboardTransport": "Gecko TextInputProcessor",
-            "mockedRequests": 0,
-            "realProviderRequests": 0,
-            "nativeWrites": 0
-          },
-          "dark": {
-            "status": "passed",
-            "version": "1.0.7",
-            "addonSource": "production-build",
-            "completedAt": "2026-11-02T08:38:49.477Z",
-            "passed": 43,
-            "failed": 0,
-            "checks": [
-              "isolatedDataDirectory",
-              "isolatedProfile",
-              "extensionStartup",
-              "menuAPI",
-              "sourceGlobals",
-              "automaticAssignmentInitiallyOff",
-              "managerSnapshot",
-              "nativeCollectionsPanelUnchanged",
-              "noNativeNavigatorAPI",
-              "automaticIsolatedProfileAndData",
-              "automaticProductionVersion",
-              "automaticProductionManagerResourceVersions",
-              "backgroundUnchangedNotificationsDoNotPersist",
-              "backgroundNotificationBatchYieldsToZotero",
-              "libraryRefinementCompactAccessibleToolbar",
-              "libraryRefinementDropdownEscapesScrollableContainers",
-              "libraryRefinementDropdownEscapeRestoresFocus",
-              "libraryRefinementSlashFocusesSearch",
-              "libraryRefinementEmptySearchHasClearAction",
-              "libraryRefinementEscapeClearsSearchWithoutProcessing",
-              "libraryRefinementSelectionSurvivesSearch",
-              "libraryRefinementLinkedPapersStayOptional",
-              "libraryRefinementLinkedPapersExpandWithKeyboard",
-              "libraryRefinementShelfChangesRemainLocal",
-              "libraryRefinementShelfManagementIsDiscoverable",
-              "libraryRefinementShelfManagementKeepsMergeAction",
-              "libraryRefinementReviewHasSingleHierarchy",
-              "libraryRefinementmediumControlsAndChoicesFit",
-              "libraryRefinementnarrowControlsAndChoicesFit",
-              "libraryRefinementSavedMeaningConflictHasDirectKeep",
-              "libraryRefinementSearchReturnsToBrowsing",
-              "libraryRefinementEditorReturnsFocusAndKeepsDraft",
-              "libraryRefinementEditorReopensDraftWithReachableControls",
-              "libraryRefinementBrowsingAndEditingDoNotProcess",
-              "libraryRefinementKeepSavedClosesOnlyDuplicate",
-              "libraryRefinementUndoRemainsReachable",
-              "libraryRefinementUndoDoesNotTouchNativeLabels",
-              "libraryFindPageStartsWithWholeLibrary",
-              "libraryFindQueryAndEnterFocusResults",
-              "libraryFindSavedTagFilterKeepsGroundedMatch",
-              "libraryFindClearRestoresWholeLibrary",
-              "librarySettingsKeepsUpdatesWithoutNativeSidebarControls",
-              "libraryFindAndSettingsStayLocal"
-            ],
-            "screenshots": 9,
-            "viewports": [
-              "1266x862",
-              "1046x722",
-              "806x582"
-            ],
-            "pointerActions": 19,
-            "keyboardActions": 13,
-            "keyboardTransport": "Gecko TextInputProcessor",
-            "mockedRequests": 0,
-            "realProviderRequests": 0,
-            "nativeWrites": 0
-          }
+  "nativeCases": {
+    "archiveLight": {
+      "status": "passed",
+      "completedAt": "2026-11-02T13:35:34.398Z",
+      "theme": "light",
+      "graphics": "native-default",
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "automaticNewPaperTaggingOff",
+        "schema14Locator",
+        "archiveDatabaseAtMost50MiB",
+        "bounded-build",
+        "bounded-vocabulary",
+        "bounded-assignment",
+        "bounded-library",
+        "bounded-activity",
+        "bounded-settings",
+        "decodedCacheBound",
+        "warmPageP95",
+        "inputLatency",
+        "searchControlStaysMounted",
+        "keyboardEscapeClearsSearch",
+        "page-build",
+        "layout-build",
+        "page-vocabulary",
+        "layout-vocabulary",
+        "page-assignment",
+        "layout-assignment",
+        "page-library",
+        "layout-library",
+        "page-activity",
+        "layout-activity",
+        "page-settings",
+        "layout-settings",
+        "noPluginPageSlice50ms",
+        "idleDisableP95"
+      ],
+      "passed": 31,
+      "failed": 0,
+      "metrics": {
+        "startupMs": 389,
+        "archiveDatabaseBytes": 49614848,
+        "idleReclamationMs": 0,
+        "warmQueries": {
+          "p95": 61,
+          "p99": 70,
+          "max": 70
+        },
+        "input": {
+          "p95": 12.245499999999993,
+          "p99": 33.808499999999995,
+          "max": 33.808499999999995
+        },
+        "pluginPageSlices": {
+          "samples": 78,
+          "p95": 3.6560000000008586,
+          "max": 16.42780000000039
+        },
+        "inputHandlers": {
+          "p95": 10.332899999999995,
+          "max": 10.863899999999973
+        },
+        "idleDisable": {
+          "p95": 28,
+          "max": 28
         }
       }
+    },
+    "archiveDark": {
+      "status": "passed",
+      "completedAt": "2026-11-02T13:26:04.444Z",
+      "theme": "dark",
+      "graphics": "software",
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "automaticNewPaperTaggingOff",
+        "schema14Locator",
+        "archiveDatabaseAtMost50MiB",
+        "bounded-build",
+        "bounded-vocabulary",
+        "bounded-assignment",
+        "bounded-library",
+        "bounded-activity",
+        "bounded-settings",
+        "decodedCacheBound",
+        "warmPageP95",
+        "inputLatency",
+        "searchControlStaysMounted",
+        "keyboardEscapeClearsSearch",
+        "page-build",
+        "layout-build",
+        "page-vocabulary",
+        "layout-vocabulary",
+        "page-assignment",
+        "layout-assignment",
+        "page-library",
+        "layout-library",
+        "page-activity",
+        "layout-activity",
+        "page-settings",
+        "layout-settings",
+        "noPluginPageSlice50ms",
+        "idleDisableP95"
+      ],
+      "passed": 31,
+      "failed": 0,
+      "metrics": {
+        "startupMs": 399,
+        "archiveDatabaseBytes": 49614848,
+        "idleReclamationMs": 0,
+        "warmQueries": {
+          "p95": 61,
+          "p99": 74,
+          "max": 74
+        },
+        "input": {
+          "p95": 12.162000000000035,
+          "p99": 13.595400000000012,
+          "max": 13.595400000000012
+        },
+        "pluginPageSlices": {
+          "samples": 78,
+          "p95": 3.7201999999997497,
+          "max": 20.388500000000022
+        },
+        "inputHandlers": {
+          "p95": 10.272700000000043,
+          "max": 11.84669999999997
+        },
+        "idleDisable": {
+          "p95": 23,
+          "max": 23
+        }
+      }
+    },
+    "syntheticDark": {
+      "status": "passed",
+      "completedAt": "2026-11-02T13:24:33.915Z",
+      "theme": "dark",
+      "graphics": "software",
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "backgroundInputLatency",
+        "automaticNewPaperTaggingOff",
+        "schema14Locator",
+        "bounded-build",
+        "bounded-vocabulary",
+        "bounded-assignment",
+        "bounded-library",
+        "bounded-activity",
+        "bounded-settings",
+        "tenThousandPaperCount",
+        "twoThousandDefinitions",
+        "decodedCacheBound",
+        "warmPageP95",
+        "inputLatency",
+        "searchControlStaysMounted",
+        "keyboardEscapeClearsSearch",
+        "page-build",
+        "layout-build",
+        "page-vocabulary",
+        "layout-vocabulary",
+        "page-assignment",
+        "layout-assignment",
+        "page-library",
+        "layout-library",
+        "page-activity",
+        "layout-activity",
+        "page-settings",
+        "layout-settings",
+        "noPluginPageSlice50ms",
+        "idleDisableP95"
+      ],
+      "passed": 33,
+      "failed": 0,
+      "metrics": {
+        "startupMs": 6561,
+        "backgroundInput": {
+          "samples": 299,
+          "p95": 1.9331999999994878,
+          "p99": 4.843200000000252,
+          "max": 6.877799999999752
+        },
+        "warmQueries": {
+          "p95": 75,
+          "p99": 90,
+          "max": 90
+        },
+        "input": {
+          "p95": 14.422000000000025,
+          "p99": 15.218000000000018,
+          "max": 15.218000000000018
+        },
+        "pluginPageSlices": {
+          "samples": 78,
+          "p95": 3.0020000000004075,
+          "max": 15.731999999999971
+        },
+        "inputHandlers": {
+          "p95": 10.197400000000016,
+          "max": 13.24750000000006
+        },
+        "idleDisable": {
+          "p95": 27,
+          "max": 27
+        }
+      }
+    },
+    "workflow": {
+      "status": "passed",
+      "completedAt": "2026-11-02T13:25:41.980Z",
+      "theme": "light",
+      "graphics": "software",
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "nativeWorkflowCreatesTwelveSources",
+        "nativeFixtureConnectionVerified",
+        "nativeFixtureDefinitionSaved",
+        "nativeClearAssignmentsAppliedWithoutReview",
+        "nativeUncertainPaperDoesNotBlockCompletion",
+        "nativeRequestsAreExactlyOnePerPaper",
+        "nativeManualTagsPreserved",
+        "nativeSingleUncertainChoiceVisible",
+        "nativeRecentUndoVisible",
+        "nativeRepeatReusesPaidReplies",
+        "nativeRepeatFinishesWithUncertainChoice",
+        "nativeRepeatPreservesManualTags",
+        "nativeRepeatDoesNotDuplicateChoices",
+        "nativeUndoSurvivesRestart",
+        "nativeUndoChangesActualZoteroTags",
+        "nativeUndoPreservesManualTags",
+        "nativeUndoPreventsImmediateReapplication",
+        "nativeRestartAndUndoReusePaidReplies",
+        "nativeFixtureNeverUsesRealNetwork",
+        "nativeUnknownOutcomeIsNotAutomaticallyResent",
+        "nativeRecoveryCanBeStoppedWithKeyboard",
+        "nativeRecoveryKeepsCompletedResults",
+        "nativeRecoveryAddsNoRetryCharge",
+        "nativeRecoveryNeverUsesRealNetwork"
+      ],
+      "passed": 27,
+      "failed": 0,
+      "metrics": {
+        "startupMs": 348
+      },
+      "undonePapers": 11,
+      "providerRequestsAreSynthetic": true
+    },
+    "package": {
+      "status": "passed",
+      "completedAt": "2026-11-02T13:34:29.566Z",
+      "theme": "light",
+      "graphics": "software",
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "packagedIdentity",
+        "packagedInstalledActive",
+        "packagedArchiveResources",
+        "packagedWorkersFromArchive",
+        "packagedManagerResources",
+        "packagedIdleDisable",
+        "packagedReenablePreservesWorkspace",
+        "packagedRapidTogglePreservesWorkers"
+      ],
+      "passed": 11,
+      "failed": 0,
+      "metrics": {
+        "startupMs": 383
+      },
+      "version": "1.1.0",
+      "fullIdleDisableMs": 32,
+      "rapidToggle": true
     }
   },
-  "performance": {
-    "stateBytes": 152976903,
-    "unchangedNotificationWrites": 0,
-    "batchNotificationWrites": 0,
-    "measurements": [
-      {
-        "name": "snapshot",
-        "elapsedMs": 127.30089999999996,
-        "heapMB": 262,
-        "heapDeltaMB": 25
-      },
-      {
-        "name": "snapshot-repeat",
-        "elapsedMs": 94.22869999999989,
-        "heapMB": 275,
-        "heapDeltaMB": 37
-      },
-      {
-        "name": "unchangedItemNotification-no-disk",
-        "elapsedMs": 1.1377999999999702,
-        "heapMB": 239,
-        "heapDeltaMB": 0
-      },
-      {
-        "name": "100DuplicateNotifications-no-disk",
-        "elapsedMs": 0.6606999999999061,
-        "heapMB": 238,
-        "heapDeltaMB": 0
-      }
-    ]
+  "storage": {
+    "legacyBytes": 152976903,
+    "activeDatabaseBytes": 49614848,
+    "activeDatabaseMiB": 47.31640625,
+    "backupExcluded": true,
+    "freshMigrationMs": 206583,
+    "idleReclamationMs": 37374,
+    "reclamationInputMs": {
+      "p95": 0.3897,
+      "p99": 0.5659
+    },
+    "maximumChunkBytes": 65536,
+    "maximumPageRows": 50,
+    "maximumViewBytes": 262144,
+    "decodedCacheLimitBytes": 33554432,
+    "maximumBulkTransfers": 2,
+    "maximumNativeChunkPapers": 20,
+    "retentionDays": 7
   },
   "packageChecks": {
-    "installerFiles": 10,
-    "stableExtensionId": "smart-tags@zotero-local.org",
-    "navigatorModuleAndStyleRemoved": true,
-    "versionedManagerResources": true,
-    "nativeTestBootstrapExcluded": true,
-    "productionAndNativeResourcesMatch": true,
-    "updateManifestVersionAndSHA256": "passed",
-    "credentialPatternScan": {
-      "status": "passed",
-      "allowedFiles": 157
+    "status": "passed",
+    "installerFiles": 14,
+    "sourceFiles": 214,
+    "sourceEntriesMatchWorkingSource": true,
+    "productionBundlesMatchInstaller": true,
+    "updateManifestHashMatches": true,
+    "reproducibleSourceArchive": true,
+    "nativeTestInjectionExcluded": true,
+    "privateAndGeneratedDataExcluded": true,
+    "credentialPatternScan": "passed"
+  },
+  "artifacts": {
+    "installer": {
+      "file": "smart-tags-1.1.0.xpi",
+      "bytes": 1108589,
+      "sha256": "f6b5e7edc2fb5850dbcff59562b238d594252574ac1e59880fa6e7407a642dcb"
     },
-    "sourceArchive": {
-      "status": "passed",
-      "allowedFiles": 157,
-      "archiveEntriesMatchSourceBytes": true,
-      "rebuildMatchesInstallerBytes": true
+    "source": {
+      "file": "smart-tags-1.1.0-source.zip",
+      "bytes": 1170841,
+      "sha256": "0000f7aaa6d0c1db2649c741738f76207531fe992b466b756891ba6115b33ec4"
     }
   },
   "workingNativeLibraryModified": false,
   "workingExtensionCacheModified": false,
   "liveProviderRequests": 0,
   "limits": [
-    "Native tests use synthetic papers and mocked provider/native-write adapters; they do not establish live scientific accuracy or provider availability.",
-    "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised; public update metadata and installer bytes are checked separately.",
-    "Legacy navigator-specific native scenarios are retired. Historical meaning and copied-state recovery runs are not fresh native runs for this release.",
-    "Profiling used an existing read-only copied state; genuine changes still require recovery-safe serialization and persistence."
-  ],
-  "artifacts": {
-    "installer": {
-      "file": "smart-tags-1.0.7.xpi",
-      "bytes": 744999,
-      "sha256": "d059d950eab215d242e58399d1de5587a079f061393f145b23c0ca8333358c67"
-    },
-    "source": {
-      "file": "smart-tags-1.0.7-source.zip",
-      "bytes": 928694,
-      "sha256": "2f748824eeb966d7abaac0f0d17717ae0d090052cb6e9291acf6e9e97144fb05"
-    }
-  },
-  "repository": "https://github.com/leviyuli/ZTagging"
+    "Results describe the documented test machine and fixtures, not an absolute latency guarantee.",
+    "Measured page callbacks, input-to-paint latency, native calls and operating-system/graphics waits have different scopes.",
+    "The private worker scientific kernel reuses AppController domain logic; product views never call its old whole-workspace snapshot.",
+    "Synthetic provider replies verify workflow and recovery, not live classification accuracy or provider availability.",
+    "Remote Zotero update discovery was not exercised; exact installer bytes, compatibility and the update feed hash were checked."
+  ]
 }

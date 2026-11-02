@@ -59,8 +59,8 @@ test('a literal older checkpoint with a ready selector and pending new papers is
   await restored.controller.invoke('resume');await restored.controller.waitForIdle();assert.equal(restored.state.run!.status,'idle',restored.state.run!.message);assert.equal(restored.state.run!.cachedSelection,undefined);assert.equal(restored.calls.filter(input=>input.paper).length,12);assert.equal(restored.calls.filter(input=>input.selectionPhase==='choosing').length,1);assert.deepEqual(new Set(restored.state.run!.selection!.snapshot.paperIds),new Set(next.map(value=>value.id)));assert.ok(restored.state.tagSelectionHistory!.some(entry=>fingerprint(entry.work)===fingerprint(previous)));assert.equal(restored.writes(),0);
 });
 
-test('reset clears dormant selection work from the active run while keeping its complete audit record',async()=>{
-  const h=harness();await build(h);const previous=clone(h.state.run!.selection!),native=fingerprint(h.state.nativeTags),calls=h.calls.length,block=blockRead(h,1);
+test('legacy reset clears dormant selection work from the active run while keeping its complete audit record',async()=>{
+  const h=harness();delete h.state.metadata['storage.processingHistoryPolicy'];await build(h);const previous=clone(h.state.run!.selection!),native=fingerprint(h.state.nativeTags),calls=h.calls.length,block=blockRead(h,1);
   await h.controller.invoke('prepare-tags',{scope:'library',mode:'replace'});await block.started;await h.controller.invoke('pause');block.release();await h.controller.waitForIdle();assert.deepEqual(h.state.run!.cachedSelection!.work,previous);
   await h.controller.invoke('reset-paper-analysis');const state=h.controller.state,audit=state.analysisResetHistory!.at(-1)!;assert.equal(state.run!.cachedSelection,undefined);assert.equal(state.run!.selection,undefined);assert.deepEqual(state.facts,{});assert.deepEqual(audit.run!.cachedSelection!.work,previous);assert.equal(fingerprint(state.nativeTags),native);assert.equal(h.calls.length,calls);assert.equal(h.writes(),0);assert.equal(validState(state),true);
 });

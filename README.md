@@ -2,11 +2,11 @@
 
 A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It learns useful tag meanings from your papers, saves clear definitions, and applies supported paper tags. Scientific choices that need your judgment remain available without blocking completed work. Your existing item-list columns and collections stay in place.
 
-**Version 1.0.7** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.7). Paper search and tag filters stay inside **Smart Tags → Find papers**; the extra panel beside Zotero’s Collections is removed. Unchanged item updates skip saving, and notifications are batched to reduce background work. **Restart Zotero after updating** to clear the previous version’s sidebar hooks.
+**Version 1.1.0** moves saved work into shared SQLite storage and background workers, with bounded page updates and seven-day retention. It keeps recent Undo, scientific checks and unfinished choices. See the [release](https://github.com/leviyuli/ZTagging/releases/tag/v1.1.0) and [validation report](VALIDATION.md). **Restart Zotero after updating**; the first update migrates saved work while showing progress.
 
 ## Install and start
 
-1. Download [smart-tags-1.0.7.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi).
+1. Download [smart-tags-1.1.0.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi).
 2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version. Restart Zotero after updating.
 3. Open **Tools → Smart Tags…**, then **Settings → AI connection and budget**, or use **Connect AI** on a task page. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; choose a text-capable model and click **Save and test** (or **Test connection** for saved settings).
 4. Open **Build tags**, choose papers or collections, and click **Build tags** or **Extend tags**. A 50-paper sample is available for a small first run. Clear, checked meanings save automatically; questions stay on the page and in Activity. Building definitions does not write paper tags.
@@ -20,13 +20,27 @@ The classifier usually proposes up to five direct tags from the chosen shelf; it
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
 In **Tag library**, press **/** to focus search and **Escape** to clear it. **All tags / Defined / Needs meaning** filters stay beside the shelf selector; **Shelf options** contains Rename and Merge. Linked papers and AI source notes are optional disclosures. Meaning choices, editor drafts and Undo remain available while you browse.
 
 **Find papers** leads with results; tag filters and related papers are available when needed. **Activity** puts unfinished choices and recovery first, with completed work, notices and older Undo actions in searchable History. **Settings** shows connection and incoming-tagging status first; optional preferences stay collapsed, and **Ctrl/Cmd+S** saves changes.
 
+## Responsive workspace and seven-day retention
+
+Saved work uses a plugin-owned SQLite database and background workers. Pages request their own rows and details; routine navigation and progress updates do not load the complete saved archive. Search is debounced, page results are bounded, and native paper changes use chunks of at most 20 papers. In isolated Windows/Zotero tests, the copied 153 MB archive became a **47.3 MiB active database**, excluding its temporary backup. Warm page queries were at most 75 ms at p95 for the archive and a synthetic 10,000-paper library; see the [measured validation status](docs/workspace.md#validation-status).
+
+Completed work and Undo details expire after **seven days**. Unused AI results expire after **seven days without actual reuse**; viewing a page does not extend their life. Current meanings, their supporting evidence, unfinished choices, interrupted work and recovery context remain protected. Compact ownership records, remembered decisions, admissions and automatic-reapplication suppression survive expiry of the older Undo bodies.
+
+**Settings → Data** shows active data, history, cache and backup counters without serializing the workspace. Cleanup also removes redundant audit copies from previous analysis resets, obsolete consolidation and DIY comparisons, superseded facts, older copies of the same vocabulary selection, and meaning revisions whose useful contents survive in later records. Paid replies and request scopes needed by live work remain protected; unrelated expired diagnostics and unreferenced cached replies can be removed. Unknown timestamps receive a seven-day migration grace period.
+
+The schema-14 migration keeps an exact, collision-safe legacy backup. That registered backup is eligible for removal only after seven days, two verified restarts and resolution of recovery work. Migration itself makes no AI request, definition admission or native paper change. See [Workspace architecture and validation](docs/workspace.md) for storage, recovery and retention rules.
+
+Retention tests repeat processing and correction cycles, check saved-byte growth, and compare recovery before and after cleanup. Future persisted history needs a live reader, a retention rule, and a growth test. Useful new papers and evidence still consume storage; repeated copies and unused diagnostics should not.
+
 ## Earlier releases
+
+Version **1.0.7** removed the extra panel beside Zotero's Collections and kept paper search inside **Smart Tags → Find papers**. It batched item notifications and skipped unchanged saves. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.7) remains available.
 
 Version **1.0.6** refined Tag library with a compact toolbar and clearer meaning choices. **Keep saved meaning** closes duplicate proposals without changing saved tags or repeating AI work. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6) remains available.
 
@@ -192,7 +206,7 @@ After a new assignment finishes analysis, **Topics outside your saved list** is 
 
 ## Local storage
 
-Definitions, source metadata, selected PDF passages, proposals, decisions, queue checkpoints, and change journals live in `smart-tags/state.json` inside the current Zotero profile. Atomic writes keep a previous `.bak` generation. Interrupted native changes are reconciled against their recorded tag or metadata snapshots on startup. Definition changes are journaled with affected IDs; recovery and undo preserve unrelated definitions and refuse conflicting later edits.
+Version **1.1.0** stores normalized records and shared payloads in `smart-tags/workspace.sqlite` inside the current Zotero profile; `smart-tags/state.json` is a small schema-14 locator. Versions through 1.0.7 stored the workspace in `state.json`; the update streams that data into SQLite and preserves an exact backup. This database is separate from Zotero's library database. Interrupted native changes are reconciled against their recorded tag or metadata snapshots on startup. Definition changes are journaled with affected IDs; recovery and Undo preserve unrelated definitions and refuse conflicting later edits.
 
 Version **1.0.5** introduces **state schema 13** with an exact-byte **state.json.pre-v13.json** backup; native-definition protocol 2 remains unchanged. Different existing backup bytes receive numbered suffixes, and older backups remain untouched. Migration retains facts, sources, paid replies, spending, manual choices, settings and history, and makes no provider request, meaning admission or native write. Older unfinished work keeps its existing review and selection policies; explicit **Use** or **Use clear meanings** can save its available meanings. New automatic runs can save clear supported meanings without checking every old paper label. Unverified old associations remain separate from scientific filtering and counts until an individual match establishes them. Admission and Undo journals prevent restart from recreating an undone result. Older applications refuse to overwrite schema-13 data; see [migration notes](MIGRATION.md).
 
@@ -210,10 +224,13 @@ Node.js 24 and npm are required for development; end users install only the XPI.
 
 ```powershell
 npm ci
-npm run verify
+npm run check
+npx tsc --noEmit --noUnusedLocals --noUnusedParameters
+npm test
+node scripts/build.mjs --check
 ```
 
-`npm run check` runs strict TypeScript checking; `npm test` runs the domain, provider, controller, persistence, and native-adapter regression suites using Node's test runner. `npm run build` bundles the extension and creates the XPI. Tests use synthetic papers and mocked network responses; they do not read your credentials or modify your working library.
+`npm run check` runs strict TypeScript checking; `npm test` runs the domain, provider, controller, persistence, worker, SQLite and native-adapter regression suites using Node's test runner. `node scripts/build.mjs --check` bundles all three entry points in memory without changing release files. `npm run build` creates the release XPI and updates its manifest; use that separately when preparing an authorized release. Tests use synthetic papers and mocked network responses; they do not read your credentials or modify your working library.
 
 The development native smoke harness uses a separate profile **and** data directory under this workspace. It is excluded from the installable XPI. Its `--open-manager` flag opens the interface for visual checks; `--light-theme` sets light-theme preferences in that isolated test profile. Real ChatGPT eligibility and API-key inference are user-account checks performed from Connect AI.
 

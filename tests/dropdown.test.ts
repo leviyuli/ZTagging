@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDropdown, cleanupDropdowns } from '../src/dropdown.ts';
+import { createDropdown, cleanupDropdowns, updateDropdown } from '../src/dropdown.ts';
 
 const XHTML = 'http://www.w3.org/1999/xhtml';
 type Listener = { callback: any; capture: boolean; once: boolean };
@@ -441,4 +441,29 @@ test('disabled controls cannot open from pointer, keyboard or typeahead', () => 
   assert.equal(button.getAttribute('aria-expanded'), 'false');
   assert.deepEqual(changes, []);
   assert.equal(dom.timers.size, 0);
+});
+
+test('updating a mounted dropdown retains focus, open navigation and exactly one callback',()=>{
+  const dom=chromeDOM(),oldChanges:string[]=[],newChanges:string[]=[];
+  const choices=[['a','Alpha'],['b','Beta']] as const;
+  const {button}=dom.dropdown({value:'a',choices,onChange:(value:string)=>oldChanges.push(value)});
+  button.focus();dom.key(button,'ArrowDown');dom.key(button,'End');
+  const popup=dom.popup(),listeners={document:dom.doc.listenerCount(),window:dom.win.listenerCount()};
+  assert.equal(updateDropdown(button as any,{id:'scope',value:'a',choices,onChange:value=>newChanges.push(value)}),true);
+  assert.equal(dom.popup(),popup);assert.equal(dom.doc.activeElement,button);assert.equal(dom.active(button)?.textContent,'Beta');
+  assert.equal(dom.doc.listenerCount(),listeners.document);assert.equal(dom.win.listenerCount(),listeners.window);
+  dom.key(button,'Enter');assert.deepEqual(oldChanges,[]);assert.deepEqual(newChanges,['b']);assert.equal(dom.popup(),null);
+  assert.equal(dom.doc.listenerCount(),0);assert.equal(dom.win.listenerCount(),0);
+});
+
+test('changed dropdown choices dismiss stale options and reuse symmetric outside listeners',()=>{
+  const dom=chromeDOM(),changes:string[]=[];
+  const {button}=dom.dropdown();button.focus();dom.pointerClick(button);
+  assert.equal(updateDropdown(button as any,{id:'scope',value:'x',choices:[['x','Revised choice'],['y','Second choice']],onChange:value=>changes.push(value)}),true);
+  assert.equal(dom.popup(),null);assert.equal(dom.doc.activeElement,button);assert.equal(button.textContent,'Revised choice');
+  assert.equal(dom.doc.listenerCount(),0);assert.equal(dom.win.listenerCount(),0);
+  dom.pointerClick(button);assert.deepEqual(dom.options().map(option=>option.textContent),['Revised choice','Second choice']);
+  dom.fire(dom.doc.body,'pointerdown');assert.equal(dom.popup(),null);assert.equal(dom.doc.listenerCount(),0);assert.equal(dom.win.listenerCount(),0);
+  dom.pointerClick(button);dom.doc.body.focus();assert.equal(dom.popup(),null);assert.equal(dom.doc.listenerCount(),0);assert.equal(dom.win.listenerCount(),0);
+  assert.deepEqual(changes,[]);
 });

@@ -1,5 +1,15 @@
 # Migration notes
 
+## Version 1.1.0: background workspace and seven-day retention
+
+Install the new XPI over your existing extension, then restart Zotero. The first opening streams saved Smart Tags data into a separate `smart-tags/workspace.sqlite` database and shows migration progress. Zotero's library database is not used for plugin storage. Migration makes no AI request, saves no new meaning and changes no paper tags.
+
+Schema **14** preserves saved definitions and supporting evidence, paid replies, request identities, unfinished choices, captured processing policies, manual protections and interrupted work. An exact legacy backup is retained before the small `state.json` locator is activated. Interrupted migration resumes safely; older plugin versions refuse to overwrite the newer locator. Do not replace the locator with an older file to downgrade.
+
+Completed work and Undo details remain available for **seven days**. Unused cached AI results expire seven days after their last actual reuse. Current definitions, their evidence, unfinished choices and recovery stay protected. Compact ownership, remembered decisions, admissions and automatic-reapplication suppression remain after older Undo details expire. The registered migration backup is eligible for cleanup only after seven days, two verified restarts and no outstanding recovery.
+
+**Settings → Data** shows the database size, logical data categories and the separate migration backup. Initial migration and library indexing run in the background; pages load bounded results and details on demand. See [Workspace storage and responsiveness](docs/workspace.md) for the implementation and validation limits.
+
 ## Version 1.0.7: remove the sidebar and reduce background work
 
 Update through Zotero’s plugin manager, or install the [v1.0.7 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) over your existing extension. **Restart Zotero after updating** to clear the previous version’s sidebar hooks. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.7) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip).
