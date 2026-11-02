@@ -1,17 +1,16 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.0.5",
-  "verifiedAt": "2026-11-02T05:42:21.309Z",
+  "version": "1.0.6",
+  "verifiedAt": "2026-11-02T06:44:01.947Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Use or Skip AI meanings, automatic clear definitions, remembered personal labels, and independent scientific/native membership",
+  "scope": "Compact tag library, keyboard browsing and correction, actionable saved-meaning conflicts, and safe generated-alias pruning",
   "schemaVersion": 13,
   "nativeDefinitionProtocolVersion": 2,
+  "migrationRequiredFromVersion105": false,
   "automatedTests": {
     "command": "npm test",
-    "passed": 1184,
-    "managerUITests": 146,
-    "controllerNativeMeaningAdmissionTests": 14,
-    "storeAndMigrationCases": 71,
+    "passed": 1195,
+    "managerUITests": 151,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
@@ -29,243 +28,240 @@
     "command": "npm run build",
     "status": "passed"
   },
-  "migration": {
-    "fromSchema": 12,
-    "toSchema": 13,
-    "exactBackupPattern": "state.json.pre-v13.json",
-    "originalProcessingPoliciesRetained": true,
-    "migrationAdmissions": 0,
-    "migrationRequests": 0
-  },
-  "copiedStateReplay": {
-    "status": "passed",
-    "sourceJudgmentsRetained": {
-      "supporting": 2,
-      "different": 1,
-      "unchecked": 13
-    },
-    "paidProgressRetained": true,
-    "migrationSchemaOnly": true,
-    "explicitMeaningAdmission": true,
-    "fullNativeAliasGateRetained": true,
-    "restartAndUndo": "passed",
-    "realProviderRequests": 0,
-    "nativeWrites": 0,
-    "workingProfileAccessedByReplay": false
-  },
   "nativeSmoke": {
     "status": "passed",
-    "scenario": "focused-native-meaning-use-skip",
-    "passed": 56,
+    "passed": 132,
     "failed": 0,
-    "themes": {
-      "light": {
-        "status": "passed",
-        "passed": 28,
+    "scenarios": {
+      "library": {
+        "passed": 68,
         "failed": 0,
-        "version": "1.0.5",
-        "addonSource": "production-build",
-        "completedAt": "2026-11-02T05:40:58.440Z",
-        "checks": [
-          "isolatedDataDirectory",
-          "isolatedProfile",
-          "extensionStartup",
-          "menuAPI",
-          "sourceGlobals",
-          "automaticAssignmentInitiallyOff",
-          "managerSnapshot",
-          "fixtureSetupUsesCollections",
-          "automaticIsolatedProfileAndData",
-          "automaticProductionVersion",
-          "automaticProductionManagerResourceVersions",
-          "nativeMeaningUseCardShowsMeaningAndDirectDecision",
-          "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
-          "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
-          "nativeMeaningUsefcLeavesNoSourceReviewJob",
-          "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
-          "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
-          "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
-          "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
-          "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
-          "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
-          "nativeMeaningPersonalQuestionUsesNoProvider",
-          "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
-          "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
-          "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
-          "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
-          "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
-          "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
-        ],
-        "keyboardTransport": "Gecko TextInputProcessor",
-        "mockedRequests": 3,
-        "requestPhases": [
-          {
-            "mode": "clear",
-            "phase": "draft",
-            "paperIds": [
-              "1:CLFC0000",
-              "1:CLFC0001",
-              "1:CLFC0002"
-            ]
+        "themes": {
+          "light": {
+            "status": "passed",
+            "version": "1.0.6",
+            "addonSource": "production-build",
+            "completedAt": "2026-11-02T06:43:08.396Z",
+            "passed": 34,
+            "failed": 0,
+            "checks": [
+              "isolatedDataDirectory",
+              "isolatedProfile",
+              "extensionStartup",
+              "menuAPI",
+              "sourceGlobals",
+              "automaticAssignmentInitiallyOff",
+              "managerSnapshot",
+              "fixtureSetupUsesCollections",
+              "automaticIsolatedProfileAndData",
+              "automaticProductionVersion",
+              "automaticProductionManagerResourceVersions",
+              "libraryRefinementCompactAccessibleToolbar",
+              "libraryRefinementDropdownEscapesScrollableContainers",
+              "libraryRefinementDropdownEscapeRestoresFocus",
+              "libraryRefinementSlashFocusesSearch",
+              "libraryRefinementEmptySearchHasClearAction",
+              "libraryRefinementEscapeClearsSearchWithoutProcessing",
+              "libraryRefinementSelectionSurvivesSearch",
+              "libraryRefinementLinkedPapersStayOptional",
+              "libraryRefinementLinkedPapersExpandWithKeyboard",
+              "libraryRefinementShelfChangesRemainLocal",
+              "libraryRefinementShelfManagementIsDiscoverable",
+              "libraryRefinementShelfManagementKeepsMergeAction",
+              "libraryRefinementReviewHasSingleHierarchy",
+              "libraryRefinementmediumControlsAndChoicesFit",
+              "libraryRefinementnarrowControlsAndChoicesFit",
+              "libraryRefinementSavedMeaningConflictHasDirectKeep",
+              "libraryRefinementSearchReturnsToBrowsing",
+              "libraryRefinementEditorReturnsFocusAndKeepsDraft",
+              "libraryRefinementEditorReopensDraftWithReachableControls",
+              "libraryRefinementBrowsingAndEditingDoNotProcess",
+              "libraryRefinementKeepSavedClosesOnlyDuplicate",
+              "libraryRefinementUndoRemainsReachable",
+              "libraryRefinementUndoDoesNotTouchNativeLabels"
+            ],
+            "screenshots": 7,
+            "viewports": [
+              "1266x862",
+              "1046x722",
+              "806x582"
+            ],
+            "pointerActions": 17,
+            "keyboardActions": 10,
+            "keyboardTransport": "Gecko TextInputProcessor",
+            "mockedRequests": 0,
+            "realProviderRequests": 0,
+            "nativeWrites": 0
           },
-          {
-            "mode": "assignment"
-          },
-          {
-            "mode": "retry",
-            "phase": "draft",
-            "paperIds": [
-              "1:NONE0000"
-            ]
+          "dark": {
+            "status": "passed",
+            "version": "1.0.6",
+            "addonSource": "production-build",
+            "completedAt": "2026-11-02T06:43:15.781Z",
+            "passed": 34,
+            "failed": 0,
+            "checks": [
+              "isolatedDataDirectory",
+              "isolatedProfile",
+              "extensionStartup",
+              "menuAPI",
+              "sourceGlobals",
+              "automaticAssignmentInitiallyOff",
+              "managerSnapshot",
+              "fixtureSetupUsesCollections",
+              "automaticIsolatedProfileAndData",
+              "automaticProductionVersion",
+              "automaticProductionManagerResourceVersions",
+              "libraryRefinementCompactAccessibleToolbar",
+              "libraryRefinementDropdownEscapesScrollableContainers",
+              "libraryRefinementDropdownEscapeRestoresFocus",
+              "libraryRefinementSlashFocusesSearch",
+              "libraryRefinementEmptySearchHasClearAction",
+              "libraryRefinementEscapeClearsSearchWithoutProcessing",
+              "libraryRefinementSelectionSurvivesSearch",
+              "libraryRefinementLinkedPapersStayOptional",
+              "libraryRefinementLinkedPapersExpandWithKeyboard",
+              "libraryRefinementShelfChangesRemainLocal",
+              "libraryRefinementShelfManagementIsDiscoverable",
+              "libraryRefinementShelfManagementKeepsMergeAction",
+              "libraryRefinementReviewHasSingleHierarchy",
+              "libraryRefinementmediumControlsAndChoicesFit",
+              "libraryRefinementnarrowControlsAndChoicesFit",
+              "libraryRefinementSavedMeaningConflictHasDirectKeep",
+              "libraryRefinementSearchReturnsToBrowsing",
+              "libraryRefinementEditorReturnsFocusAndKeepsDraft",
+              "libraryRefinementEditorReopensDraftWithReachableControls",
+              "libraryRefinementBrowsingAndEditingDoNotProcess",
+              "libraryRefinementKeepSavedClosesOnlyDuplicate",
+              "libraryRefinementUndoRemainsReachable",
+              "libraryRefinementUndoDoesNotTouchNativeLabels"
+            ],
+            "screenshots": 7,
+            "viewports": [
+              "1266x862",
+              "1046x722",
+              "806x582"
+            ],
+            "pointerActions": 17,
+            "keyboardActions": 10,
+            "keyboardTransport": "Gecko TextInputProcessor",
+            "mockedRequests": 0,
+            "realProviderRequests": 0,
+            "nativeWrites": 0
           }
-        ],
-        "realProviderRequests": 0,
-        "nativeWrites": 0,
-        "pointerActions": 4,
-        "keyboardActions": 3,
-        "screenshots": 10,
-        "viewports": [
-          "1266x862",
-          "806x582"
-        ],
-        "admissionCases": [
-          {
-            "caseName": "fc",
-            "proofsRetained": true,
-            "candidateRetained": true,
-            "paidAttemptsRetained": true,
-            "oldHistoryRetained": true,
-            "providerRequests": 0,
-            "nativeWrites": 0,
-            "maskCount": 14,
-            "coverage": 2,
-            "aliases": [],
-            "meaningAdmissionPolicy": 1,
-            "bindingVerified": false,
-            "displayApplied": true,
-            "pendingReviews": 0
-          },
-          {
-            "caseName": "aliases",
-            "proofsRetained": true,
-            "candidateRetained": true,
-            "paidAttemptsRetained": true,
-            "oldHistoryRetained": true,
-            "providerRequests": 0,
-            "nativeWrites": 0,
-            "maskCount": 0,
-            "coverage": 0,
-            "aliases": [],
-            "meaningAdmissionPolicy": 1,
-            "bindingVerified": false,
-            "displayApplied": true,
-            "pendingReviews": 0
-          }
-        ]
+        }
       },
-      "dark": {
-        "status": "passed",
-        "passed": 28,
+      "meaning": {
+        "passed": 64,
         "failed": 0,
-        "version": "1.0.5",
-        "addonSource": "production-build",
-        "completedAt": "2026-11-02T05:41:40.505Z",
-        "checks": [
-          "isolatedDataDirectory",
-          "isolatedProfile",
-          "extensionStartup",
-          "menuAPI",
-          "sourceGlobals",
-          "automaticAssignmentInitiallyOff",
-          "managerSnapshot",
-          "fixtureSetupUsesCollections",
-          "automaticIsolatedProfileAndData",
-          "automaticProductionVersion",
-          "automaticProductionManagerResourceVersions",
-          "nativeMeaningUseCardShowsMeaningAndDirectDecision",
-          "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
-          "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
-          "nativeMeaningUsefcLeavesNoSourceReviewJob",
-          "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
-          "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
-          "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
-          "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
-          "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
-          "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
-          "nativeMeaningPersonalQuestionUsesNoProvider",
-          "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
-          "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
-          "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
-          "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
-          "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
-          "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
-        ],
-        "keyboardTransport": "Gecko TextInputProcessor",
-        "mockedRequests": 3,
-        "requestPhases": [
-          {
-            "mode": "clear",
-            "phase": "draft",
-            "paperIds": [
-              "1:CLFC0000",
-              "1:CLFC0001",
-              "1:CLFC0002"
-            ]
+        "themes": {
+          "light": {
+            "status": "passed",
+            "version": "1.0.6",
+            "addonSource": "production-build",
+            "completedAt": "2026-11-02T06:43:24.394Z",
+            "passed": 32,
+            "failed": 0,
+            "checks": [
+              "isolatedDataDirectory",
+              "isolatedProfile",
+              "extensionStartup",
+              "menuAPI",
+              "sourceGlobals",
+              "automaticAssignmentInitiallyOff",
+              "managerSnapshot",
+              "fixtureSetupUsesCollections",
+              "automaticIsolatedProfileAndData",
+              "automaticProductionVersion",
+              "automaticProductionManagerResourceVersions",
+              "nativeMeaningUseCardShowsMeaningAndDirectDecision",
+              "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
+              "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
+              "nativeMeaningUsefcLeavesNoSourceReviewJob",
+              "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
+              "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
+              "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
+              "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
+              "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
+              "nativeMeaningSavedNameCollisionOffersKeepInsteadOfFailingUse",
+              "nativeMeaningKeepSavedClosesProposalWithoutProviderOrMembershipChanges",
+              "nativeMeaningGeneratedAliasOverlapKeepsDirectUseAvailable",
+              "nativeMeaningGeneratedAliasOverlapPrunesOnlyCandidateAlias",
+              "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
+              "nativeMeaningPersonalQuestionUsesNoProvider",
+              "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
+              "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
+              "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
+              "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
+              "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
+              "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
+            ],
+            "screenshots": 14,
+            "viewports": [
+              "1266x862",
+              "806x582"
+            ],
+            "pointerActions": 5,
+            "keyboardActions": 3,
+            "keyboardTransport": "Gecko TextInputProcessor",
+            "mockedRequests": 3,
+            "realProviderRequests": 0,
+            "nativeWrites": 0
           },
-          {
-            "mode": "assignment"
-          },
-          {
-            "mode": "retry",
-            "phase": "draft",
-            "paperIds": [
-              "1:NONE0000"
-            ]
+          "dark": {
+            "status": "passed",
+            "version": "1.0.6",
+            "addonSource": "production-build",
+            "completedAt": "2026-11-02T06:43:32.563Z",
+            "passed": 32,
+            "failed": 0,
+            "checks": [
+              "isolatedDataDirectory",
+              "isolatedProfile",
+              "extensionStartup",
+              "menuAPI",
+              "sourceGlobals",
+              "automaticAssignmentInitiallyOff",
+              "managerSnapshot",
+              "fixtureSetupUsesCollections",
+              "automaticIsolatedProfileAndData",
+              "automaticProductionVersion",
+              "automaticProductionManagerResourceVersions",
+              "nativeMeaningUseCardShowsMeaningAndDirectDecision",
+              "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
+              "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
+              "nativeMeaningUsefcLeavesNoSourceReviewJob",
+              "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
+              "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
+              "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
+              "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
+              "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
+              "nativeMeaningSavedNameCollisionOffersKeepInsteadOfFailingUse",
+              "nativeMeaningKeepSavedClosesProposalWithoutProviderOrMembershipChanges",
+              "nativeMeaningGeneratedAliasOverlapKeepsDirectUseAvailable",
+              "nativeMeaningGeneratedAliasOverlapPrunesOnlyCandidateAlias",
+              "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
+              "nativeMeaningPersonalQuestionUsesNoProvider",
+              "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
+              "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
+              "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
+              "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
+              "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
+              "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
+            ],
+            "screenshots": 14,
+            "viewports": [
+              "1266x862",
+              "806x582"
+            ],
+            "pointerActions": 5,
+            "keyboardActions": 3,
+            "keyboardTransport": "Gecko TextInputProcessor",
+            "mockedRequests": 3,
+            "realProviderRequests": 0,
+            "nativeWrites": 0
           }
-        ],
-        "realProviderRequests": 0,
-        "nativeWrites": 0,
-        "pointerActions": 4,
-        "keyboardActions": 3,
-        "screenshots": 10,
-        "viewports": [
-          "1266x862",
-          "806x582"
-        ],
-        "admissionCases": [
-          {
-            "caseName": "fc",
-            "proofsRetained": true,
-            "candidateRetained": true,
-            "paidAttemptsRetained": true,
-            "oldHistoryRetained": true,
-            "providerRequests": 0,
-            "nativeWrites": 0,
-            "maskCount": 14,
-            "coverage": 2,
-            "aliases": [],
-            "meaningAdmissionPolicy": 1,
-            "bindingVerified": false,
-            "displayApplied": true,
-            "pendingReviews": 0
-          },
-          {
-            "caseName": "aliases",
-            "proofsRetained": true,
-            "candidateRetained": true,
-            "paidAttemptsRetained": true,
-            "oldHistoryRetained": true,
-            "providerRequests": 0,
-            "nativeWrites": 0,
-            "maskCount": 0,
-            "coverage": 0,
-            "aliases": [],
-            "meaningAdmissionPolicy": 1,
-            "bindingVerified": false,
-            "displayApplied": true,
-            "pendingReviews": 0
-          }
-        ]
+        }
       }
     }
   },
@@ -292,20 +288,19 @@
   "liveProviderRequests": 0,
   "limits": [
     "Native tests use synthetic papers and mocked provider/native-write adapters; they do not establish live scientific accuracy or provider availability.",
-    "The focused Use/Skip scenario was rerun on production 1.0.5. Broader automatic-workflow and editor-only runs remain historical evidence.",
-    "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised for this release.",
-    "Zotero saved searches cannot retain some verified per-paper exclusions; these filters remain available in Find papers and the live navigator."
+    "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised; public update metadata and installer bytes are checked separately.",
+    "Schema 13 migration and copied-state replay evidence from version 1.0.5 remain historical evidence; the current regression suite retains migration coverage."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.0.5.xpi",
-      "bytes": 758768,
-      "sha256": "a7906da601ab9f9608c1c58b4c7d463893950409039f4242c3e200e34ed7d14f"
+      "file": "smart-tags-1.0.6.xpi",
+      "bytes": 763529,
+      "sha256": "fd34ec616991aaf8d3d0de283889597bf988b69ea2e865e1ab2ed233ca26c488"
     },
     "source": {
-      "file": "smart-tags-1.0.5-source.zip",
-      "bytes": 929054,
-      "sha256": "a160e058a57accfc3fb5b6989288d5f0fc5104e6336473c95d2f561f9c82e544"
+      "file": "smart-tags-1.0.6-source.zip",
+      "bytes": 939187,
+      "sha256": "83031d638442d96d3cdfcc9a55884ccba480477b5ff338366897f74217a1e616"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

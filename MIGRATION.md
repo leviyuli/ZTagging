@@ -1,5 +1,15 @@
 # Migration notes
 
+## Version 1.0.6: refine the library and close duplicate proposals
+
+Update through Zotero's plugin manager, or install the [v1.0.6 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi) over your existing extension, then reopen Smart Tags. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6-source.zip).
+
+This update retains **state schema 13** and **native-definition protocol 2**. Updating from 1.0.5 needs no schema migration or cache reset. Saved meanings, saved meaning drafts, source judgments, paid replies, spending and Undo history remain intact. Older versions upgrading to schema 13 retain the exact-backup migration described below.
+
+If an AI proposal uses a name already owned by another saved definition, the review shows that definition and offers **Keep saved meaning**. This closes only the duplicate proposal locally, preserving the saved meaning, existing aliases, paper tags and paid work. Blocked proposals no longer appear in **Use clear meanings**. A conflicting generated alternate name can be omitted when the proposed main name remains available; existing saved aliases are unchanged.
+
+Tag library places search, shelf and filter controls together. **Shelf options** contains Rename and Merge; linked papers and source notes remain optional. **/** focuses search, **Escape** clears it, and the editor retains drafts and keyboard focus. Browsing, opening source notes and closing a duplicate proposal make no AI request or native paper-tag write. Release validation uses an isolated profile and leaves the working library unchanged.
+
 ## Version 1.0.5: Use or Skip meanings (schema 13)
 
 Install the [v1.0.5 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi) over your existing extension, then reopen Smart Tags. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.5) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5-source.zip).

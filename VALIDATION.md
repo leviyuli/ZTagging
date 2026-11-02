@@ -1,48 +1,46 @@
-# v1.0.5 validation
+# v1.0.6 validation
 
 Target: Zotero 10.0.6 on Windows. Release artifacts, hashes and aggregate results are recorded in [dist/validation.json](dist/validation.json).
 
 ## Automated verification
 
-- **1,184 automated tests passed**, including **146 manager UI tests**, **14 controller native-meaning admission tests** and **71 store/migration cases**, with zero failures, cancellations or skips.
+- **1,195 automated tests passed**, including **151 manager UI tests**, with zero failures, cancellations or skips.
 - Standard TypeScript checking and the stricter unused-local/unused-parameter check passed.
-- In-memory production bundling passed and its JavaScript and source map matched the production build exactly. The production build passed; update metadata, source archive and byte-identical source rebuild results are recorded in [dist/validation.json](dist/validation.json).
+- In-memory production bundling passed and its JavaScript and source map matched the stable build exactly. Production package, versioned resources, update metadata, source archive and byte-identical installer rebuild results are recorded in [dist/validation.json](dist/validation.json).
 
-The suite covers automatic and explicit meaning admission, truthful human/automatic provenance, personal-label preferences, source and definition revalidation, pending paid work, restart, Undo and sparse binding journals. UI regressions cover visible definitions, direct Use/Skip controls, optional editing, per-card actions alongside batch confirmation, keyboard editing, long-review sizing and retained drafts. Scientific filtering, navigator refresh, saved-search restrictions and manual-label ownership have dedicated regression coverage.
+The suite covers current-name conflicts, generated-alias pruning, exact saved-definition reuse, multiple name owners, changed identities, stale-action rejection and batch exclusion. Closing a duplicate retains the saved definitions, native labels, binding exclusions, archived paid request scopes, spending and deferred choices across restart. UI tests cover compact review actions, single-choice definition deduplication, shelf totals during search, useful empty results, optional paper/source-note disclosures, keyboard focus, editor drafts and Undo.
 
-## Focused native meaning checks
+## Focused native library checks
 
-The **1.0.5 production build** passed **28 checks in light mode and 28 in dark mode**, **56 checks total**, with zero errors. Both runs loaded the actual versioned production resources in a separate Zotero profile and data directory, using synthetic papers, mocked provider transport and mocked native writes. These runs made **zero real provider requests and zero native writes**. The earlier final preview also passed 29 checks per theme, including preview-only package metadata checks.
+The **1.0.6 production build** passed **34 checks in light mode and 34 in dark mode**, **68 total**, in a separate Zotero profile and data directory. It used synthetic papers and mocked provider/native-write adapters, making **zero AI requests and zero native writes**. Both themes loaded the actual versioned production resources. The earlier final preview passed 35 checks per theme, including its preview-only metadata check.
 
-Each theme exercised four actual pointer actions and three Gecko keyboard actions. Checks cover:
+The scenario exercises:
 
-- A Fuel cells proposal accepted through Use, saving FC while retaining two supporting, one negative and thirteen unchecked old source judgments. Fourteen unverified old bindings remain excluded from scientific matches; paid attempts and spending are unchanged, and no paper-review task remains.
-- An optional unchanged editor Save with empty aliases, preserving the draft exactly without adding the raw native name or launching another source request.
-- Restart retaining the saved concept and binding exclusions without duplicate admission or further requests.
-- A new clear 16-source preparation saving after its first three-source reply rather than dispatching the other thirteen source checks.
-- Important offering Keep as personal label, remembering the choice without a request, and still allowing its papers to receive other scientific tags.
-- A missing usable proposal offering an explicit AI retry and keyboard Skip, with no extra request from skipping.
+- One compact page header and a searchable toolbar with Shelf, Show and Shelf options.
+- All tags / Defined / Needs meaning filters, cross-search selection and local shelf changes.
+- Dropdown portals, Escape dismissal, **/** search focus, Escape clearing and empty-search recovery.
+- Optional linked-paper disclosures that open through keyboard controls.
+- Meaning review without repeated section headings or repeated single-choice definitions, including visible saved-name conflicts and direct Keep saved meaning.
+- Search returning to tag browsing, editor draft preservation, focused reopening, reachable Save/Close controls and correction through Undo.
 
-Each theme made exactly three mocked requests: the clear initial draft, a scientific assignment for a paper carrying Important, and the explicitly requested retry. The runs retained **20 screenshots**, ten per theme, at wide **1266 × 862** and narrow **806 × 582** manager content sizes.
+Each theme uses **17 pointer actions and ten Gecko keyboard actions**. The scenario retains **14 screenshots**, seven per theme, across wide **1266 × 862**, medium **1046 × 722** and narrow **806 × 582** manager content sizes. Narrow and medium layouts have no horizontal overflow; shelf, filter and search controls remain usable.
 
-## Copied-state recovery and Undo
+## Meaning admission and correction
 
-An offline replay of a copied Fuel cells preparation preserved all **16 source judgments: two supporting, one different and thirteen unchecked**, together with paid attempts, spending and original native labels. Schema 12→13 migration changed only the schema number. Initialization performed no implicit policy adoption or meaning admission.
+The **1.0.6 production meaning scenario** passed **32 checks in light mode and 32 in dark mode**, **64 total**, with zero errors. Together, the two production scenarios passed **132 native checks**. The meaning scenario retains **28 screenshots**, fourteen per theme. Each theme made exactly three mocked requests: a clear representative draft, a scientific assignment for a paper carrying Important, and an explicit AI retry. It made **zero real provider requests and zero native writes**.
 
-An explicit Use saved FC in suggestion-only mode with no fabricated aliases or supporting judgments. The full all-paper native-alias approval path remained blocked. Restart retained the concept without duplicate admission, and repeated Use was safely rejected. Undo restored the affected definitions and binding records; another restart did not recreate the result. The replay made **zero provider requests, zero connection tests and zero native writes**. It operated on copied bytes and in-memory persistence; the working Zotero profile was not accessed by the replay.
+The focused meaning scenario covers Use/Skip, automatic clear meanings, remembered personal labels, missing-proposal retry, restart and generated-alias conflicts. Primary-name conflicts show the current saved definition. Keep saved meaning closes only the duplicate proposal without changing scientific membership, saved aliases or native tags, and without another AI request. A generated alternate name already claimed by a saved tag is omitted from the new definition; the original proposed candidate and scientific evidence remain retained.
 
-## Migration and scientific membership
+Regression tests preserve the full native-alias approval gate, grounded scientific proofs, manual locks and rejections. A meaning is saved independently of unverified old paper labels; later validated paper matches can establish individual membership without taking ownership of a manual tag. Admission and binding journals protect recovery and Undo.
 
-Schema **13** retains native-definition protocol **2**. Exact-byte, collision-safe **state.json.pre-v13.json** backups precede migration. Tests retain historical backups, saved choices, paid work and original processing policies; reject invalid new fields; stop on backup/write failure; and refuse downgrade writes. Migration makes no AI request, definition admission or assignment.
+## State and historical recovery evidence
 
-Scientific concept admission and old native-paper membership are separate. Automatic admission requires a current, clear, grounded scientific meaning. Explicit Use may accept a complete AI glossary definition without treating old labels as evidence. Unverified old associations remain excluded from scientific filtering and counts. Full native alias approval still requires every affected paper to support the interpretation. A later validated paper match can clear only its own exclusion, without taking ownership of a pre-existing manual label. Exact journals protect recovery, conflicting later edits and Undo.
+This release retains **state schema 13** and **native-definition protocol 2**. Updating from 1.0.5 requires no schema migration. Tests continue to cover exact-byte, collision-safe **state.json.pre-v13.json** backups for older states, preservation of paid progress and original task policies, invalid-field rejection, backup/write failure and downgrade protection. Migration makes no AI request, meaning admission or assignment.
 
-Personal-label choices remain distinct from no_tag or paper exclusion. Deferred choices remain deferred. Ordinary assignment protections, scoped cache reuse, incoming-tagging opt-in, locks and remembered rejections remain covered by the regression suite. Zotero saved searches that would lose per-paper exclusions on reload are refused; Find papers and the live navigator retain those exclusions.
+Historical v1.0.5 copied-state recovery preserved sixteen source judgments—two supporting, one different and thirteen unchecked—along with paid attempts, spending and native labels. Explicit Use, restart and Undo made no provider request or native write. This replay used copied bytes and in-memory persistence; it was not rerun against the working profile for 1.0.6.
 
-## Historical native evidence
-
-The v1.0.4 focused editor scenario passed **26 checks per theme**, retaining eight screenshots. It covered long native-meaning lists, visible Save/Close controls, retained drafts and focus, and drawer/window resizing. The v1.0.3 broader automatic-workflow scenario passed **84 checks per theme**, retaining 54 screenshots. It covered the three task pages, Find papers, Activity, Settings, source recovery, keyboard navigation, cached reruns and task Undo. These are historical runs, not fresh v1.0.5 full-workflow results.
+The earlier v1.0.5 production meaning scenario passed **28 checks per theme**. The v1.0.4 editor scenario passed **26 per theme**, and the v1.0.3 broader automatic-workflow scenario passed **84 per theme**. These are historical results, not new full-workflow runs for this release.
 
 ## Verification limits
 
-Native tests use synthetic papers and mocked provider/native-write adapters. They do not establish live scientific classification accuracy or provider availability. The working library and credentials were not modified. The release checks do not exercise an in-place installer upgrade or Zotero's remote update-feed discovery.
+Native tests use synthetic papers and mocked adapters; they do not establish live scientific classification accuracy or provider availability. The working Zotero library, cache and credentials were not modified. Native in-place installation and Zotero's own remote update discovery are separate from checking the published installer and update-feed bytes. Filters whose per-paper exclusions cannot survive Zotero saved-search reload remain available in Find papers and the live navigator.

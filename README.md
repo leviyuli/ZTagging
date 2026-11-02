@@ -2,11 +2,11 @@
 
 A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It learns useful tag meanings from your papers, saves clear definitions, and applies supported paper tags. Scientific choices that need your judgment remain available without blocking completed work. Your existing item-list columns and collections stay in place.
 
-**Version 1.0.5** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.5). Clear scientific meanings save automatically during new runs. Other proposals offer **Use this meaning** or **Skip this tag**; writing definitions and inspecting papers remain optional. Personal labels such as **Important** can stay undefined and excluded from automatic matching.
+**Version 1.0.6** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6). Tag library has a compact search, shelf and filter toolbar, clearer meaning choices, and optional paper details. When a proposal overlaps a saved definition, **Keep saved meaning** closes the duplicate without changing your tags or repeating AI work.
 
 ## Install and start
 
-1. Download [smart-tags-1.0.5.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi).
+1. Download [smart-tags-1.0.6.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi).
 2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version.
 3. Open **Tools → Smart Tags…**, then **Settings → AI connection and budget**, or use **Connect AI** on a task page. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; choose a text-capable model and click **Save and test** (or **Test connection** for saved settings).
 4. Open **Build tags**, choose papers or collections, and click **Build tags** or **Extend tags**. A 50-paper sample is available for a small first run. Clear, checked meanings save automatically; questions stay on the page and in Activity. Building definitions does not write paper tags.
@@ -20,11 +20,15 @@ The classifier usually proposes up to five direct tags from the chosen shelf; it
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+
+In **Tag library**, press **/** to focus search and **Escape** to clear it. **All tags / Defined / Needs meaning** filters stay beside the shelf selector; **Shelf options** contains Rename and Merge. Linked papers and AI source notes are optional disclosures. Meaning choices, editor drafts and Undo remain available while you browse.
 
 **Find papers** leads with results; tag filters and related papers are available when needed. **Activity** puts unfinished choices and recovery first, with completed work, notices and older Undo actions in searchable History. **Settings** shows connection and incoming-tagging status first; optional preferences stay collapsed, and **Ctrl/Cmd+S** saves changes.
 
 ## Earlier releases
+
+Version **1.0.5** introduced automatic clear meanings, direct Use/Skip decisions and remembered personal labels. It also separated scientific definitions from unverified old paper labels and introduced schema 13. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.5) remains available.
 
 Version **1.0.4** keeps the meaning editor usable below long review lists, with Save and Close visible and drafts preserved while resizing. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.4) remains available.
 
