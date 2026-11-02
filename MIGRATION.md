@@ -1,5 +1,15 @@
 # Migration notes
 
+## Version 1.0.7: remove the sidebar and reduce background work
+
+Update through Zotero’s plugin manager, or install the [v1.0.7 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) over your existing extension. **Restart Zotero after updating** to clear the previous version’s sidebar hooks. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.7) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip).
+
+The Smart Tags panel beside Collections is removed. Search papers and use scientific tag filters in **Tools → Smart Tags… → Find papers**. Zotero’s collections, item-list columns and saved searches remain available. Settings retains the installed version and update controls without sidebar restoration options.
+
+Unchanged item notifications skip persistence. Item and attachment changes are deduplicated and saved in batches, with retries after save failures. Manual tag removals, incoming-tagging opt-in, paid history and recovery protections remain intact. Definition lookup and exact saved-byte validation also avoid repeated work.
+
+This update retains **state schema 13** and **native-definition protocol 2**. Updating from 1.0.5 or 1.0.6 needs no schema migration or cache reset. Saved meanings, drafts, source judgments, paid replies, spending, settings and Undo history are preserved. Older-schema upgrades retain the exact-backup migration described below.
+
 ## Version 1.0.6: refine the library and close duplicate proposals
 
 Update through Zotero's plugin manager, or install the [v1.0.6 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi) over your existing extension, then reopen Smart Tags. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6-source.zip).

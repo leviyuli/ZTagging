@@ -1,12 +1,12 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.0.6",
-  "verifiedAt": "2026-11-02T06:44:01.947Z",
+  "version": "1.0.7",
+  "verifiedAt": "2026-11-02T08:39:37.318Z",
   "target": "Zotero 10.0.6 on Windows",
-  "scope": "Compact tag library, keyboard browsing and correction, actionable saved-meaning conflicts, and safe generated-alias pruning",
+  "scope": "Remove Collections sidebar, keep plugin Find papers, and reduce background notification, persistence and definition lookup work",
   "schemaVersion": 13,
   "nativeDefinitionProtocolVersion": 2,
-  "migrationRequiredFromVersion105": false,
+  "migrationRequiredFromVersion106": false,
   "automatedTests": {
     "command": "npm test",
     "passed": 1195,
@@ -30,19 +30,19 @@
   },
   "nativeSmoke": {
     "status": "passed",
-    "passed": 132,
+    "passed": 86,
     "failed": 0,
     "scenarios": {
       "library": {
-        "passed": 68,
+        "passed": 86,
         "failed": 0,
         "themes": {
           "light": {
             "status": "passed",
-            "version": "1.0.6",
+            "version": "1.0.7",
             "addonSource": "production-build",
-            "completedAt": "2026-11-02T06:43:08.396Z",
-            "passed": 34,
+            "completedAt": "2026-11-02T08:38:39.751Z",
+            "passed": 43,
             "failed": 0,
             "checks": [
               "isolatedDataDirectory",
@@ -52,10 +52,13 @@
               "sourceGlobals",
               "automaticAssignmentInitiallyOff",
               "managerSnapshot",
-              "fixtureSetupUsesCollections",
+              "nativeCollectionsPanelUnchanged",
+              "noNativeNavigatorAPI",
               "automaticIsolatedProfileAndData",
               "automaticProductionVersion",
               "automaticProductionManagerResourceVersions",
+              "backgroundUnchangedNotificationsDoNotPersist",
+              "backgroundNotificationBatchYieldsToZotero",
               "libraryRefinementCompactAccessibleToolbar",
               "libraryRefinementDropdownEscapesScrollableContainers",
               "libraryRefinementDropdownEscapeRestoresFocus",
@@ -78,16 +81,22 @@
               "libraryRefinementBrowsingAndEditingDoNotProcess",
               "libraryRefinementKeepSavedClosesOnlyDuplicate",
               "libraryRefinementUndoRemainsReachable",
-              "libraryRefinementUndoDoesNotTouchNativeLabels"
+              "libraryRefinementUndoDoesNotTouchNativeLabels",
+              "libraryFindPageStartsWithWholeLibrary",
+              "libraryFindQueryAndEnterFocusResults",
+              "libraryFindSavedTagFilterKeepsGroundedMatch",
+              "libraryFindClearRestoresWholeLibrary",
+              "librarySettingsKeepsUpdatesWithoutNativeSidebarControls",
+              "libraryFindAndSettingsStayLocal"
             ],
-            "screenshots": 7,
+            "screenshots": 9,
             "viewports": [
               "1266x862",
               "1046x722",
               "806x582"
             ],
-            "pointerActions": 17,
-            "keyboardActions": 10,
+            "pointerActions": 19,
+            "keyboardActions": 13,
             "keyboardTransport": "Gecko TextInputProcessor",
             "mockedRequests": 0,
             "realProviderRequests": 0,
@@ -95,10 +104,10 @@
           },
           "dark": {
             "status": "passed",
-            "version": "1.0.6",
+            "version": "1.0.7",
             "addonSource": "production-build",
-            "completedAt": "2026-11-02T06:43:15.781Z",
-            "passed": 34,
+            "completedAt": "2026-11-02T08:38:49.477Z",
+            "passed": 43,
             "failed": 0,
             "checks": [
               "isolatedDataDirectory",
@@ -108,10 +117,13 @@
               "sourceGlobals",
               "automaticAssignmentInitiallyOff",
               "managerSnapshot",
-              "fixtureSetupUsesCollections",
+              "nativeCollectionsPanelUnchanged",
+              "noNativeNavigatorAPI",
               "automaticIsolatedProfileAndData",
               "automaticProductionVersion",
               "automaticProductionManagerResourceVersions",
+              "backgroundUnchangedNotificationsDoNotPersist",
+              "backgroundNotificationBatchYieldsToZotero",
               "libraryRefinementCompactAccessibleToolbar",
               "libraryRefinementDropdownEscapesScrollableContainers",
               "libraryRefinementDropdownEscapeRestoresFocus",
@@ -134,130 +146,24 @@
               "libraryRefinementBrowsingAndEditingDoNotProcess",
               "libraryRefinementKeepSavedClosesOnlyDuplicate",
               "libraryRefinementUndoRemainsReachable",
-              "libraryRefinementUndoDoesNotTouchNativeLabels"
+              "libraryRefinementUndoDoesNotTouchNativeLabels",
+              "libraryFindPageStartsWithWholeLibrary",
+              "libraryFindQueryAndEnterFocusResults",
+              "libraryFindSavedTagFilterKeepsGroundedMatch",
+              "libraryFindClearRestoresWholeLibrary",
+              "librarySettingsKeepsUpdatesWithoutNativeSidebarControls",
+              "libraryFindAndSettingsStayLocal"
             ],
-            "screenshots": 7,
+            "screenshots": 9,
             "viewports": [
               "1266x862",
               "1046x722",
               "806x582"
             ],
-            "pointerActions": 17,
-            "keyboardActions": 10,
+            "pointerActions": 19,
+            "keyboardActions": 13,
             "keyboardTransport": "Gecko TextInputProcessor",
             "mockedRequests": 0,
-            "realProviderRequests": 0,
-            "nativeWrites": 0
-          }
-        }
-      },
-      "meaning": {
-        "passed": 64,
-        "failed": 0,
-        "themes": {
-          "light": {
-            "status": "passed",
-            "version": "1.0.6",
-            "addonSource": "production-build",
-            "completedAt": "2026-11-02T06:43:24.394Z",
-            "passed": 32,
-            "failed": 0,
-            "checks": [
-              "isolatedDataDirectory",
-              "isolatedProfile",
-              "extensionStartup",
-              "menuAPI",
-              "sourceGlobals",
-              "automaticAssignmentInitiallyOff",
-              "managerSnapshot",
-              "fixtureSetupUsesCollections",
-              "automaticIsolatedProfileAndData",
-              "automaticProductionVersion",
-              "automaticProductionManagerResourceVersions",
-              "nativeMeaningUseCardShowsMeaningAndDirectDecision",
-              "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
-              "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
-              "nativeMeaningUsefcLeavesNoSourceReviewJob",
-              "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
-              "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
-              "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
-              "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
-              "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
-              "nativeMeaningSavedNameCollisionOffersKeepInsteadOfFailingUse",
-              "nativeMeaningKeepSavedClosesProposalWithoutProviderOrMembershipChanges",
-              "nativeMeaningGeneratedAliasOverlapKeepsDirectUseAvailable",
-              "nativeMeaningGeneratedAliasOverlapPrunesOnlyCandidateAlias",
-              "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
-              "nativeMeaningPersonalQuestionUsesNoProvider",
-              "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
-              "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
-              "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
-              "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
-              "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
-              "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
-            ],
-            "screenshots": 14,
-            "viewports": [
-              "1266x862",
-              "806x582"
-            ],
-            "pointerActions": 5,
-            "keyboardActions": 3,
-            "keyboardTransport": "Gecko TextInputProcessor",
-            "mockedRequests": 3,
-            "realProviderRequests": 0,
-            "nativeWrites": 0
-          },
-          "dark": {
-            "status": "passed",
-            "version": "1.0.6",
-            "addonSource": "production-build",
-            "completedAt": "2026-11-02T06:43:32.563Z",
-            "passed": 32,
-            "failed": 0,
-            "checks": [
-              "isolatedDataDirectory",
-              "isolatedProfile",
-              "extensionStartup",
-              "menuAPI",
-              "sourceGlobals",
-              "automaticAssignmentInitiallyOff",
-              "managerSnapshot",
-              "fixtureSetupUsesCollections",
-              "automaticIsolatedProfileAndData",
-              "automaticProductionVersion",
-              "automaticProductionManagerResourceVersions",
-              "nativeMeaningUseCardShowsMeaningAndDirectDecision",
-              "nativeMeaningUsefcSavesConceptWithoutApprovingOldAssignments",
-              "nativeMeaningUsefcDoesNotSeedRawSourceAlias",
-              "nativeMeaningUsefcLeavesNoSourceReviewJob",
-              "nativeMeaningUseRestartRetainsConceptAndBindingMasks",
-              "nativeMeaningSaveEmptyAliasesRemainEmptyOnOpen",
-              "nativeMeaningUsealiasesSavesConceptWithoutApprovingOldAssignments",
-              "nativeMeaningUsealiasesDoesNotSeedRawSourceAlias",
-              "nativeMeaningUsealiasesLeavesNoSourceReviewJob",
-              "nativeMeaningSavedNameCollisionOffersKeepInsteadOfFailingUse",
-              "nativeMeaningKeepSavedClosesProposalWithoutProviderOrMembershipChanges",
-              "nativeMeaningGeneratedAliasOverlapKeepsDirectUseAvailable",
-              "nativeMeaningGeneratedAliasOverlapPrunesOnlyCandidateAlias",
-              "nativeMeaningClearAutoSavesAfterOnlyRepresentativeDraft",
-              "nativeMeaningPersonalQuestionUsesNoProvider",
-              "nativeMeaningPersonalKeepIsRememberedWithoutExcludingPapers",
-              "nativeMeaningRememberedPersonalLabelDoesNotAskAgain",
-              "nativeMeaningPersonalLabelDoesNotBlockOtherScientificMatching",
-              "nativeMeaningMissingCandidateOffersSkipOrExplicitRetry",
-              "nativeMeaningMissingCandidateRetriesOnlyOnRequest",
-              "nativeMeaningKeyboardSkipEndsOnlyThisAttemptWithoutProviderOrWrites"
-            ],
-            "screenshots": 14,
-            "viewports": [
-              "1266x862",
-              "806x582"
-            ],
-            "pointerActions": 5,
-            "keyboardActions": 3,
-            "keyboardTransport": "Gecko TextInputProcessor",
-            "mockedRequests": 3,
             "realProviderRequests": 0,
             "nativeWrites": 0
           }
@@ -265,20 +171,52 @@
       }
     }
   },
+  "performance": {
+    "stateBytes": 152976903,
+    "unchangedNotificationWrites": 0,
+    "batchNotificationWrites": 0,
+    "measurements": [
+      {
+        "name": "snapshot",
+        "elapsedMs": 127.30089999999996,
+        "heapMB": 262,
+        "heapDeltaMB": 25
+      },
+      {
+        "name": "snapshot-repeat",
+        "elapsedMs": 94.22869999999989,
+        "heapMB": 275,
+        "heapDeltaMB": 37
+      },
+      {
+        "name": "unchangedItemNotification-no-disk",
+        "elapsedMs": 1.1377999999999702,
+        "heapMB": 239,
+        "heapDeltaMB": 0
+      },
+      {
+        "name": "100DuplicateNotifications-no-disk",
+        "elapsedMs": 0.6606999999999061,
+        "heapMB": 238,
+        "heapDeltaMB": 0
+      }
+    ]
+  },
   "packageChecks": {
-    "installerFiles": 11,
+    "installerFiles": 10,
     "stableExtensionId": "smart-tags@zotero-local.org",
+    "navigatorModuleAndStyleRemoved": true,
     "versionedManagerResources": true,
     "nativeTestBootstrapExcluded": true,
     "productionAndNativeResourcesMatch": true,
     "updateManifestVersionAndSHA256": "passed",
     "credentialPatternScan": {
       "status": "passed",
-      "allowedFiles": 159
+      "allowedFiles": 157
     },
     "sourceArchive": {
       "status": "passed",
-      "allowedFiles": 159,
+      "allowedFiles": 157,
       "archiveEntriesMatchSourceBytes": true,
       "rebuildMatchesInstallerBytes": true
     }
@@ -289,18 +227,19 @@
   "limits": [
     "Native tests use synthetic papers and mocked provider/native-write adapters; they do not establish live scientific accuracy or provider availability.",
     "Native in-place package upgrade and Zotero remote update-feed discovery were not exercised; public update metadata and installer bytes are checked separately.",
-    "Schema 13 migration and copied-state replay evidence from version 1.0.5 remain historical evidence; the current regression suite retains migration coverage."
+    "Legacy navigator-specific native scenarios are retired. Historical meaning and copied-state recovery runs are not fresh native runs for this release.",
+    "Profiling used an existing read-only copied state; genuine changes still require recovery-safe serialization and persistence."
   ],
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.0.6.xpi",
-      "bytes": 763529,
-      "sha256": "fd34ec616991aaf8d3d0de283889597bf988b69ea2e865e1ab2ed233ca26c488"
+      "file": "smart-tags-1.0.7.xpi",
+      "bytes": 744999,
+      "sha256": "d059d950eab215d242e58399d1de5587a079f061393f145b23c0ca8333358c67"
     },
     "source": {
-      "file": "smart-tags-1.0.6-source.zip",
-      "bytes": 939187,
-      "sha256": "83031d638442d96d3cdfcc9a55884ccba480477b5ff338366897f74217a1e616"
+      "file": "smart-tags-1.0.7-source.zip",
+      "bytes": 928694,
+      "sha256": "2f748824eeb966d7abaac0f0d17717ae0d090052cb6e9291acf6e9e97144fb05"
     }
   },
   "repository": "https://github.com/leviyuli/ZTagging"

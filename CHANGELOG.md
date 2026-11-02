@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.7 — 2026-11-02
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip)
+
+- Remove the extra Smart Tags panel beside Zotero’s Collections. Keep paper search and hierarchical tag filters in the plugin’s Find papers page, with no sidebar mounting, hidden count refreshes or navigation-restoration controls.
+- Coalesce item and attachment notifications into one deduplicated batch. Preserve changes arriving during a flush, manual tag protections and the incoming-tagging opt-in while reducing repeated state saves during library updates.
+- Skip persistence for unchanged item data, reuse operation-local definition indexes, and avoid revalidating identical saved bytes. Retain paid history, migration backups and write recovery; failed notification saves remain retryable.
+
 ## 1.0.6 — 2026-11-02
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6-source.zip)

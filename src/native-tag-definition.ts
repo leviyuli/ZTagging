@@ -451,12 +451,33 @@ function preparedMeaningDefinition(entry:NativeTagDefinitionEntry,available:read
   const claimed=new Set(available.filter(tag=>tag.id!==candidate.id).flatMap(tag=>labels(tag).map(labelKey)));
   return {...clone(candidate),aliases:candidate.aliases.filter(alias=>!rawNames.has(canonicalTagKey(alias))&&!isPersonalNativeTagName(alias)&&!claimed.has(labelKey(alias)))};
 }
+/** Reuse one current-definition index within an operation; rebuild it after definitions change. */
+export function createNativeTagMeaningNameConflictResolver(definitions:readonly TagDefinition[]):(work:NativeTagDefinitionWork,entryId:string)=>TagDefinition[] {
+  const indexed=definitions.map((tag,index)=>({tag,index,id:tag.id,approved:tag.status==='approved',meaning:tag.status==='approved'?conceptMeaning(tag):undefined,keys:new Set(labels(tag).map(labelKey))}));
+  const byId=new Map<string,(typeof indexed)[number]>(),byMeaning=new Map<string,(typeof indexed)[number]>(),owners=new Map<string,(typeof indexed)[number][]>(),fingerprints=new Map<number,string>();
+  for(const record of indexed){
+    if(!byId.has(record.id))byId.set(record.id,record);
+    if(record.meaning&&!byMeaning.has(record.meaning))byMeaning.set(record.meaning,record);
+    for(const key of record.keys){const claimed=owners.get(key)??[];claimed.push(record);owners.set(key,claimed);}
+  }
+  return (work,entryId)=>{
+    const entry=work.entries.find(entry=>entry.id===entryId);if(!entry?.definition||entry.meaningAdmission)return [];
+    const candidate=entry.definition,meaning=conceptMeaning(candidate),current=byId.get(entry.targetTagId??candidate.id);
+    if(current){
+      if(!current.approved)return [current.tag];
+      if(entry.targetTagId){const saved=fingerprints.get(current.index)??fingerprint(current.tag);fingerprints.set(current.index,saved);if(saved!==fingerprint(candidate))return [current.tag];}
+      else if(current.meaning!==meaning)return [current.tag];
+    }
+    const target=entry.targetTagId?byId.get(entry.targetTagId):undefined,equivalent=byMeaning.get(meaning);
+    const chosen=target?.approved&&(!equivalent||target.index<equivalent.index)?target:equivalent;
+    const tagId=chosen?.id??candidate.id,keys=chosen?.keys??new Set([candidate.name,candidate.fullName??'',...candidate.aliases.filter(alias=>canonicalTagKey(alias)!==canonicalTagKey(entry.sourceName)&&!isPersonalNativeTagName(alias)&&!owners.get(labelKey(alias))?.some(owner=>owner.id!==candidate.id))].filter(Boolean).map(labelKey));
+    const conflicts=new Set<number>();
+    for(const key of keys)for(const owner of owners.get(key)??[])if(owner.id!==tagId)conflicts.add(owner.index);
+    return [...conflicts].sort((a,b)=>a-b).map(index=>indexed[index].tag);
+  };
+}
 export function nativeTagMeaningNameConflicts(work:NativeTagDefinitionWork,entryId:string,definitions:readonly TagDefinition[]):TagDefinition[] {
-  const entry=work.entries.find(entry=>entry.id===entryId);if(!entry?.definition||entry.meaningAdmission)return [];
-  const candidate=entry.definition,current=definitions.find(tag=>tag.id===(entry.targetTagId??candidate.id));
-  if(current&&(current.status!=='approved'||(entry.targetTagId?fingerprint(current)!==fingerprint(candidate):conceptMeaning(current)!==conceptMeaning(candidate))))return [current];
-  const definition=preparedMeaningDefinition(entry,definitions,new Set([canonicalTagKey(entry.sourceName)]));
-  return definitions.filter(tag=>tag.id!==definition.id&&labels(tag).some(label=>labels(definition).some(name=>labelKey(label)===labelKey(name))));
+  return createNativeTagMeaningNameConflictResolver(definitions)(work,entryId);
 }
 export function compileNativeTagMeanings(work:NativeTagDefinitionWork,currentInput:ReconciliationInput,entryIds:readonly string[]=work.entries.filter(entry=>nativeTagDefinitionMeaningChosen(work,entry)&&!entry.meaningAdmission).map(entry=>entry.id)):PreparedNativeTagMeanings {
   const result:PreparedNativeTagMeanings={beforeDefinitions:{},afterDefinitions:{},entries:[],questions:[],conflicts:[]};

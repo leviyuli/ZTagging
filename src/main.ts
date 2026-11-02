@@ -6,8 +6,7 @@ import { ProviderClient } from './providers.ts';
 import { AtomicStore } from './store.ts';
 import { mountManager } from './ui.ts';
 import type { ManagerUIOptions } from './ui.ts';
-import type { ManagerAPI, ManagerSnapshot } from './ui-contract.ts';
-import { mountNavigator, navigatorReady } from './navigator.ts';
+import type { ManagerAPI } from './ui-contract.ts';
 import { upsertWarning } from './warnings.ts';
 
 type StartupData = { id: string; version: string; rootURI: string };
@@ -28,13 +27,9 @@ let startupData: StartupData | null = null;
 let stopping = false;
 const menuIDs: string[] = [];
 const mainWindows = new Set<any>();
-const navigators = new Map<any,ReturnType<typeof mountNavigator>>();
-const navigatorTimers = new Map<any,ReturnType<typeof setTimeout>>();
-const navigatorStates = new Map<any,NonNullable<ManagerSnapshot['navigation']>>();
-const navigatorRequests = new Set<any>();
-const navigationListeners = new Set<() => void>();
 let libraryCache:Promise<{papers:import('./core.ts').PaperRecord[];nativeTags:Record<string,import('./platform.ts').NativeTag[]>}>|null=null;
-const itemTimers = new Map<number, { timer: ReturnType<typeof setTimeout>; attachment: boolean }>();
+const itemChanges = new Map<number, { attachment: boolean }>();
+let itemTimer: ReturnType<typeof setTimeout> | null = null;
 
 function logError(error: unknown) {
   try { Zotero.logError(error instanceof Error ? error : new Error(String(error))); }
@@ -115,19 +110,16 @@ function registerMenus(data: StartupData) {
 
 function scheduleItem(itemID: number, attachment: boolean) {
   if (stopping || !controller || !host || host.mutating.has(itemID)) return;
-  const prior = itemTimers.get(itemID);
-  if (prior) clearTimeout(prior.timer);
-  const pending = {
-    attachment: attachment || !!prior?.attachment,
-    timer: setTimeout(() => {
-      itemTimers.delete(itemID);
-      const app = controller;
-      if (!app || stopping || host?.mutating.has(itemID)) return;
-      const operation = pending.attachment ? app.onAttachmentChanged(itemID) : app.onItemChanged(itemID);
-      void operation.catch(logError);
-    }, 2000),
-  };
-  itemTimers.set(itemID, pending);
+  itemChanges.set(itemID,{attachment:attachment || !!itemChanges.get(itemID)?.attachment});
+  if (itemTimer !== null) clearTimeout(itemTimer);
+  itemTimer = setTimeout(() => {
+    itemTimer = null;
+    const changes=[...itemChanges].filter(([id])=>!host?.mutating.has(id)).map(([itemID,change])=>({itemID,...change}));
+    itemChanges.clear();
+    const app=controller;
+    if (!app || stopping || !changes.length) return;
+    void app.onItemsChanged(changes).catch(logError);
+  },2000);
 }
 
 async function notifyItems(event: string, type: string, ids: (number | string)[]) {
@@ -206,7 +198,7 @@ export async function startup(data: StartupData) {
     for (const win of mainWindowList()) onMainWindowLoad(win);
     registerMenus(data);
     notifierID = Zotero.Notifier.registerObserver({ notify: notifyItems }, ['item', 'item-tag'], 'smart-tags', 50);
-    Zotero.SmartTags = { openManager, controller, getNavigator:(win:any)=>navigators.get(win), version: data.version, stateDirectory: directory };
+    Zotero.SmartTags = { openManager, controller, version: data.version, stateDirectory: directory };
   } catch (error) {
     await shutdown().catch(logError);
     throw error;
@@ -324,67 +316,21 @@ export async function openManager(options:ManagerUIOptions={}): Promise<Window |
   return managerWindow;
 }
 
-function navigationState(win: any): NonNullable<ManagerSnapshot['navigation']> {
-  const navigator = navigators.get(win);
-  if (!navigator) return navigatorStates.get(win) || { status: 'unavailable', message: 'Open a Zotero library window to show Smart Tags.' };
-  const pane = win.document?.getElementById?.('zotero-collections-pane');
-  if (pane?.hidden || pane?.getAttribute('collapsed') === 'true') return { status: 'hidden', mode: navigator.mode, message: 'The library sidebar is hidden.' };
-  return { status: navigator.available ? 'ready' : 'unavailable', mode: navigator.mode, ...(navigator.message ? { message: navigator.message } : {}) };
-}
-
-function navigationChanged() { for (const listener of navigationListeners) listener(); }
-
 function managerAPI(main: any): ManagerAPI {
   const libraryWindow = () => main.closed ? Zotero.getMainWindow() : main;
   return {
-    snapshot: async () => ({ ...await controller!.snapshot(), pluginVersion: startupData?.version, navigation: navigationState(libraryWindow()) }),
-    subscribe(listener) { navigationListeners.add(listener);const unsubscribe = controller!.subscribe(listener);return () => { navigationListeners.delete(listener);unsubscribe(); }; },
+    snapshot: async () => ({ ...await controller!.snapshot(), pluginVersion: startupData?.version }),
+    subscribe: listener => controller!.subscribe(listener),
     async invoke(action, payload) {
-      if (action !== 'check-plugin-updates' && action !== 'show-tag-navigation') return controller!.invoke(action, payload);
+      if (action !== 'check-plugin-updates') return controller!.invoke(action, payload);
       const target = libraryWindow();
       if (!target || target.closed) throw new Error('Open Zotero’s library window to use this control.');
-      if (action === 'check-plugin-updates') {
-        const command = target.document?.getElementById?.('menu_addons');
-        if (command?.doCommand) command.doCommand();
-        else if (Zotero.openInViewer) Zotero.openInViewer('chrome://mozapps/content/extensions/aboutaddons.html', { onLoad: target.ZoteroStandalone?.updateAddonsPane });
-        else throw new Error('Open Tools → Plugins in Zotero to check for updates.');
-        return;
-      }
-      target.focus?.();
-      const pane = target.document?.getElementById?.('zotero-collections-pane');
-      if (pane?.hidden || pane?.getAttribute('collapsed') === 'true') {
-        const command = target.document?.getElementById?.('view-menuitem-collections-pane');
-        if (command?.doCommand) command.doCommand();
-        else { pane.hidden = false;pane.removeAttribute('collapsed'); }
-      }
-      if (payload?.restore) { const previous = navigators.get(target);navigators.delete(target);await previous?.destroy(); }
-      const navigator = navigators.get(target);
-      if (navigator) await navigator.setMode('tags');
-      else { navigatorRequests.add(target);mountWindowNavigator(target); }
-      navigationChanged();
+      const command = target.document?.getElementById?.('menu_addons');
+      if (command?.doCommand) command.doCommand();
+      else if (Zotero.openInViewer) Zotero.openInViewer('chrome://mozapps/content/extensions/aboutaddons.html', { onLoad: target.ZoteroStandalone?.updateAddonsPane });
+      else throw new Error('Open Tools → Plugins in Zotero to check for updates.');
     },
   };
-}
-
-function mountWindowNavigator(win: any, attempt = 0) {
-  if (navigatorTimers.has(win)) { clearTimeout(navigatorTimers.get(win)!);navigatorTimers.delete(win); }
-  if (!controller || stopping || !mainWindows.has(win) || win.closed || navigators.has(win)) return;
-  if (!navigatorReady(win)) {
-    navigatorStates.set(win, attempt < 200 ? { status: 'starting', message: 'Waiting for Zotero’s library sidebar.' } : { status: 'unavailable', message: 'Smart Tags could not attach to this library window. Try Restore navigation.' });
-    if (attempt < 200) navigatorTimers.set(win, setTimeout(() => mountWindowNavigator(win, attempt + 1), 100));
-    if (attempt === 0 || attempt === 200) navigationChanged();return;
-  }
-  try {
-    const navigator = mountNavigator(win, controller, {
-      openManager: () => { void openManager({ page: 'library' }).catch(actionError); },
-      onPreviewMatches: assignmentRunId => { void openManager({ page: 'assignment', assignmentRunId }).catch(actionError); },
-      onCreateDetail: contextId => { void openManager({ page: 'vocabulary', createDetail: true, detailContextId: contextId }).catch(actionError); },
-      onEditTag: tagId => { void openManager({ page: 'vocabulary', tagId }).catch(actionError); },
-    });
-    navigators.set(win, navigator);navigatorStates.delete(win);
-    if (navigatorRequests.delete(win)) void navigator.setMode('tags').then(navigationChanged).catch(logError);
-  } catch (error) { navigatorStates.set(win, { status: 'unavailable', message: 'Smart Tags could not attach to this library window. Try Restore navigation.' });logError(error); }
-  navigationChanged();
 }
 
 export function onMainWindowLoad(win: any) {
@@ -394,15 +340,11 @@ export function onMainWindowLoad(win: any) {
     if (win.MozXULElement?.insertFTLIfNeeded) win.MozXULElement.insertFTLIfNeeded(LOCALE);
     else if (win.document?.l10n) win.document.l10n.addResourceIds([LOCALE]);
   } catch (error) { logError(error); }
-  mountWindowNavigator(win);
 }
 
 export function onMainWindowUnload(win: any) {
   if (!win) return;
   mainWindows.delete(win);
-  navigatorStates.delete(win);navigatorRequests.delete(win);
-  if(navigatorTimers.has(win)){clearTimeout(navigatorTimers.get(win)!);navigatorTimers.delete(win);}
-  const navigator=navigators.get(win);navigators.delete(win);if(navigator)void navigator.destroy().catch(logError);
   try {
     for (const link of win.document?.querySelectorAll(`link[rel="localization"][href="${LOCALE}"]`) || []) link.remove();
     win.document?.l10n?.removeResourceIds([LOCALE]);
@@ -411,15 +353,13 @@ export function onMainWindowUnload(win: any) {
 
 export async function shutdown() {
   stopping = true;
-  for(const timer of navigatorTimers.values())clearTimeout(timer);navigatorTimers.clear();
-  for (const { timer } of itemTimers.values()) clearTimeout(timer);
-  itemTimers.clear();
+  if(itemTimer !== null)clearTimeout(itemTimer);itemTimer=null;itemChanges.clear();
   if (notifierID !== null) { try { Zotero.Notifier.unregisterObserver(notifierID); } catch (error) { logError(error); } notifierID = null; }
   managerReadinessCleanup?.(); managerReadinessCleanup = null;
   managerUI?.destroy(); managerUI = null;
   if (managerWindow && !managerWindow.closed) managerWindow.close();
   managerWindow = null;
-  await Promise.allSettled([...navigators.values()].map(navigator=>navigator.destroy()));navigators.clear();navigatorStates.clear();navigatorRequests.clear();navigationListeners.clear();libraryCache=null;
+  libraryCache=null;
   for (const id of menuIDs.splice(0)) { try { Zotero.MenuManager.unregisterMenu(id); } catch (error) { logError(error); } }
   for (const win of [...mainWindows]) onMainWindowUnload(win);
   try { Zotero.ftl.removeResourceIds([LOCALE]); } catch (error) { logError(error); }

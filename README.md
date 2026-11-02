@@ -2,12 +2,12 @@
 
 A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It learns useful tag meanings from your papers, saves clear definitions, and applies supported paper tags. Scientific choices that need your judgment remain available without blocking completed work. Your existing item-list columns and collections stay in place.
 
-**Version 1.0.6** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6). Tag library has a compact search, shelf and filter toolbar, clearer meaning choices, and optional paper details. When a proposal overlaps a saved definition, **Keep saved meaning** closes the duplicate without changing your tags or repeating AI work.
+**Version 1.0.7** is available from the [GitHub release](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.7). Paper search and tag filters stay inside **Smart Tags → Find papers**; the extra panel beside Zotero’s Collections is removed. Unchanged item updates skip saving, and notifications are batched to reduce background work. **Restart Zotero after updating** to clear the previous version’s sidebar hooks.
 
 ## Install and start
 
-1. Download [smart-tags-1.0.6.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi).
-2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version.
+1. Download [smart-tags-1.0.7.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi).
+2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version. Restart Zotero after updating.
 3. Open **Tools → Smart Tags…**, then **Settings → AI connection and budget**, or use **Connect AI** on a task page. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; choose a text-capable model and click **Save and test** (or **Test connection** for saved settings).
 4. Open **Build tags**, choose papers or collections, and click **Build tags** or **Extend tags**. A 50-paper sample is available for a small first run. Clear, checked meanings save automatically; questions stay on the page and in Activity. Building definitions does not write paper tags.
 5. Open **Assign tags**, choose a shelf and the papers to tag, then click **Assign tags**. Validated high-confidence additions are written as papers finish. Other choices can wait; review applied changes and use **Activity → Undo** when needed. The assignment group can differ from the build group.
@@ -20,13 +20,15 @@ The classifier usually proposes up to five direct tags from the chosen shelf; it
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.6/smart-tags-1.0.6-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.7/smart-tags-1.0.7-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
 In **Tag library**, press **/** to focus search and **Escape** to clear it. **All tags / Defined / Needs meaning** filters stay beside the shelf selector; **Shelf options** contains Rename and Merge. Linked papers and AI source notes are optional disclosures. Meaning choices, editor drafts and Undo remain available while you browse.
 
 **Find papers** leads with results; tag filters and related papers are available when needed. **Activity** puts unfinished choices and recovery first, with completed work, notices and older Undo actions in searchable History. **Settings** shows connection and incoming-tagging status first; optional preferences stay collapsed, and **Ctrl/Cmd+S** saves changes.
 
 ## Earlier releases
+
+Version **1.0.6** refined Tag library with a compact toolbar and clearer meaning choices. **Keep saved meaning** closes duplicate proposals without changing saved tags or repeating AI work. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.6) remains available.
 
 Version **1.0.5** introduced automatic clear meanings, direct Use/Skip decisions and remembered personal labels. It also separated scientific definitions from unverified old paper labels and introduced schema 13. Its [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.5) remains available.
 
@@ -82,9 +84,9 @@ New suggestions are compared with saved definitions; equivalent topics reuse exi
 
 **Replace the full tag list** remains an explicit option under **Build tags → More options** when you intend to reorganize the complete vocabulary. That replacement retains its review-and-apply step. Routine builds and extensions save clear additions without replacing protected definitions. Neither operation enables incoming-paper automation.
 
-The expandable **Smart Tags/Collections** navigator stays in Zotero’s left pane. In Settings, **Show tag navigation** opens it and **Restore navigation** retries attachment to the library window. The manager retains its workspace layout inspired by [Notion’s sidebar and editor](https://www.notion.com/help/intro-to-workspaces), light/dark colors, and accessible dropdowns.
+Open **Tools → Smart Tags… → Find papers** to search and filter your library. Zotero’s Collections sidebar, native quick search and item-list columns stay under Zotero’s control. The plugin window retains its light/dark layouts and accessible dropdowns.
 
-## Compact vocabulary and navigation
+## Compact vocabulary and search
 
 New builds choose the smallest useful set of distinct retrieval concepts supported by the papers. **More options** holds the initial **60-tag maximum** and the separate **30-new-tag maximum** for extensions; both accept 1–500. Required new parent concepts count toward the maximum, while saved definitions, category headings and shelves do not. The classifier does not pad a list to reach either number or merge different scientific meanings to fit it. Earlier unfinished builds retain their original target policy.
 
@@ -114,17 +116,15 @@ In **Activity**, open **More** beside a paper for **Dismiss**, **Exclude from ta
 
 **Exclude from tagging** previews adding the native **no_tag** marker. Applying the preview preserves the item's other tags, collections, attachments, and metadata, and skips that item in future builds and assignments. Use **Excluded from tagging → Include again** to preview removing only no_tag, or undo the change in History. The panel's **More → Exclude selected Zotero items…** also works for items outside the current build. These manual choices need no AI connection. A one-build **Skip** remains a separate option.
 
-For whole-list assignment, the model may suggest **no_tag** when readable evidence establishes that none of the approved scientific tags applies. New assignments require your explicit **Exclude from future tagging** action; older reviews retain their manual Apply step. Missing abstracts, unreadable PDFs, empty replies, and connection failures are not evidence of an outside-vocabulary item. A single-tag preview cannot make this whole-list judgment. The built-in marker is searchable in the navigator, does not count toward the vocabulary maximum, and cannot be renamed or turned into a scientific tag.
+For whole-list assignment, the model may suggest **no_tag** when readable evidence establishes that none of the approved scientific tags applies. New assignments require your explicit **Exclude from future tagging** action; older reviews retain their manual Apply step. Missing abstracts, unreadable PDFs, empty replies, and connection failures are not evidence of an outside-vocabulary item. A single-tag preview cannot make this whole-list judgment. The built-in marker is searchable under **Find papers → Tag filters → Excluded from tagging**, does not count toward the vocabulary maximum, and cannot be renamed or turned into a scientific tag.
 
 Prefer familiar abbreviations such as **FC**, **PEMFC**, and **AEMFC**. Full names, aliases, and definitions remain searchable. A subtype relation means “is a”; contextual links mean “related to.” A catalyst layer can be related to FC without becoming a type of FC. Scientific checks keep these relationships separate, reject contradictory meanings, and preserve chemical distinctions such as `Co` and `CO`.
 
-After the first tag list is applied, **Smart Tags** becomes the default navigator. Broad tags are visible under four categories; narrower branches expand as you browse. Expansion and selection have separate controls. Selecting FC finds its direct assignments and approved descendants, including AEMFC and PEMFC, without adding redundant FC tags to those papers. Assignment normally proposes up to five most-specific tags. A comparison paper can receive both subtypes.
+Under **Find papers → Tag filters**, broad tags are grouped into four scientific categories and narrower branches expand as you browse. Selecting FC finds its direct assignments and approved descendants, including AEMFC and PEMFC, without adding redundant FC tags to those papers. Multiple selections use **All** by default; **Any** is available. A related tag remains distinct from an is-a subtype. Assignment normally proposes up to five most-specific tags, and a comparison paper can receive both subtypes.
 
-Search matches names, full names, aliases, and definitions across the vocabulary, with deduplicated results and their locations. Clearing search restores the tree and retains selections. Multiple selections use **All** by default; **Any** is available. Shared details selected within a branch remain compound clauses: `(FC AND Schottky barrier) OR EIS`. Selecting a detail from global search finds it across fields.
+Tag-filter search matches names, full names, aliases and definitions. Search results are deduplicated, and clearing the tag search retains the selected filters. Browsing and counts use the personal library, including papers outside the build sample; approved legacy names are recognized. Zotero’s own title, metadata, PDF, note and annotation quick search remains available in its main window.
 
-Browsing and counts use the entire native personal library, including papers outside the pilot. Approved legacy names are recognized. Native title, metadata, PDF, note, and annotation quick search remains available. **Collections** restores the prior native collection selection, tag filters, search text, and item view. Item-list columns remain under Zotero’s control. Unsupported native interfaces leave Collections available.
-
-**Save search** creates a native search with the current descendant/alias expansion. It captures a snapshot of the hierarchy: explicitly save an updated search after taxonomy changes. The navigator does not rewrite existing saved searches. A network visualization is deferred.
+**Save search** creates a native search with the current descendant/alias expansion. It captures a snapshot of the hierarchy: explicitly save an updated search after taxonomy changes. Existing saved searches are preserved. Filters with per-paper exclusions remain available in **Find papers**; saving them is blocked because Zotero saved searches cannot retain those exclusions on reload.
 
 ## AI connections and cost
 
@@ -180,7 +180,7 @@ Existing native tags remain unchanged. They can overlap with Smart Tags names an
 
 Manual removals, rejections, and locks remain protected. Assignment applies only the saved definitions chosen for that run; a shelf supplies assignment targets while parent definitions may be sent as background context, never as extra assignment targets.
 
-Under **Find papers**, combine hierarchical tags, inspect related papers, and save All/Any searches. Filters with per-paper exclusions remain available in Find papers and the live navigator; saving them is blocked because Zotero saved searches cannot retain those exclusions on reload. Related papers are local text/concept similarity suggestions, not citation links. Project membership, reading status, and “fundamental” selections remain user decisions. Collections can overlap without duplicating papers.
+Under **Find papers**, combine hierarchical tags, inspect related papers, and save All/Any searches. Filters with per-paper exclusions remain available in Find papers; saving them is blocked because Zotero saved searches cannot retain those exclusions on reload. Related papers are local text/concept similarity suggestions, not citation links. Project membership, reading status, and “fundamental” selections remain user decisions. Collections can overlap without duplicating papers.
 
 ## Paper assignments and remaining choices
 

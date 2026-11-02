@@ -81,6 +81,12 @@ const preferences = {
   'gfx.webrender.all': false,
   'gfx.webrender.force-disabled': true,
   'browser.shell.checkDefaultBrowser': false,
+  // Keep hidden, isolated UI automation from inheriting background-window throttling.
+  'layout.testing.top-level-always-active': true,
+  'layout.throttled_frame_rate': 60,
+  'dom.min_background_timeout_value': 0,
+  'dom.min_background_timeout_value_without_budget_throttling': 0,
+  'dom.timeout.enable_budget_timer_throttling': false,
   'extensions.zoteroWinWordIntegration.skipInstallation': true,
   'extensions.zoteroOpenOfficeIntegration.skipInstallation': true,
 };

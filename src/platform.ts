@@ -200,7 +200,7 @@ export class ZoteroHost implements LibraryHost {
   }
   async saveConceptSearch(name:string,filter:ConceptFilter,definitions:TagDefinition[]) {
     if(!name.trim()||!filter.selections.length)throw new Error('Name the search and select at least one concept.');
-    if(compileConceptFilter(definitions,filter).clauses.some(clause=>clause.bindings))throw new Error('This filter uses verified paper matches that Zotero saved searches cannot retain. Use Find papers or the live tag navigator for these results.');
+    if(compileConceptFilter(definitions,filter).clauses.some(clause=>clause.bindings))throw new Error('This filter uses verified paper matches that Zotero saved searches cannot retain. Use Find papers for these results.');
     const libraryID=Zotero.Libraries.userLibraryID;
     const names=(await Zotero.Tags.getAll(libraryID)).map((tag:any)=>tag.tag);
     const search=buildConceptSearch(definitions,filter,libraryID,names);

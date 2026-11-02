@@ -477,11 +477,12 @@ test('action notifications share one final refresh and later external changes re
   const data=snapshot();data.tagPreparation=preparation();const h=await harness(data,{page:'cleanup',emitOnInvoke:5});t.after(()=>h.ui.destroy());await h.click('Remove tag FC');assert.equal(h.snapshotCalls,2);data.warnings=[warning('external')];await h.emitUpdate();assert.equal(h.snapshotCalls,3);assert.match(h.app.textContent,/Evidence gap external/);
 });
 
-test('Settings shows the installed version and explicit native navigation/update controls',async t=>{
-  const data=snapshot();data.pluginVersion='0.5.0';data.navigation={status:'hidden',mode:'collections',message:'The library sidebar is hidden.'};
-  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Zotero integration');assert.match(h.app.textContent,/Installed version 0\.5\.0/);assert.match(h.app.textContent,/Library navigation: Sidebar hidden/);
-  await h.click('Show tag navigation');await h.click('Restore navigation');await h.click('Check for updates');
-  assert.deepEqual(h.actions,[{action:'show-tag-navigation',payload:undefined},{action:'show-tag-navigation',payload:{restore:true}},{action:'check-plugin-updates',payload:undefined}]);
+test('Settings keeps plugin updates without native navigation controls or hiding Find papers',async t=>{
+  const data=snapshot();data.pluginVersion='1.0.6';
+  const h=await harness(data,{page:'settings'});t.after(()=>h.ui.destroy());h.expand('Zotero integration');assert.match(h.app.textContent,/Installed version 1\.0\.6/);assert.doesNotMatch(h.app.textContent,/Library navigation:/);
+  assert.equal(h.button('Show tag navigation'),undefined);assert.equal(h.button('Restore navigation'),undefined);assert.ok(h.button('Find papers'));
+  await h.click('Check for updates');
+  assert.deepEqual(h.actions,[{action:'check-plugin-updates',payload:undefined}]);
 });
 
 test('Compare names starts unselected, filters and paginates without writing paper tags',async t=>{

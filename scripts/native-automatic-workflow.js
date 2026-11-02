@@ -18,8 +18,9 @@ export async function runNativeAutomaticWorkflow(app,check,config){
     check('secondaryPreviewVersionOrdersCorrectly',Services.vc.compare(config.previewVersion,config.previewPreviousVersion)>0&&Services.vc.compare(config.previewVersion,config.previewStableVersion)<0);
     check('secondaryPreviewInspectionDoesNotInstall',(await AddonManager.getAddonByID('smart-tags@zotero-local.org'))?.version===installed?.version);
   }
+  await config.progress?.('workflow-entered');
   const before=clone(app.state),host=app.env.host,library=app.env.librarySnapshot,ai=app.env.ai,complete=ai.completeJson,hasKey=ai.hasApiKey,session=ai.getSession,testConnection=ai.testConnection;
-  const main=Zotero.getMainWindow(),navigator=Zotero.SmartTags.getNavigator(main),mode=navigator?.mode;
+  const main=Zotero.getMainWindow();
   const columns=()=>JSON.stringify(main.ZoteroPane.itemsView.getColumns().map(column=>[column.dataKey,column.hidden,column.width,column.ordinal])),columnsBefore=columns();
   let manager,inputProcessor,requests=0,assignmentRequests=0,definitionRequests=0,connectionRequests=0,localRechecks=0,nativeWrites=0,pointerActions=0,keyboardActions=0,batteryChecks=0,batteryCheckpoint,batteryReply,batteryProgressScreenshot,meaningSaveRequestMode='none',meaningSaveSelectedPaperIds;const ccsCheckSources=[],meaningSaveRequests=[];
   const ready=async()=>{
@@ -30,7 +31,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       return app?.getAttribute('data-smart-tags-state')==='ready'&&!manager.document.querySelector('.busy-indicator')&&Date.now()-stableSince>=100;
     },'manager idle after queued snapshots');
   };
-  const open=async page=>{if(manager&&!manager.closed)await ready();manager=await Zotero.SmartTags.openManager({page});await ready();return manager.document;};
+  const open=async page=>{if(manager&&!manager.closed)await ready();await config.progress?.('open-call-'+page+'-main-'+main.windowState);main.restore?.();main.focus();manager=await Zotero.SmartTags.openManager({page});await config.progress?.('open-returned-'+page+'-'+manager.document.readyState+'-'+manager.document.getElementById('app')?.getAttribute('data-smart-tags-state'));await ready();await config.progress?.('open-ready-'+page);return manager.document;};
   const clickControl=async control=>{
     if(!control||control.disabled)throw new Error('Missing or disabled native control.');
     control.scrollIntoView({block:'nearest'});const rect=control.getBoundingClientRect(),x=(rect.left+rect.right)/2,y=(rect.top+rect.bottom)/2,hit=manager.document.elementFromPoint(x,y);
@@ -53,12 +54,13 @@ export async function runNativeAutomaticWorkflow(app,check,config){
     finally{for(const name of held.reverse())inputProcessor.keyup(event(name),inputProcessor.KEY_NON_PRINTABLE_KEY);}
     keyboardActions++;
   };
-  const resize=async(width,height)=>{manager.resizeTo(width,height);await until(()=>Math.abs(manager.outerWidth-width)<25&&Math.abs(manager.outerHeight-height)<25,'manager '+width+'×'+height);await new Promise(resolve=>manager.requestAnimationFrame(resolve));};
+  const layoutFrame=async()=>{await Promise.race([new Promise(resolve=>manager.requestAnimationFrame(resolve)),new Promise(resolve=>setTimeout(resolve,100))]);manager.dispatchEvent(new manager.Event('resize'));manager.document.documentElement.getBoundingClientRect();};
+  const resize=async(width,height)=>{manager.restore?.();manager.resizeTo(width,height);await until(()=>Math.abs(manager.outerWidth-width)<25&&Math.abs(manager.outerHeight-height)<25,'manager '+width+'×'+height);await layoutFrame();};
   const inViewport=control=>{if(!control)return false;const rect=control.getBoundingClientRect();return rect.width>0&&rect.height>0&&rect.left>=0&&rect.top>=0&&rect.right<=manager.innerWidth+2&&rect.bottom<=manager.innerHeight+2;};
   const setInput=(id,value)=>{const control=manager.document.getElementById(id);control.value=value;control.dispatchEvent(new manager.Event('input',{bubbles:true}));return control;};
   const assignmentSetup=async()=>{const doc=await open('assignment');if(!doc.getElementById('start-assignment'))await clickControl(doc.getElementById('assignment-setup-toggle'));await until(()=>doc.getElementById('start-assignment'),'assignment setup controls');return doc;};
   const capture=async(name,target)=>{
-    if(target)target.scrollIntoView({block:'start'});else manager.scrollTo(0,0);await new Promise(resolve=>manager.requestAnimationFrame(()=>manager.requestAnimationFrame(resolve)));
+    if(target)target.scrollIntoView({block:'start'});else manager.scrollTo(0,0);await layoutFrame();await layoutFrame();
     const canvas=manager.document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=manager.innerWidth;canvas.height=manager.innerHeight;
     const context=canvas.getContext('2d');
     if(typeof context?.drawWindow!=='function')return {captured:false,reason:'Native drawWindow is unavailable; inspect the isolated window with the desktop screenshot tool.'};
@@ -67,7 +69,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
     await IOUtils.write(path,bytes);return {captured:true,path,width:canvas.width,height:canvas.height};
   };
   try{
-    await navigator?.setMode('collections');app.state=initialState();
+    app.state=initialState();
     Object.assign(app.state.settings,{provider:'deepseek',model:'native-automatic-synthetic',budgetUSD:10,inputPricePerMillion:1,outputPricePerMillion:1,maxOutputTokens:8192,autoAssign:false});
     app.state.models=['native-automatic-synthetic','native-automatic-alternative'];
     const tag={id:'native-auto-transport',name:'proton transport',fullName:'proton transport',description:'Proton transport studied in membrane experiments.',facet:'phenomenon',aliases:[],inclusions:[],exclusions:[],examples:[],broaderIds:[],relatedIds:[],custom:false,status:'approved',matchingMode:'auto'};
@@ -112,7 +114,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       }else throw new Error('Unexpected synthetic provider request. No external transport is available.');
       return {value,text:JSON.stringify(value),usageKnown:true,usage:{inputTokens:20,outputTokens:20},estimatedCostUSD:0.00004};
     };
-    await app.save();let doc=await open('assignment');manager.resizeTo(1280,900);await until(()=>manager.innerWidth>1050&&manager.innerHeight>650,'manager dimensions');
+    await config.progress?.('fixture-save-start');await app.save();await config.progress?.('fixture-save-ready');let doc=await open('assignment');manager.resizeTo(1280,900);await until(()=>manager.innerWidth>1050&&manager.innerHeight>650,'manager dimensions');
     if(config.addonSource==='production-build'){
       check('automaticProductionVersion',Zotero.SmartTags.version===config.addonVersion,{expected:config.addonVersion,actual:Zotero.SmartTags.version});
       check('automaticProductionManagerResourceVersions',manager.location.search.includes('v='+config.addonVersion)&&[...doc.querySelectorAll('link[rel="stylesheet"],script[src]')].every(resource=>new URL(resource.href||resource.src).searchParams.get('v')===config.addonVersion));
@@ -130,6 +132,8 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       }
       app.state.tags.push(twin);const taskId='library-meaning-task',createdAt=new Date().toISOString();app.state.nativeDefinitionPreparation={work,taskId,shelfId:MY_TAGS_SHELF_ID,appliedEntryIds:[],processingPolicy:'auto-clear'};app.state.maintenanceTasks=[{id:taskId,kind:'define-native',status:'completed',definitionWorkId:work.id,createdAt,cursor:work.tasks.length,groupIds:[],paperIds:work.entries.flatMap(entry=>entry.paperIds),run:{id:taskId+'-run',kind:'rebuild',scope:'selected',automatic:false,status:'idle',jobs:work.entries.flatMap(entry=>entry.paperIds).map(paperId=>({id:'job-'+paperId,paperId,status:'completed'})),vocabCursor:0,vocabFinished:false,spentUSD:0.37,settings:clone(settings),vocabularyVersion:app.state.vocabularyVersion}}];
       app.state.history=[{id:'library-previous-meaning-change',taskId:work.id,date:createdAt,label:'Save earlier tag meanings',patches:[],beforeDefinitions:{},afterDefinitions:{},beforeOwnership:{},afterOwnership:{},suggestionIds:[],status:'applied'}];await app.save();const deferred=app.state.reviewItems.find(item=>item.sourceName==='Catalytic mechanisms');await app.invoke('defer-review-item',{id:deferred.id});await app.waitForIdle();
+      const backgroundPersist=app.env.persist;let backgroundSaves=0,backgroundPulse=false;app.env.persist=async state=>{backgroundSaves++;await backgroundPersist(state);};
+      try{setTimeout(()=>{backgroundPulse=true;},0);await app.onItemsChanged(papers.flatMap(paper=>[{itemID:paper.itemID},{itemID:paper.itemID}]));check('backgroundUnchangedNotificationsDoNotPersist',backgroundSaves===0&&requests===0&&nativeWrites===0,{uniquePapers:papers.length,notifications:papers.length*2,saves:backgroundSaves});check('backgroundNotificationBatchYieldsToZotero',backgroundPulse===true);}finally{app.env.persist=backgroundPersist;}
       doc=await open('vocabulary');await resize(1280,900);await ready();const unchanged=fingerprint({tags:app.state.tags,native,work:app.state.nativeDefinitionPreparation.work}),baseRequests=requests;
       const overflow=()=>doc.documentElement.scrollWidth<=manager.innerWidth+2;
       const toolbarFits=()=>['vocabulary-search','tag-library-shelf','tag-library-status'].every(id=>{const rect=doc.getElementById(id).getBoundingClientRect();return rect.width>0&&rect.left>=0&&rect.right<=manager.innerWidth+2;});
@@ -151,6 +155,15 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       check('libraryRefinementBrowsingAndEditingDoNotProcess',requests===baseRequests&&nativeWrites===0&&fingerprint({tags:app.state.tags,native,work:app.state.nativeDefinitionPreparation.work})===unchanged);
       await clickControl(doc.getElementById('clear-library-search'));await ready();await resize(1280,900);const reopen=button(doc,'Choose meanings')??button(doc,'Review meanings');await clickControl(reopen);await ready();await clickControl(doc.getElementById('keep-saved-native-meaning-'+collision.id));await until(()=>app.state.nativeDefinitionPreparation.work.entries.find(entry=>entry.id===collision.id).status==='left-undefined','keep saved library meaning');await app.waitForIdle();await ready();check('libraryRefinementKeepSavedClosesOnlyDuplicate',requests===baseRequests&&nativeWrites===0&&fingerprint(app.state.tags)===fingerprint(scientificNames.map((name,index)=>({...clone(tag),id:'library-tag-'+index,name,fullName:name,description:`Scientific studies of ${name}, including measured mechanisms, material properties, and their effects on electrochemical performance.`,aliases:index===0?['proton conduction']:[],matchingMode:index===29?'manual':'suggest'})))&&app.state.reviewItems.find(item=>item.id===deferred.id).state==='deferred');screenshots.reviewResolved=await capture('native-library-refinement-'+config.theme+'-review-resolved');
       check('libraryRefinementUndoRemainsReachable',!!doc.getElementById('undo-native-meaning-change')&&!doc.getElementById('undo-native-meaning-change').disabled);await clickControl(doc.getElementById('undo-native-meaning-change'));await until(()=>app.state.history.find(change=>change.id==='library-previous-meaning-change').status==='undone','library history Undo');await ready();check('libraryRefinementUndoDoesNotTouchNativeLabels',requests===baseRequests&&nativeWrites===0&&Object.values(native).every(tags=>tags.length===1));
+      doc=await open('library');const findCount=()=>Number(doc.getElementById('find-result-count')?.textContent.match(/\d+/)?.[0]);
+      check('libraryFindPageStartsWithWholeLibrary',findCount()===17&&!doc.getElementById('find-tag-filters').open&&!main.document.getElementById('smart-tags-navigator'));
+      setInput('paper-search','digital twin');await ready();key(doc.getElementById('paper-search'),'Enter');await ready();
+      check('libraryFindQueryAndEnterFocusResults',findCount()===1&&doc.activeElement===doc.getElementById('find-result-count'));
+      key(doc.getElementById('find-tag-filters').querySelector('summary'),'Enter');await ready();await clickControl(doc.getElementById('explore-core-library-tag-29'));await ready();
+      check('libraryFindSavedTagFilterKeepsGroundedMatch',findCount()===1&&doc.getElementById('explore-core-library-tag-29').checked);screenshots.findPapers=await capture('native-library-refinement-'+config.theme+'-find-papers');
+      await clickControl(doc.getElementById('reset-find-filters'));await ready();check('libraryFindClearRestoresWholeLibrary',findCount()===17&&doc.getElementById('paper-search').value===''&&!doc.getElementById('explore-core-library-tag-29').checked);
+      doc=await open('settings');key(doc.getElementById('settings-integration').querySelector('summary'),'Enter');await ready();check('librarySettingsKeepsUpdatesWithoutNativeSidebarControls',!doc.getElementById('settings-navigation')&&!button(doc,'Show tag navigation')&&!button(doc,'Restore navigation')&&!!button(doc,'Check for updates')&&doc.body.textContent.includes('Installed version '+Zotero.SmartTags.version));screenshots.settings=await capture('native-library-refinement-'+config.theme+'-settings');
+      check('libraryFindAndSettingsStayLocal',requests===baseRequests&&nativeWrites===0);
       return {theme:config.theme,libraryRefinement:true,syntheticPapers:papers.length,savedDefinitions:30,undefinedNames:undefinedNames.length,reviewEntries:reviewNames.length,requests,realProviderRequests:0,nativeWrites,pointerActions,keyboardActions,keyboardTransport:'Gecko TextInputProcessor',measurements,screenshots};
     }
     if(config.meaningSave&&!config.meaningSaveBaseline){
@@ -318,7 +331,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
     await choose('settings-discovered-model','native-automatic-alternative');await until(()=>button(doc,'Save and test'),'combined save and test action');const connectionScreenshot=await capture('native-automatic-'+config.theme+'-connection');
     await click('Save and test');await until(()=>app.state.settings.model==='native-automatic-alternative'&&connectionRequests===1,'synthetic connection saved and tested');await ready();
     check('automaticConnectionSaveAndTestUsesChosenModel',connectionRequests===1&&(await app.snapshot()).connection.verified===true);
-    const editId='edit-tag-'+encodeURIComponent(tag.id),openEditor=async()=>{doc=await open('vocabulary');await clickControl(await until(()=>doc.getElementById(editId),'saved tag editor action'));await until(()=>doc.getElementById('tag-editor-form'),'saved tag editor');};
+    const editId='edit-tag-'+encodeURIComponent(tag.id),openEditor=async()=>{doc=await open('vocabulary');key(await until(()=>doc.getElementById(editId),'saved tag editor action'),'Enter');await until(()=>doc.getElementById('tag-editor-form'),'saved tag editor');};
     const committedMeaning=app.state.tags.find(value=>value.id===tag.id).description,enteredMeaning=committedMeaning+' Confirmed through direct membrane measurements.';
     await openEditor();const editorScreenshot=await capture('native-automatic-'+config.theme+'-editor');setInput('tag-description',enteredMeaning);key(doc.getElementById('tag-name'),'Enter');
     await until(()=>app.state.tags.find(value=>value.id===tag.id).description===enteredMeaning&&!doc.getElementById('tag-editor-form'),'Enter saves editor');await ready();
@@ -380,7 +393,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       secondaryScreenshots.recovery=await capture('secondary-after-'+config.theme+'-activity-recovery',doc.getElementById('activity-recovery'));
       papers.pop();delete native[recoveryPaper.id];delete app.state.papers[recoveryPaper.id];delete app.state.nativeTags[recoveryPaper.id];delete app.state.paperInputs[recoveryPaper.id];await app.save();await ready();
       check('secondaryActivityKeepsNoIssueInformationQuiet',!!doc.getElementById('activity-paper-information')&&!doc.getElementById('activity-paper-information').open);
-      doc=await open('settings');check('secondarySettingsGroupsStartClosed',['settings-tags','settings-navigation','settings-data'].every(id=>!doc.getElementById(id).open)&&!doc.getElementById('save-settings'));
+      doc=await open('settings');check('secondarySettingsGroupsStartClosed',['settings-tags','settings-data'].every(id=>!doc.getElementById(id).open)&&!doc.getElementById('settings-navigation')&&!doc.getElementById('save-settings'));
       const initialLimit=app.state.settings.coreConceptLimit,initialExtension=app.state.settings.extensionTagTarget;
       key(doc.getElementById('settings-tags').querySelector('summary'),'Enter');await ready();setInput('settings-coreConceptLimit','0');key(doc.getElementById('settings-coreConceptLimit'),'s',{ctrlKey:true});await ready();
       check('secondarySettingsInvalidLimitStaysUnsavedAndFocused',app.state.settings.coreConceptLimit===initialLimit&&doc.getElementById('settings-coreConceptLimit').getAttribute('aria-invalid')==='true'&&doc.activeElement===doc.getElementById('settings-coreConceptLimit'));
@@ -391,7 +404,7 @@ export async function runNativeAutomaticWorkflow(app,check,config){
       setInput('settings-extensionTagTarget',String(initialExtension+1));await ready();secondaryScreenshots.settingsDirty=await capture('secondary-after-'+config.theme+'-settings-dirty');await clickControl(doc.getElementById('discard-settings-changes'));await ready();
       check('secondarySettingsDiscardRestoresSavedValues',app.state.settings.extensionTagTarget===initialExtension&&doc.getElementById('settings-extensionTagTarget').value===String(initialExtension)&&!doc.getElementById('save-settings'));
       key(doc.getElementById('settings-tags').querySelector('summary'),'Enter');await ready();
-      for(const id of ['settings-navigation','settings-data']){key(doc.getElementById(id).querySelector('summary'),'Enter');await ready();check('secondarySettings'+id+'KeyboardReachable',doc.getElementById(id).open);key(doc.getElementById(id).querySelector('summary'),'Enter');await ready();}
+      for(const id of ['settings-data']){key(doc.getElementById(id).querySelector('summary'),'Enter');await ready();check('secondarySettings'+id+'KeyboardReachable',doc.getElementById(id).open);key(doc.getElementById(id).querySelector('summary'),'Enter');await ready();}
       secondaryScreenshots.settings=await capture('secondary-after-'+config.theme+'-settings');await click('AI connection and budget');await until(()=>doc.querySelector('h1')?.textContent==='Connect AI','settings connection link');
       check('secondarySettingsConnectionRouteKeepsSavedModel',app.state.settings.model==='native-automatic-alternative');
       await resize(820,620);
@@ -462,6 +475,6 @@ export async function runNativeAutomaticWorkflow(app,check,config){
     return {theme:config.theme,syntheticPapers:papers.length,requests,assignmentRequests,definitionRequests,connectionRequests,nativeWrites,pointerActions,keyboardActions,keyboardTransport:'Gecko TextInputProcessor',realProviderRequests:0,screenshot,screenshots:{assignment:screenshot,build:buildScreenshot,library:libraryScreenshot,connection:connectionScreenshot,editor:editorScreenshot,narrow:narrowScreenshots},...(config.secondaryWorkflow?{localRechecks,secondaryScreenshots}:{}),...(meaningRecovery?{meaningRecovery}:{})};
   }finally{
     if(app.state.run?.status==='running')await app.invoke('pause');await app.waitForIdle();if(manager&&!manager.closed)manager.close();
-    app.env.host=host;app.env.librarySnapshot=library;ai.completeJson=complete;ai.hasApiKey=hasKey;ai.getSession=session;ai.testConnection=testConnection;app.state=before;await app.save();await navigator?.refresh();if(mode)await navigator?.setMode(mode);
+    app.env.host=host;app.env.librarySnapshot=library;ai.completeJson=complete;ai.hasApiKey=hasKey;ai.getSession=session;ai.testConnection=testConnection;app.state=before;await app.save();
   }
 }

@@ -37,7 +37,7 @@ import {createAssignmentRun,triageAssignmentSuggestions,assignmentRunProgress,up
 import type {AssignmentRunRecord,AssignmentReviewJob,UncoveredTopicRecord} from './assignment-review.ts';
 import {migrateTagShelves,createBuildTagShelf,renameTagShelf,updateTagShelfMembers,selectTagShelfDefinitions,libraryTagShelfEntries,resolveTagShelfId,validTagShelves,previewTagShelfMerge,applyTagShelfMerge,MY_TAGS_SHELF_ID} from './tag-shelves.ts';
 import type {TagShelf} from './tag-shelves.ts';
-import {createNativeTagDefinitionWork,refreshUndispatchedNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,acceptNativeTagDefinitionResult,failNativeTagDefinitionTask,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,compileNativeTagDefinitions,validNativeTagDefinitionWork,resolveNativeTagDefinition,continueNativeTagDefinitionWork,nativeTagDefinitionMeaningChosen,recheckNativeTagDefinitionSources,autoSelectClearNativeTagDefinitions,resolveNativeTagTreatment,clearNativeTagDefinitionChoiceIds,resolveClearNativeTagDefinitionChoices,canUseNativeTagMeaning,compileNativeTagMeanings,settleNativeTagMeaningAdmissions,automaticNativeTagDefinitionChoiceIds,nativeTagMeaningNameConflicts} from './native-tag-definition.ts';
+import {createNativeTagDefinitionWork,refreshUndispatchedNativeTagDefinitionWork,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,acceptNativeTagDefinitionResult,failNativeTagDefinitionTask,resumeNativeTagDefinitionWork,retryNativeTagDefinitionWork,compileNativeTagDefinitions,validNativeTagDefinitionWork,resolveNativeTagDefinition,continueNativeTagDefinitionWork,nativeTagDefinitionMeaningChosen,recheckNativeTagDefinitionSources,autoSelectClearNativeTagDefinitions,resolveNativeTagTreatment,clearNativeTagDefinitionChoiceIds,resolveClearNativeTagDefinitionChoices,canUseNativeTagMeaning,compileNativeTagMeanings,settleNativeTagMeaningAdmissions,automaticNativeTagDefinitionChoiceIds,nativeTagMeaningNameConflicts,createNativeTagMeaningNameConflictResolver} from './native-tag-definition.ts';
 import type {NativeTagDefinitionWork,NativeTagMeaningAdmission} from './native-tag-definition.ts';
 import {resetPaperAnalysis} from './analysis-reset.ts';
 import type {AnalysisResetRecord} from './analysis-reset.ts';
@@ -535,6 +535,7 @@ export class AppController implements ManagerAPI {
   private refreshAfterMaintenance=false;
   private abort:AbortController|null = null;
   private shuttingDown = false;
+  private notificationDirty = false;
   private deferredItems = new Set<number>();
   private mutationTail:Promise<unknown> = Promise.resolve();
   private commitTail:Promise<unknown> = Promise.resolve();
@@ -582,8 +583,8 @@ export class AppController implements ManagerAPI {
       const tag=proposal.tags.find(tag=>tag.id===question.tagId);
       put({kind:'definition',taskId:proposal.id,workId:preparation.id,tagId:question.tagId,questionId:question.id,ownerPage:'cleanup',label:tag?.name??question.title,message:question.description,conditionFingerprint:fingerprint({meaning:this.reviewMeaning(tag,proposal.tags),kind:question.kind,choices:question.choices.map(({id,...choice})=>choice),sources:question.sourceIds.map(id=>{const source=proposal.evidenceSnapshot?.sources[id];return source&&{paperId:source.paperId,name:source.name,inputFingerprint:source.inputFingerprint,evidence:source.evidence};})})});
     }
-    const native=this.state.nativeDefinitionPreparation;
-    if(native?.processingPolicy==='auto-clear')for(const entry of native.work.entries)if((entry.status==='question'||entry.status!=='left-undefined'&&nativeTagMeaningNameConflicts(native.work,entry.id,this.state.tags).length>0)&&!entry.meaningAdmission&&!native.appliedEntryIds.includes(entry.id)){
+    const native=this.state.nativeDefinitionPreparation,nameConflicts=createNativeTagMeaningNameConflictResolver(this.state.tags);
+    if(native?.processingPolicy==='auto-clear')for(const entry of native.work.entries)if((entry.status==='question'||entry.status!=='left-undefined'&&nameConflicts(native.work,entry.id).length>0)&&!entry.meaningAdmission&&!native.appliedEntryIds.includes(entry.id)){
       put({kind:'definition',taskId:native.taskId,workId:native.work.id,questionId:entry.id,tagId:entry.tagId,sourceName:entry.sourceName,ownerPage:'vocabulary',label:entry.sourceName,message:entry.question,conditionFingerprint:fingerprint({name:entry.sourceName,meaning:this.reviewMeaning(entry.definition),question:entry.question,choices:entry.questionDetails?.choices.map(choice=>({label:choice.label,meaning:this.reviewMeaning(choice.definition)})),papers:entry.paperIds.map(id=>[id,native.work.snapshot.papers.find(paper=>paper.id===id)?.fingerprint])})});
     }
     for(const item of records)if(!active.has(item.id)&&item.state!=='resolved'){
@@ -616,8 +617,8 @@ export class AppController implements ManagerAPI {
     const key=canonicalTagKey(name);
     return Object.entries(this.state.nativeTagTreatments??{}).find(([other])=>canonicalTagKey(other)===key)?.[1];
   }
-  private selectedNativeMeaningIds(review:NativeDefinitionReview) {
-    return review.work.entries.filter(entry=>!entry.meaningAdmission&&nativeTagDefinitionMeaningChosen(review.work,entry)&&canUseNativeTagMeaning(review.work,entry.id)&&!nativeTagMeaningNameConflicts(review.work,entry.id,this.state.tags).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===entry.id&&item.state==='deferred')).map(entry=>entry.id);
+  private selectedNativeMeaningIds(review:NativeDefinitionReview,nameConflicts=createNativeTagMeaningNameConflictResolver(this.state.tags)) {
+    return review.work.entries.filter(entry=>!entry.meaningAdmission&&nativeTagDefinitionMeaningChosen(review.work,entry)&&canUseNativeTagMeaning(review.work,entry.id)&&!nameConflicts(review.work,entry.id).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===entry.id&&item.state==='deferred')).map(entry=>entry.id);
   }
   private async applyClearAssignments(run:Run,paperId:string) {
     if(run.processingPolicy!=='auto-clear'||run.automatic&&!this.state.settings.autoAssign)return;
@@ -1184,14 +1185,14 @@ export class AppController implements ManagerAPI {
   }
   private nativeDefinitionDisplay():ManagerSnapshot['nativeDefinitionPreparation'] {
     const review=this.state.nativeDefinitionPreparation;if(!review)return;
-    const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId),definitions=scientificDefinitions(this.state.tags).filter(tag=>tag.status==='approved');
-    const clearChoices=clearNativeTagDefinitionChoiceIds(review.work).filter(choice=>!nativeTagMeaningNameConflicts(review.work,choice.entryId,this.state.tags).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===choice.entryId&&item.state==='deferred'));
-    const clearIds=new Set([...clearChoices.map(choice=>choice.entryId),...this.selectedNativeMeaningIds(review)]);
+    const task=this.state.maintenanceTasks?.find(task=>task.id===review.taskId),definitions=scientificDefinitions(this.state.tags).filter(tag=>tag.status==='approved'),nameConflicts=createNativeTagMeaningNameConflictResolver(this.state.tags);
+    const clearChoices=clearNativeTagDefinitionChoiceIds(review.work).filter(choice=>!nameConflicts(review.work,choice.entryId).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===choice.entryId&&item.state==='deferred'));
+    const clearIds=new Set([...clearChoices.map(choice=>choice.entryId),...this.selectedNativeMeaningIds(review,nameConflicts)]);
     const settled=task?.status!=='running'&&task?.status!=='queued'&&this.state.run?.status!=='running';
     const rows=review.work.entries.map(entry=>{
       const actual=definitions.filter(tag=>[tag.name,tag.fullName,...tag.aliases].includes(entry.sourceName));
       const savedConcept=entry.meaningAdmission&&definitions.some(tag=>tag.id===entry.meaningAdmission!.tagId);
-      const savedMeaningConflicts=nativeTagMeaningNameConflicts(review.work,entry.id,this.state.tags).map(tag=>({id:tag.id,name:tag.name,description:tag.description}));
+      const savedMeaningConflicts=nameConflicts(review.work,entry.id).map(tag=>({id:tag.id,name:tag.name,description:tag.description}));
       const applied=!!savedConcept||entry.status!=='left-undefined'&&actual.length===1&&(review.appliedEntryIds.includes(entry.id)||!savedMeaningConflicts.length&&entry.status==='question');
       const protectedChoice=entry.targetTagId&&entry.paperIds.some(paperId=>{const decision=this.state.decisions[pair(paperId,entry.targetTagId!)];return decision?.rejected||decision?.locked;});
       const chosenMeaning=nativeTagDefinitionMeaningChosen(review.work,entry)&&entry.definition?{name:entry.definition.name,description:entry.definition.description}:undefined;
@@ -1268,7 +1269,8 @@ export class AppController implements ManagerAPI {
     const review=this.state.nativeDefinitionPreparation,task=review&&this.state.maintenanceTasks?.find(task=>task.id===review.taskId);
     if(!review||review.work.id!==id||!task)throw new Error('This meaning preparation is no longer available.');
     if(task.status==='running'||task.status==='queued'||this.state.run?.status==='running')throw new Error('Wait for the current checks to finish before confirming these meanings.');
-    const choices=clearNativeTagDefinitionChoiceIds(review.work).filter(choice=>!nativeTagMeaningNameConflicts(review.work,choice.entryId,this.state.tags).length&&!this.state.reviewItems?.some(item=>item.workId===id&&item.questionId===choice.entryId&&item.state==='deferred'));
+    const nameConflicts=createNativeTagMeaningNameConflictResolver(this.state.tags);
+    const choices=clearNativeTagDefinitionChoiceIds(review.work).filter(choice=>!nameConflicts(review.work,choice.entryId).length&&!this.state.reviewItems?.some(item=>item.workId===id&&item.questionId===choice.entryId&&item.state==='deferred'));
     const selected=this.selectedNativeMeaningIds(review).filter(entryId=>!choices.some(choice=>choice.entryId===entryId));
     if(!choices.length&&!selected.length)throw new Error('No clear single meanings are waiting for confirmation.');
     const input=await this.nativeDefinitionInput(review.work.entries.map(entry=>entry.sourceName));
@@ -1581,7 +1583,8 @@ export class AppController implements ManagerAPI {
   }
   private async selectAutomaticNativeMeanings(review:NativeDefinitionReview) {
     if(review.processingPolicy!=='auto-clear'||review.work.selectionPolicyVersion!==1)return;
-    const selected=new Set(automaticNativeTagDefinitionChoiceIds(review.work).filter(choice=>review.work.entries.find(entry=>entry.id===choice.entryId)?.resolution==='clear'&&!nativeTagMeaningNameConflicts(review.work,choice.entryId,this.state.tags).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===choice.entryId&&item.state==='deferred')).map(choice=>choice.entryId));
+    const nameConflicts=createNativeTagMeaningNameConflictResolver(this.state.tags);
+    const selected=new Set(automaticNativeTagDefinitionChoiceIds(review.work).filter(choice=>review.work.entries.find(entry=>entry.id===choice.entryId)?.resolution==='clear'&&!nameConflicts(review.work,choice.entryId).length&&!this.state.reviewItems?.some(item=>item.workId===review.work.id&&item.questionId===choice.entryId&&item.state==='deferred')).map(choice=>choice.entryId));
     if(!selected.size)return;
     const input=await this.nativeDefinitionInput(review.work.entries.filter(entry=>selected.has(entry.id)).map(entry=>entry.sourceName));
     review.work=autoSelectClearNativeTagDefinitions(review.work,input,[...selected]);
@@ -2048,7 +2051,7 @@ export class AppController implements ManagerAPI {
       case 'save-search': {
         const filter:ConceptFilter=payload.filter??{mode:'all',selections:(payload.tagIds??[]).map((conceptId:string)=>({conceptId}))};
         if(!filter.selections?.length)throw new Error('Select at least one tag before saving a search.');
-        if(compileConceptFilter(this.allTags(),filter).clauses.some(clause=>clause.bindings))throw new Error('This filter uses verified paper matches that Zotero saved searches cannot retain. Use Find papers or the live tag navigator for these results.');
+        if(compileConceptFilter(this.allTags(),filter).clauses.some(clause=>clause.bindings))throw new Error('This filter uses verified paper matches that Zotero saved searches cannot retain. Use Find papers for these results.');
         if(this.env.host.saveConceptSearch)await this.env.host.saveConceptSearch(String(payload.name??''),filter,this.allTags());
         else await this.env.host.saveSearch(String(payload.name??''),this.allTags().filter(tag=>(payload.tagIds??[]).includes(tag.id)).map(tag=>tag.name));
         break;
@@ -2950,48 +2953,78 @@ export class AppController implements ManagerAPI {
     await this.commit({id:uid('undo'),date:new Date().toISOString(),label:`Undo: ${history.label}`,patches,...(metadataPatches?{metadataPatches}:{}),...(history.afterDefinitions?{beforeDefinitions:copy(history.afterDefinitions),afterDefinitions:copy(history.beforeDefinitions??{})}:{}),...(history.afterRedirects?{beforeRedirects:copy(history.afterRedirects),afterRedirects:copy(history.beforeRedirects??{})}:{}),...(history.afterTopics?{beforeTopics:copy(history.afterTopics),afterTopics:copy(history.beforeTopics??{})}:{}),...(history.afterShelves?{beforeShelves:copy(history.afterShelves),afterShelves:copy(history.beforeShelves!)}:{}),...(history.afterNativeBindings?{beforeNativeBindings:copy(history.afterNativeBindings),afterNativeBindings:copy(history.beforeNativeBindings!)}:{}),beforeOwnership:current,afterOwnership:restored,beforeDecisions,afterDecisions:history.beforeDecisions,suggestionIds:[],status:'prepared',undoOfId:history.id});
   }
   private restoreDecisions(decisions?:Record<string,Decision|null>) {for(const [key,value] of Object.entries(decisions??{}))if(value)this.state.decisions[key]=copy(value);else delete this.state.decisions[key];}
-  async onItemChanged(itemID:number) {
-    if(this.shuttingDown)return;
-    const current=await this.env.host.read(itemID);if(!current)return;
-    const previous=this.state.papers[current.id];const native=await this.env.host.readTags(itemID);
-    const oldNative=this.state.nativeTags[current.id]??[];
+  private async updateChangedItem(itemID:number):Promise<{dirty:boolean;metadataChanged:boolean}> {
+    const current=await this.env.host.read(itemID);if(!current)return {dirty:false,metadataChanged:false};
+    const previous=this.state.papers[current.id],native=await this.env.host.readTags(itemID),oldNative=this.state.nativeTags[current.id]??[];
+    current.keywords=[...new Set([...(previous?.keywords??[]),...current.keywords])];current.fingerprint=paperFingerprint(current);
+    const metadataChanged=!previous||paperFingerprint({...previous,pdfText:undefined})!==current.fingerprint;
+    const nativeKey=(values:NativeTag[])=>fingerprint(values.map(tag=>[tag.tag,tag.type??0] as const).sort((a,b)=>a[0].localeCompare(b[0])||a[1]-b[1]));
+    const nativeChanged=nativeKey(oldNative)!==nativeKey(native),owned=this.state.ownership[current.id]??{};
+    const missingOwnership=Object.values(owned).some(assignment=>!native.some(tag=>tag.tag===assignment.name));
+    if(!metadataChanged&&!nativeChanged&&!missingOwnership)return {dirty:false,metadataChanged:false};
     for(const tag of this.state.tags)if(oldNative.some(t=>nativeBindingAllows(tag.id,current.id,t.tag,this.state.nativeBindingExclusions)&&equivalentTagNames(tag).some(n=>canonicalTagKey(n)===canonicalTagKey(t.tag)))&&!native.some(t=>equivalentTagNames(tag).some(n=>canonicalTagKey(n)===canonicalTagKey(t.tag)))) {
       this.state.decisions[pair(current.id,tag.id)]={...this.state.decisions[pair(current.id,tag.id)],rejected:true};
-      for(const s of this.state.suggestions)if(s.paperId===current.id&&s.tagId===tag.id){s.applied=false;s.status='rejected';}
+      for(const suggestion of this.state.suggestions)if(suggestion.paperId===current.id&&suggestion.tagId===tag.id){suggestion.applied=false;suggestion.status='rejected';}
     }
-    const owned=this.state.ownership[current.id]??{};
-    for(const [tagId,assignment] of Object.entries(owned))if(!native.some(t=>t.tag===assignment.name)) {
+    for(const [tagId,assignment] of Object.entries(owned))if(!native.some(tag=>tag.tag===assignment.name)) {
       this.state.decisions[pair(current.id,tagId)]={...this.state.decisions[pair(current.id,tagId)],rejected:true};delete owned[tagId];
-      for(const s of this.state.suggestions)if(s.paperId===current.id&&s.tagId===tagId){s.applied=false;s.status='rejected';}
+      for(const suggestion of this.state.suggestions)if(suggestion.paperId===current.id&&suggestion.tagId===tagId){suggestion.applied=false;suggestion.status='rejected';}
     }
     this.state.nativeTags[current.id]=native;
-    current.keywords=[...new Set([...(previous?.keywords??[]),...current.keywords])];current.fingerprint=paperFingerprint(current);
-    const changed=!previous||paperFingerprint({...previous,pdfText:undefined})!==current.fingerprint;
-    if(changed){this.remember(current);delete this.state.analyses[current.id];delete this.state.facts[current.id];}
-    await this.save();
-    if(changed&&this.state.settings.autoAssign){this.deferredItems.add(itemID);await this.save();if(!this.worker&&this.state.run?.status!=='paused')await this.processDeferred();}
+    if(metadataChanged){this.remember(current);delete this.state.analyses[current.id];delete this.state.facts[current.id];}
+    return {dirty:true,metadataChanged};
   }
-  async onAttachmentChanged(parentID:number) {
-    const paper=await this.env.host.read(parentID);if(!paper)return;
-    const cached=this.state.facts[paper.id];let unchanged=false;
+  private async updateChangedAttachment(parentID:number):Promise<{dirty:boolean;metadataChanged:boolean;present:boolean}> {
+    const paper=await this.env.host.read(parentID);if(!paper)return {dirty:false,metadataChanged:false,present:false};
+    const cached=this.state.facts[paper.id];let unchanged=false,dirty=!!this.state.analyses[paper.id];
     if(cached){
       const current=await this.fresh(this.state.papers[paper.id]??paper),metadataFingerprint=paperFingerprint(current);
       if(cached.inputFingerprint!==cached.metadataFingerprint)current.pdfText=selectPDFPassages(await this.env.host.pdfText(parentID),[],18000);
       unchanged=cached.metadataFingerprint===metadataFingerprint&&cached.inputFingerprint===paperFingerprint(current);
     }
+    const updated=await this.updateChangedItem(parentID);
     delete this.state.analyses[paper.id];
     if(!unchanged){
+      dirty=dirty||!!cached||this.state.approvedTaxonomyInput!==undefined||!!this.state.papers[paper.id]?.pdfText;
       delete this.state.facts[paper.id];delete this.state.approvedTaxonomyInput;
-      if(this.state.taxonomyProposal?.paperIds.includes(paper.id))this.state.taxonomyProposal.issues=[...new Set([...this.state.taxonomyProposal.issues,'Source PDF evidence changed. Rebuild the taxonomy proposal.'])];
+      if(this.state.taxonomyProposal?.paperIds.includes(paper.id)){
+        const message='Source PDF evidence changed. Rebuild the taxonomy proposal.';
+        if(!this.state.taxonomyProposal.issues.includes(message)){this.state.taxonomyProposal.issues.push(message);dirty=true;}
+      }
       if(this.state.papers[paper.id])delete this.state.papers[paper.id].pdfText;
     }
-    await this.onItemChanged(parentID);
-    if(this.state.settings.autoAssign){this.deferredItems.add(parentID);if(!this.worker)await this.processDeferred();}
+    return {...updated,dirty:dirty||updated.dirty,present:true};
+  }
+  onItemChanged(itemID:number) {return this.onItemsChanged([{itemID}]);}
+  onAttachmentChanged(parentID:number) {return this.onItemsChanged([{itemID:parentID,attachment:true}]);}
+  onItemsChanged(changes:readonly {itemID:number;attachment?:boolean}[]):Promise<void> {
+    if(this.shuttingDown||!changes.length)return Promise.resolve();
+    const items=new Map<number,boolean>();for(const change of changes)items.set(change.itemID,!!change.attachment||!!items.get(change.itemID));
+    const operation=this.mutationTail.catch(()=>{}).then(async()=>{
+      if(this.shuttingDown)return;
+      let dirty=this.notificationDirty,assign=false,processed=0,failure:unknown;
+      for(const [itemID,attachment] of items){
+        try{
+          const result=attachment?await this.updateChangedAttachment(itemID):await this.updateChangedItem(itemID);
+          dirty=dirty||result.dirty;
+          if(this.state.settings.autoAssign&&(result.metadataChanged||attachment&&'present' in result&&result.present)){
+            if(!this.deferredItems.has(itemID))dirty=true;
+            this.deferredItems.add(itemID);assign=true;
+          }
+        }catch(error){failure??=error;}
+        if(++processed%10===0)await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      if(dirty){this.notificationDirty=true;await this.save();this.notificationDirty=false;}
+      if(failure!==undefined)throw failure;
+      if(assign&&!this.shuttingDown&&!this.worker&&this.state.run?.status!=='paused')await this.processDeferred();
+    });
+    this.mutationTail=operation;return operation;
   }
   private async processDeferred() {
-    if(!this.state.settings.autoAssign||this.state.run?.status==='paused')return;
+    if(this.shuttingDown||!this.state.settings.autoAssign||this.state.run?.status==='paused')return;
     const ids=[...this.deferredItems];this.deferredItems.clear();const papers:PaperRecord[]=[];
     for(const id of ids){const paper=await this.env.host.read(id);if(paper){this.remember(paper);papers.push(paper);}}
+    if(this.shuttingDown){for(const id of ids)this.deferredItems.add(id);await this.save();return;}
     if(papers.length)try{await this.start('tag','incoming',true,papers);}catch(error){for(const id of ids)this.deferredItems.add(id);this.warn(this.message(error));await this.save();}
   }
 }

@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import { initialState } from '../src/controller.ts';
 
-async function bundleMain(disposeGate = false, mockUI = false, mockNavigator = false) {
+async function bundleMain(disposeGate = false, mockUI = false) {
   const result = await build({
     entryPoints: ['src/main.ts'], bundle: true, write: false, format: 'iife',
     globalName: 'SmartTags', target: 'firefox140', platform: 'browser',
@@ -39,17 +39,6 @@ async function bundleMain(disposeGate = false, mockUI = false, mockNavigator = f
           }
         ` }));
       },
-    }] : []), ...(mockNavigator ? [{
-      name: 'observe-native-navigation',
-      setup(plugin: any) {
-        plugin.onLoad({ filter: /[/\\]navigator\.ts$/ }, () => ({ loader: 'ts', contents: `
-          export function navigatorReady(win) { return !!win.document.getElementById?.('zotero-collections-pane') && !!win.ZoteroPane?.itemsView && !!win.ZoteroPane?.collectionsView; }
-          export function mountNavigator() {
-            const observer = (globalThis as any).__lifecycleUI;observer.navMounts++;
-            let mode = 'collections';return {available:true,message:'',get mode(){return mode;},refresh:async()=>{},setMode:async value=>{mode=value;},destroy:async()=>{observer.navDestroys++;}};
-          }
-        ` }));
-      },
     }] : [])],
   });
   return result.outputFiles[0].text;
@@ -71,6 +60,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
   let timerID = 0;
   let fetchCalls = 0;
   let libraryWrites = 0;
+  let libraryReads = 0;
   let localizedWindows = 0;
   const regular = {
     id: 42, key: 'PAPER042', libraryID: 1, deleted: false,
@@ -88,7 +78,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
     getMainWindows: () => [win], getMainWindow: () => win,
     getActiveZoteroPane: () => null,
     Libraries: { userLibraryID: 1 },
-    Items: { getAsync: async (id: number) => id === regular.id ? regular : null, getAll: async () => [regular] },
+    Items: { getAsync: async (id: number) => id === regular.id ? regular : null, getAll: async () => { libraryReads++;return [regular]; } },
     ftl: {
       addResourceIds: (ids: string[]) => ids.forEach(id => locale.add(id)),
       removeResourceIds: (ids: string[]) => ids.forEach(id => locale.delete(id)),
@@ -145,6 +135,7 @@ function nativeHarness(code: string, options: { failingMenu?: string; disposeGat
     app: context.SmartTags, Zotero, win, regular, files, writes, copies, menus, sections, observers, locale, timers, errors,
     get fetchCalls() { return fetchCalls; },
     get libraryWrites() { return libraryWrites; },
+    get libraryReads() { return libraryReads; },
     get localizedWindows() { return localizedWindows; },
   };
 }
@@ -217,8 +208,6 @@ function runNextTimer(timers: Map<number, () => void>) {
 
 async function startNative(native: ReturnType<typeof nativeHarness>) {
   await native.app.startup(startup);
-  // Most lifecycle fixtures have no sidebar; finish its independent bounded wait.
-  for (let attempt = 0; attempt < 200 && native.timers.size; attempt++) runNextTimer(native.timers);
 }
 
 test('native startup registers UI and notifier, persists only plugin state, and makes no AI or library writes', async () => {
@@ -490,29 +479,39 @@ test('the manager XHTML references its own final-document loader', async () => {
   assert.match(markup, /<script[^>]+src="chrome:\/\/smart-tags\/content\/manager-loader\.js"[^>]+defer="defer"/);
 });
 
-test('late sidebar readiness mounts once and manager controls restore navigation through native commands',async()=>{
-  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false,navMounts:0,navDestroys:0};
-  const native=nativeHarness(await bundleMain(false,true,true),{manager:dialog.win,ui});await native.app.startup(startup);
-  assert.equal(native.Zotero.SmartTags.getNavigator(native.win),undefined);assert.equal(native.timers.size,1);runNextTimer(native.timers);assert.equal(ui.navMounts,0);
-  let collapsed=false,updates=0;const sidebar:any={hidden:false,getAttribute:()=>collapsed?'true':null,removeAttribute(){collapsed=false;}};
-  const nodes:any={'zotero-collections-pane':sidebar,'view-menuitem-collections-pane':{doCommand(){sidebar.hidden=false;collapsed=false;}},menu_addons:{doCommand(){updates++;}}};
-  (native.win.document as any).getElementById=(id:string)=>nodes[id];runNextTimer(native.timers);assert.equal(ui.navMounts,0);
-  (native.win as any).ZoteroPane={itemsView:{},collectionsView:{}};runNextTimer(native.timers);assert.equal(ui.navMounts,1);assert.equal(native.timers.size,0);
-  native.app.onMainWindowLoad(native.win);assert.equal(ui.navMounts,1);await native.app.openManager();
-  let snapshot=await ui.api.snapshot();assert.equal(snapshot.pluginVersion,startup.version);assert.equal(snapshot.navigation.status,'ready');
-  collapsed=true;assert.equal((await ui.api.snapshot()).navigation.status,'hidden');await ui.api.invoke('show-tag-navigation');assert.equal(collapsed,false);assert.equal(native.Zotero.SmartTags.getNavigator(native.win).mode,'tags');
-  const state=JSON.stringify(native.Zotero.SmartTags.controller.state);await ui.api.invoke('show-tag-navigation',{restore:true});assert.equal(ui.navMounts,2);assert.equal(ui.navDestroys,1);assert.equal(JSON.stringify(native.Zotero.SmartTags.controller.state),state);
-  await ui.api.invoke('check-plugin-updates');assert.equal(updates,1);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();assert.equal(ui.navDestroys,2);
+test('main windows keep native Collections without a panel, startup scans or idle timers',async()=>{
+  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false};
+  const native=nativeHarness(await bundleMain(false,true),{manager:dialog.win,ui});await native.app.startup(startup);
+  assert.equal(native.Zotero.SmartTags.getNavigator,undefined);assert.equal(native.timers.size,0);assert.equal(native.libraryReads,0);
+  assert.deepEqual([...native.observers.keys()],['smart-tags']);assert.equal(ui.mounts,0);
+  native.app.onMainWindowLoad(native.win);const second:any={document:{querySelectorAll:()=>[]}};native.app.onMainWindowLoad(second);
+  await native.Zotero.SmartTags.controller.save();await native.Zotero.SmartTags.controller.save();
+  assert.equal(native.timers.size,0);assert.equal(native.libraryReads,0,'saving progress while the manager is closed must not scan Zotero');
+  let updates=0;(native.win.document as any).getElementById=(id:string)=>id==='menu_addons'?{doCommand(){updates++;}}:null;
+  await native.app.openManager();const snapshot=await ui.api.snapshot();assert.equal(snapshot.pluginVersion,startup.version);assert.equal(snapshot.navigation,undefined);
+  await ui.api.invoke('check-plugin-updates');assert.equal(updates,1);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);
+  await native.app.shutdown();assert.equal(native.timers.size,0);assert.equal(native.observers.size,0);
 });
 
-test('an open manager switches native controls to a surviving library window only after its original closes',async()=>{
-  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false,navMounts:0,navDestroys:0};
-  const native=nativeHarness(await bundleMain(false,true,true),{manager:dialog.win,ui});await native.app.startup(startup);
-  let firstFocused=0,secondFocused=0,secondUpdates=0;
-  const pane={hidden:false,getAttribute:()=>null};(native.win.document as any).getElementById=(id:string)=>id==='zotero-collections-pane'?pane:null;
-  (native.win as any).ZoteroPane={itemsView:{},collectionsView:{}};(native.win as any).focus=()=>{firstFocused++;};runNextTimer(native.timers);await native.app.openManager();
-  const second:any={closed:false,focus(){secondFocused++;},ZoteroPane:{itemsView:{},collectionsView:{}},document:{getElementById:(id:string)=>id==='zotero-collections-pane'?pane:id==='menu_addons'?{doCommand(){secondUpdates++;}}:null}};
-  native.Zotero.getMainWindow=()=>second;native.app.onMainWindowLoad(second);await ui.api.invoke('show-tag-navigation');assert.equal(firstFocused,1);assert.equal(secondFocused,0);
-  (native.win as any).closed=true;native.app.onMainWindowUnload(native.win);await ui.api.invoke('show-tag-navigation');await ui.api.invoke('check-plugin-updates');
-  assert.equal(firstFocused,1);assert.equal(secondFocused,1);assert.equal(secondUpdates,1);assert.equal((await ui.api.snapshot()).navigation.mode,'tags');assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();
+test('an open manager sends plugin updates to a surviving library window only after its original closes',async()=>{
+  const dialog=managerDialog();dialog.ready();const ui:any={mounts:0,destroys:0,fail:false};
+  const native=nativeHarness(await bundleMain(false,true),{manager:dialog.win,ui});await native.app.startup(startup);
+  let firstUpdates=0,secondUpdates=0;(native.win.document as any).getElementById=(id:string)=>id==='menu_addons'?{doCommand(){firstUpdates++;}}:null;
+  await native.app.openManager();const second:any={closed:false,document:{getElementById:(id:string)=>id==='menu_addons'?{doCommand(){secondUpdates++;}}:null,querySelectorAll:()=>[]}};
+  native.Zotero.getMainWindow=()=>second;native.app.onMainWindowLoad(second);await ui.api.invoke('check-plugin-updates');assert.equal(firstUpdates,1);assert.equal(secondUpdates,0);
+  (native.win as any).closed=true;native.app.onMainWindowUnload(native.win);await ui.api.invoke('check-plugin-updates');assert.equal(firstUpdates,1);assert.equal(secondUpdates,1);
+  assert.equal(native.timers.size,0);assert.equal(native.fetchCalls,0);assert.equal(native.libraryWrites,0);await native.app.shutdown();
+});
+
+test('item notification bursts use one deduplicated timer and preserve changes received during a flush',async()=>{
+  const native=nativeHarness(await normalBundle);await startNative(native);const batches:any[]=[];
+  native.Zotero.Items.getAsync=async(id:number)=>id===999?{id,isRegularItem:()=>false,isAttachment:()=>true,parentID:42}:{...native.regular,id,key:'PAPER'+id};
+  const observer=native.observers.get('smart-tags').observer;
+  native.Zotero.SmartTags.controller.onItemsChanged=async(changes:any[])=>{batches.push(changes);if(batches.length===1)await observer.notify('modify','item',[44]);};
+  for(let index=0;index<40;index++)await observer.notify('modify','item',[42,43,42]);
+  await observer.notify('modify','item',[999]);
+  assert.equal(native.timers.size,1);assert.equal(batches.length,0);runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(batches.length,1);assert.deepEqual(JSON.parse(JSON.stringify(batches[0])),[{itemID:42,attachment:true},{itemID:43,attachment:false}]);assert.equal(native.timers.size,1);
+  runNextTimer(native.timers);await new Promise(resolve=>setImmediate(resolve));assert.equal(batches.length,2);assert.equal(batches[1][0].itemID,44);assert.equal(native.timers.size,0);
+  await observer.notify('modify','item',[45]);assert.equal(native.timers.size,1);await native.app.shutdown();assert.equal(native.timers.size,0);
 });

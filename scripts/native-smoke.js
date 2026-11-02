@@ -1,25 +1,6 @@
 /** TEST ONLY. Bundled exclusively into build/native-addon by prepare-native-smoke.mjs. */
 import { registerOAuthCallback } from '../src/platform.ts';
 import { ProviderClient } from '../src/providers.ts';
-import { runNativeV020 } from './native-v020.js';
-import { runNativeV040 } from './native-v040.js';
-import { runNativeV050 } from './native-v050.js';
-import { runNativeV051 } from './native-v051.js';
-import { runNativeV052 } from './native-v052.js';
-import { runNativeV053 } from './native-v053.js';
-import { runNativeV060 } from './native-v060.js';
-import { runNativeV070 } from './native-v070.js';
-import { runNativeV080 } from './native-v080.js';
-import { runNativeV090 } from './native-v090.js';
-import { runNativeV0100 } from './native-v0100.js';
-import { runNativeV0101 } from './native-v0101.js';
-import { runNativeV0102 } from './native-v0102.js';
-import { runNativeV0103 } from './native-v0103.js';
-import { runNativeV0110Navigation } from './native-v0110-navigation.js';
-import { runNativeV0110 } from './native-v0110.js';
-import { runNativeV0120 } from './native-v0120.js';
-import { runNativeV0130 } from './native-v0130.js';
-import { runNativeV0131 } from './native-v0131.js';
 import { runNativeAutomaticWorkflow } from './native-automatic-workflow.js';
 
 void (async () => {
@@ -27,8 +8,12 @@ void (async () => {
   if (!config) throw new Error('Native smoke configuration is missing.');
   const report = { status: 'running', startedAt: new Date().toISOString(), configuration: config, checks: {}, errors: [] };
   const scrub = value => String(value).replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]').replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]').slice(0, 6000);
-  const write = () => IOUtils.writeUTF8(config.reportPath, JSON.stringify(report, null, 2), { tmpPath: config.reportPath + '.tmp' });
-  const check = (name, condition, detail) => { report.checks[name] = { passed: !!condition, ...(detail === undefined ? {} : { detail }) }; if (!condition) throw new Error('Native smoke failed: ' + name); };
+  const write = async () => {
+    const text=JSON.stringify(report,null,2);
+    for(let attempt=0;;attempt++)try{return await IOUtils.writeUTF8(config.reportPath,text,{tmpPath:config.reportPath+'.tmp'});}
+    catch(error){if(attempt>=8||!/NS_ERROR_FILE_ACCESS_DENIED|sharing violation|EBUSY|EPERM/.test(String(error)))throw error;await new Promise(resolve=>setTimeout(resolve,Math.min(1000,50*2**attempt)));}
+  };
+  const check = (name, condition, detail) => { report.lastCheck=name;report.checks[name] = { passed: !!condition, ...(detail === undefined ? {} : { detail }) }; if (!condition) throw new Error('Native smoke failed: ' + name); };
   const normalized = value => String(value).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
   const until = async (predicate, label) => {
     const start = Date.now();
@@ -48,22 +33,23 @@ void (async () => {
     check('sourceGlobals', typeof fetch === 'function' && !!crypto?.subtle && typeof TextEncoder === 'function' && typeof TextDecoder === 'function' && typeof AbortController === 'function' && typeof setTimeout === 'function');
     const app = Zotero.SmartTags.controller;
     check('automaticAssignmentInitiallyOff', app.state.settings.autoAssign === false);
+    report.phase='controller-ready';await write();
     const snapshot = await app.snapshot();
     check('managerSnapshot', Array.isArray(snapshot.tags) && Array.isArray(snapshot.papers) && !!snapshot.connection);
+    report.phase='snapshot-ready';await write();
     const startupWindow = Zotero.getMainWindow();
     await until(() => startupWindow?.ZoteroPane?.itemsView && startupWindow.ZoteroPane.collectionsView, 'main window trees');
-    await startupWindow.ZoteroPane.collectionsView.waitForLoad();
-    await startupWindow.ZoteroPane.itemsView.waitForLoad();
-    const startupNavigator = await until(() => Zotero.SmartTags.getNavigator(startupWindow), 'main navigator');
-    await startupNavigator.refresh();
-    await startupWindow.ZoteroPane.itemsView.waitForLoad();
-    // Check the natural approved-taxonomy startup before any fixture writes can
-    // race a native search across a newly constructed, partially saved item.
-    if (snapshot.taxonomyReady) check('v020ApprovedStartupDefaultsToTags', startupNavigator.mode === 'tags'
-      && startupWindow.ZoteroPane.itemsView.collectionTreeRows.some(row => row.id.startsWith('smart-tags-view-')));
-    await startupNavigator.setMode('collections');
-    check('fixtureSetupUsesCollections', startupNavigator.mode === 'collections');
+    if(config.scenario!=='automatic-workflow'){
+      await startupWindow.ZoteroPane.collectionsView.waitForLoad();
+      await startupWindow.ZoteroPane.itemsView.waitForLoad();
+    }
+    check('nativeCollectionsPanelUnchanged',!startupWindow.document.getElementById('smart-tags-navigator')
+      && !startupWindow.document.getElementById('zotero-collections-pane')?.hasAttribute('data-smart-tags-mode')
+      && !startupWindow.ZoteroPane.itemsView.collectionTreeRows.some(row=>row.id?.startsWith('smart-tags-view-')));
+    check('noNativeNavigatorAPI',typeof Zotero.SmartTags.getNavigator==='undefined');
+    report.phase='native-ready';await write();
     if(config.scenario==='automatic-workflow'){
+      config.progress=async phase=>{report.phase=phase;await write();};
       report.automaticWorkflow=await runNativeAutomaticWorkflow(app,check,config);
       report.status='passed';report.completedAt=new Date().toISOString();report.note='Synthetic automatic-workflow checks only; no external AI request or normal Zotero profile was used.';
       return;
@@ -174,25 +160,7 @@ void (async () => {
       } finally { clearTimeout(timeout); }
     } finally { callback?.dispose(); }
     check('callbackDisposed', !Zotero.Server.Endpoints['/smart-tags/native-smoke/callback']);
-    report.v020=await runNativeV020(app,check,config);
-    report.v060=await runNativeV060(app,check,config);
-    report.v070=await runNativeV070(app,check,config);
-    report.v080=await runNativeV080(app,check,config);
-    report.v040=await runNativeV040(app,check,config);
-    report.v053=await runNativeV053(app,check,config);
-    report.v052=await runNativeV052(app,check,config);
-    report.v051=await runNativeV051(app,check,config);
-    report.v090=await runNativeV090(app,check,config);
-    report.v0100=await runNativeV0100(app,check,config);
-    report.v0101=await runNativeV0101(app,check,config);
-    report.v0102=await runNativeV0102(app,check,config);
-    report.v0103=await runNativeV0103(app,check,config);
-    report.v0110Navigation=await runNativeV0110Navigation(app,check,config);
-    report.v0110=await runNativeV0110(app,check,config);
-    report.v0120=await runNativeV0120(app,check,config);
-    report.v0130=await runNativeV0130(app,check,config);
-    report.v0131=await runNativeV0131(app,check,config);
-    report.v050=await runNativeV050(app,check,config);
+    report.retiredLegacyFixtures={reason:'Historical native fixtures require the removed Collections-side navigator. Current plugin-page workflows run through the automatic-workflow scenario.',fixtures:['native-v020', 'native-v040', 'native-v050', 'native-v051', 'native-v052', 'native-v053', 'native-v060', 'native-v070', 'native-v080', 'native-v090', 'native-v0100', 'native-v0101', 'native-v0102', 'native-v0103', 'native-v0110-navigation', 'native-v0110', 'native-v0120', 'native-v0130', 'native-v0131']};
     report.syntheticItemIDs = items.map(item => item.id);
     if (config.openManager) {
       const preview=await Zotero.SmartTags.openManager({page:'activity'});

@@ -26,6 +26,13 @@ function memoryIO() {
   };
 }
 
+test('large unchanged state is deduplicated without retaining its validation text between saves',async()=>{
+  const mem=memoryIO(),state={schemaVersion:1,count:1,payload:'x'.repeat(8*1024*1024)};mem.files.set('state.json',JSON.stringify(state));let validations=0;
+  const store=new AtomicStore(mem.io,'state.json',()=>state,(value):value is typeof state=>{validations++;return valid(value)&&typeof (value as typeof state).payload==='string';});
+  const loaded=await store.load(),before=validations;await store.save(loaded);assert.equal(validations,before);assert.equal(mem.writes.length,0);
+  await store.save(loaded);assert.equal(validations,before+1);assert.equal(mem.writes.length,0);
+});
+
 test('transient Windows replacement locks retry the same serialized generation without losing its backup',async()=>{
   const mem=memoryIO();mem.files.set('state.json',JSON.stringify({schemaVersion:1,count:1}));
   const nativeWrite=mem.io.writeAtomic;let failures=2;
@@ -97,6 +104,37 @@ test('queued saves capture their own snapshots and serialize current/previous ge
   assert.equal(JSON.parse(mem.files.get('state.json')!).count, 2);
   assert.equal(JSON.parse(mem.files.get('state.json.bak')!).count, 1);
   assert.deepEqual(mem.writes, ['state.json', 'state.json.bak', 'state.json']);
+});
+
+test('unchanged validated bytes skip backup rotation and repeated structural validation',async()=>{
+  const mem=memoryIO(),original=JSON.stringify({schemaVersion:1,count:4}),backup=JSON.stringify({schemaVersion:1,count:3});mem.files.set('state.json',original);mem.files.set('state.json.bak',backup);
+  let validations=0;const validate=(value:unknown):value is State=>{validations++;return valid(value);};
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),validate);await store.load();const loadedValidations=validations;
+  await store.save({schemaVersion:1,count:4});await store.save({schemaVersion:1,count:4});await store.flush();
+  assert.equal(validations,loadedValidations);assert.deepEqual(mem.writes,[]);assert.equal(mem.files.get('state.json'),original);assert.equal(mem.files.get('state.json.bak'),backup);
+  mem.files.set('state.json',JSON.stringify({schemaVersion:1,count:8}));await store.save({schemaVersion:1,count:4});assert.equal(validations,loadedValidations+1);assert.equal(JSON.parse(mem.files.get('state.json.bak')!).count,8);
+  await store.save({schemaVersion:1,count:4});assert.equal(validations,loadedValidations+2,'A newly written generation is inspected before it is trusted');assert.deepEqual(mem.writes,['state.json.bak','state.json']);
+});
+
+test('a newer external generation invalidates cached current validation and is never overwritten',async()=>{
+  const mem=memoryIO(),original=JSON.stringify({schemaVersion:1,count:4});mem.files.set('state.json',original);
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),valid);await store.load();
+  const newer=JSON.stringify({schemaVersion:2,count:8});mem.files.set('state.json',newer);
+  await assert.rejects(store.save({schemaVersion:1,count:4}),/Refusing to replace newer/);assert.equal(mem.files.get('state.json'),newer);assert.deepEqual(mem.writes,[]);
+});
+
+test('cached validation never lets corrupt external bytes replace a valid backup',async()=>{
+  const mem=memoryIO(),original=JSON.stringify({schemaVersion:1,count:4}),backup=JSON.stringify({schemaVersion:1,count:3});mem.files.set('state.json',original);mem.files.set('state.json.bak',backup);
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),valid);await store.load();
+  mem.files.set('state.json',JSON.stringify({schemaVersion:1,count:'corrupt'}));await store.save({schemaVersion:1,count:5});
+  assert.equal(mem.files.get('state.json.bak'),backup);assert.equal(JSON.parse(mem.files.get('state.json')!).count,5);assert.deepEqual(mem.writes,['state.json']);
+});
+
+test('own writes are not considered valid merely because persistence succeeded',async()=>{
+  const mem=memoryIO(),original=JSON.stringify({schemaVersion:1,count:4});mem.files.set('state.json',original);
+  const store=new AtomicStore(mem.io,'state.json',()=>({schemaVersion:1,count:0}),valid);await store.load();
+  await store.save({schemaVersion:1,count:'invalid'} as unknown as State);await store.save({schemaVersion:1,count:6});
+  assert.equal(mem.files.get('state.json.bak'),original);assert.equal(JSON.parse(mem.files.get('state.json')!).count,6);assert.deepEqual(mem.writes,['state.json.bak','state.json','state.json']);
 });
 
 test('a failed current write preserves the old state and subsequent saves can recover', async () => {

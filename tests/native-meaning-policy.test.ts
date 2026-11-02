@@ -4,7 +4,7 @@ import {fingerprint,paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import type {ReconciliationInput} from '../src/tag-reconciliation.ts';
 import {isPersonalNativeTagName,validNativeTagTreatments} from '../src/native-meaning-policy.ts';
-import {acceptNativeTagDefinitionResult,automaticNativeTagDefinitionChoiceIds,autoSelectClearNativeTagDefinitions,canUseNativeTagMeaning,clearNativeTagDefinitionChoiceIds,compileNativeTagDefinitions,compileNativeTagMeanings,continueNativeTagDefinitionWork,createNativeTagDefinitionWork,failNativeTagDefinitionTask,nativeTagDefinitionMeaningChosen,nativeTagMeaningNameConflicts,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,refreshUndispatchedNativeTagDefinitionWork,resolveClearNativeTagDefinitionChoices,resolveNativeTagDefinition,resolveNativeTagTreatment,resumeNativeTagDefinitionWork,settleNativeTagMeaningAdmissions,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
+import {acceptNativeTagDefinitionResult,automaticNativeTagDefinitionChoiceIds,autoSelectClearNativeTagDefinitions,canUseNativeTagMeaning,clearNativeTagDefinitionChoiceIds,compileNativeTagDefinitions,compileNativeTagMeanings,continueNativeTagDefinitionWork,createNativeTagDefinitionWork,createNativeTagMeaningNameConflictResolver,failNativeTagDefinitionTask,nativeTagDefinitionMeaningChosen,nativeTagMeaningNameConflicts,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,refreshUndispatchedNativeTagDefinitionWork,resolveClearNativeTagDefinitionChoices,resolveNativeTagDefinition,resolveNativeTagTreatment,resumeNativeTagDefinitionWork,settleNativeTagMeaningAdmissions,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 import type {NativeTagDefinitionOptions,NativeTagDefinitionRequest,NativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 
 const clone=<T>(value:T):T=>structuredClone(value);
@@ -183,4 +183,23 @@ test('a compatible current saved meaning is reused without a conflict or any sav
 test('a current edit to the allocated tag identity becomes a saved-meaning conflict',()=>{
   const {data,work,entry}=chosenCollisionCandidate(),edited:TagDefinition={...clone(entry.definition!),description:'A researcher changed the meaning after this proposal.',aliases:['researcher alias']},current={...clone(data),definitions:[edited]};
   assert.deepEqual(nativeTagMeaningNameConflicts(work,entry.id,current.definitions),[edited]);const compiled=compileNativeTagMeanings(work,current,[entry.id]);assert.equal(compiled.entries.length,0);assert.match(compiled.questions[0].message,/identity was edited/);assert.deepEqual(compiled.afterDefinitions,{});
+});
+
+test('one conflict lookup operation indexes saved meanings once while finding every current owner',()=>{
+  const {work,entry}=chosenCollisionCandidate(),candidate=entry.definition!;let descriptionReads=0;
+  const definitions:TagDefinition[]=Array.from({length:168},(_,index)=>{
+    const saved:TagDefinition={...clone(candidate),id:`saved-index-${index}`,name:`Candidate topic ${index}`,fullName:`Candidate topic ${index}`,aliases:[]};
+    Object.defineProperty(saved,'description',{enumerable:true,get(){descriptionReads++;return `A distinct saved scientific meaning ${index}.`;}});return saved;
+  });
+  work.entries=Array.from({length:44},(_,index)=>({...clone(entry),id:`proposal-index-${index}`,tagId:`allocated-index-${index}`,sourceName:`Source topic ${index}`,definition:{...clone(candidate),id:`allocated-index-${index}`,name:`Candidate topic ${index}`,fullName:`Candidate topic ${index}`}}));
+  const before=fingerprint(work),resolve=createNativeTagMeaningNameConflictResolver(definitions);assert.equal(descriptionReads,definitions.length);
+  for(const current of work.entries)assert.deepEqual(resolve(work,current.id).map(tag=>tag.id),[`saved-index-${work.entries.indexOf(current)}`]);
+  assert.equal(descriptionReads,definitions.length,'checking more proposals must not read every saved meaning again');assert.equal(fingerprint(work),before);
+});
+
+test('fresh conflict lookup operations detect edited targets without changing the frozen proposal',()=>{
+  const {work,entry}=chosenCollisionCandidate(),saved:TagDefinition={...clone(entry.definition!),id:'saved-target',aliases:['original alias']};entry.definition=clone(saved);entry.targetTagId=saved.id;
+  const before=fingerprint(work),definitions=[saved],resolve=createNativeTagMeaningNameConflictResolver(definitions);assert.deepEqual(resolve(work,entry.id),[]);
+  saved.aliases.push('a researcher-added alias');assert.deepEqual(createNativeTagMeaningNameConflictResolver(definitions)(work,entry.id),[saved]);assert.equal(fingerprint(work),before);
+  definitions.splice(0,1);assert.deepEqual(createNativeTagMeaningNameConflictResolver(definitions)(work,entry.id),[]);
 });

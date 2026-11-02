@@ -18,6 +18,7 @@ function stateVersion(value:unknown):number|undefined {
 
 export class AtomicStore<T extends {schemaVersion: number}> {
   private tail: Promise<void> = Promise.resolve();
+  private currentValidation?: {text: string; valid: boolean};
   recovered = false;
   private io: StateIO;
   private path: string;
@@ -58,6 +59,7 @@ export class AtomicStore<T extends {schemaVersion: number}> {
   }
   async load(): Promise<T> {
     this.recovered = false; this.migrated = false;
+    this.currentValidation = undefined;
     for (const path of [this.path, this.path + '.bak']) {
       if (!await this.io.exists(path)) continue;
       let original: string, parsed: unknown, isLegacy: boolean;
@@ -87,6 +89,7 @@ export class AtomicStore<T extends {schemaVersion: number}> {
         await this.writeAtomic(this.path, JSON.stringify(value));
         this.migrated = true;
       }
+      if (path === this.path && !isLegacy && !this.migrated) this.currentValidation = {text: original, valid: true};
       this.recovered = path.endsWith('.bak');
       return value;
     }
@@ -99,14 +102,28 @@ export class AtomicStore<T extends {schemaVersion: number}> {
       if (await this.io.exists(this.path)) {
         const old = await this.io.read(this.path);
         let validOld = false;
-        let parsed:unknown;
-        try { parsed=JSON.parse(old); } catch { /* Keep the last valid backup for an invalid current generation. */ }
-        const version=stateVersion(parsed);
-        if(version!==undefined&&version>value.schemaVersion)throw new NewerStateError(`Refusing to replace newer Smart Tags schema ${version} with schema ${value.schemaVersion}.`);
-        if(parsed!==undefined)try{validOld=this.validate(parsed);}catch{/* A malformed current generation must not overwrite its valid backup. */}
-        if (validOld) await this.writeAtomic(this.path + '.bak', old);
+        if (this.currentValidation?.text === old) validOld = this.currentValidation.valid;
+        else {
+          let parsed:unknown;
+          try { parsed=JSON.parse(old); } catch { /* Keep the last valid backup for an invalid current generation. */ }
+          const version=stateVersion(parsed);
+          if(version!==undefined&&version>value.schemaVersion)throw new NewerStateError(`Refusing to replace newer Smart Tags schema ${version} with schema ${value.schemaVersion}.`);
+          if(parsed!==undefined)try{validOld=this.validate(parsed);}catch{/* A malformed current generation must not overwrite its valid backup. */}
+          this.currentValidation = {text: old, valid: validOld};
+        }
+        if (validOld) {
+          if (old === text) {
+            // Avoid retaining a large JSON copy throughout Zotero's idle time.
+            if(old.length>8*1024*1024)this.currentValidation=undefined;
+            return;
+          }
+          await this.writeAtomic(this.path + '.bak', old);
+        }
       }
       await this.writeAtomic(this.path, text);
+      // A successful write is not structural validation. Release the prior generation
+      // and inspect these new bytes before ever using them as a recovery backup.
+      this.currentValidation = undefined;
     });
     this.tail = next;
     return next;

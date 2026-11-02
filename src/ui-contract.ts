@@ -162,7 +162,6 @@ export interface ManagerSnapshot {
     assignmentPilotReady?: boolean;
     assignmentTagShelfId?: string;
   };
-  navigation?: { status: 'starting' | 'ready' | 'unavailable' | 'hidden'; mode?: 'tags' | 'collections'; message?: string };
   assignmentReview?: DisplayAssignmentReview;
   assignmentReviews?: DisplayAssignmentReview[];
   tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];

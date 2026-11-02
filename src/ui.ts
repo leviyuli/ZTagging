@@ -164,7 +164,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let settingsDraft: ManagerSettings | null = null;
   let settingsDirty = false;
   let settingsTagsOpen = false;
-  let settingsNavigationOpen = false;
+  let settingsIntegrationOpen = false;
   let settingsTransfersOpen = false;
   let settingsValidation: { key: keyof ManagerSettings; message: string } | null = null;
   let customModelInput: boolean | null = null;
@@ -1832,8 +1832,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       h('div', 'section-gap', numberField('maxOutputTokens', 'API output-token limit', 'This request limit is used for API-key requests.', '1')));
     const vocabulary = h('div', 'field-grid', numberField('coreConceptLimit', 'Maximum tags for an initial build', 'An upper limit, not a quota. Compact vocabularies keep supported, distinct topics.', '1'), numberField('extensionTagTarget', 'Maximum new tags per build', 'Extensions keep saved definitions and add up to this many supported topics.', '1'));
     const transfers = details('Import, export, and previous tag lists',settingsTransfersOpen,value => { settingsTransfersOpen = value; },() => h('div','',h('div', 'actions', button('Import tags…', () => run('import-vocabulary', undefined, 'Tags imported.')), button('Export tags…', () => run('export-vocabulary'))), s.tagPreparation ? h('div', 'section-gap', button('Export analysis with paper text…', () => run('export-tag-analysis', { id: s.tagPreparation!.id })), h('p', 'card-description', 'This private export includes paper text and quotations.')) : null,...(s.taxonomyArchives || []).map(archive => h('div', 'inline section-gap', h('span', '', archive.date), button('Open previous tag list', () => run('restore-taxonomy', { id: archive.id }, 'Previous tag list opened. Check it before applying.'), 'small')))));
-    const navigationLabels = { starting: 'Starting', ready: 'Available', hidden: 'Sidebar hidden', unavailable: 'Unavailable in this window' };
-    const navigation = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('p', '', `Library navigation: ${s.navigation ? navigationLabels[s.navigation.status] : 'Open Zotero to check'}`), s.navigation?.message ? h('p', 'card-description', humanMessage(s.navigation.message)) : null, h('div', 'actions', button('Show tag navigation', () => run('show-tag-navigation')), button('Restore navigation', () => run('show-tag-navigation', { restore: true })), button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
+    const integrationStatus = h('div', '', h('p', '', s.pluginVersion ? `Installed version ${s.pluginVersion}` : 'Version information is available when opened in Zotero.'), h('div', 'actions', button('Check for updates', () => run('check-plugin-updates'))), h('p', 'card-description', 'Updates are managed by Zotero’s Plugins window. Your library and saved settings stay in place.'));
     const saveButton = h('button',connectionOnly ? 'quiet' : 'primary','Save settings');saveButton.type = 'submit';saveButton.id = 'save-settings';saveButton.disabled = busy;
     const discard = button('Discard changes',() => { settingsDraft = { ...currentState().settings };settingsDirty = false;settingsValidation = null;customModelInput = null;render();doc.getElementById(connectionOnly ? 'settings-provider' : 'details-tag-limits')?.focus(); },'quiet');discard.id = 'discard-settings-changes';
     const dirty = h('span','muted','Unsaved changes');dirty.setAttribute('role','status');
@@ -1848,7 +1847,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const connectionSummary = h('section','settings-row',h('div','',h('h2','','AI connection'),h('p','card-description',`${savedProviderName} · ${s.settings.model || 'Choose a model'}`),h('p','card-description',connectionReady(s) ? 'Connected' : 'Connection needed')),button('AI connection and budget',() => nav('connection'),connectionReady(s) ? '' : 'primary'));
     const incoming = h('section','settings-row',h('div','',h('h2','','New papers'),h('p','card-description',s.settings.autoAssign ? 'Automatic tagging is on.' : 'Automatic tagging is off.')),button('Routine assignment',() => { assignmentView = 'setup';nav('assignment'); }));
     const tags = details('Tag limits',settingsTagsOpen,value => { settingsTagsOpen = value; },() => vocabulary);tags.id = 'settings-tags';
-    const integration = details('Zotero integration',settingsNavigationOpen,value => { settingsNavigationOpen = value; },() => navigation);integration.id = 'settings-navigation';
+    const integration = details('Zotero integration',settingsIntegrationOpen,value => { settingsIntegrationOpen = value; },() => integrationStatus);integration.id = 'settings-integration';
     const data = details('Data',dataDetailsOpen,value => { dataDetailsOpen = value; },() => h('div','section-gap',button('Reset paper analysis…',() => { modal = { kind: 'reset-analysis' };render(); },'quiet')));data.id = 'settings-data';
     form.append(connectionSummary,incoming,tags,integration,transfers,data,feedback);if (save) form.append(save);return form;
   }
