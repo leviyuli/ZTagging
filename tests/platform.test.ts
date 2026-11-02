@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SecureCredentials, ZoteroHost, registerOAuthCallback, sameTags } from '../src/platform.ts';
 import { buildMetadataPreview, reverseMetadataPatch } from '../src/paper-recovery.ts';
 import type { MetadataCreator } from '../src/paper-recovery.ts';
+import type {ConceptDefinition} from '../src/concept-filter.ts';
 
 function globals(t: any, values: Record<string, unknown>) {
   const previous = new Map(Object.keys(values).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -19,6 +20,16 @@ function item(id: number, options: any = {}) {
     getAttachments: () => options.attachments ?? [],
   };
 }
+
+test('saved concept searches refuse per-paper masks that Zotero cannot reload and preserve unmasked searches',async t=>{
+  let reads=0;const saved:{name:string;conditions:unknown[][]}[]=[];
+  class Search {name='';conditions:unknown[][]=[];addCondition(...values:unknown[]){this.conditions.push(values);}async saveTx(){saved.push({name:this.name,conditions:this.conditions});}}
+  globals(t,{Zotero:{Libraries:{userLibraryID:1},Search,Tags:{getAll:async()=>{reads++;return [{tag:'FC'},{tag:'EIS'}];}}}});
+  const definition=(id:string):ConceptDefinition=>({id,name:id.toUpperCase(),description:'Scientific meaning.',facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],broaderIds:[],relatedIds:[],custom:false,status:'approved'}),fc=definition('fc'),eis=definition('eis');fc.nativeBindingExclusions={'1:KEY1':['FC']};
+  const host=new ZoteroHost();await assert.rejects(host.saveConceptSearch('Blocked FC',{mode:'all',selections:[{conceptId:'fc'}]},[fc,eis]),/Zotero saved searches cannot retain/);assert.equal(reads,0);assert.equal(saved.length,0);
+  await host.saveConceptSearch('EIS only',{mode:'all',selections:[{conceptId:'eis'}]},[fc,eis]);assert.equal(saved[0].name,'EIS only');assert.ok(saved[0].conditions.some(values=>values[0]==='tag'&&values[2]==='EIS'));
+  await host.saveConceptSearch('Legacy FC',{mode:'all',selections:[{conceptId:'fc'}]},[{...fc,nativeBindingExclusions:undefined},eis]);assert.equal(saved[1].name,'Legacy FC');assert.equal(reads,2);
+});
 
 test('host limits scans to eligible personal-library parent items and preserves source tag roles', async t => {
   const values = [item(1), item(2, { libraryID: 2 }), item(3, { deleted: true }), item(4, { regular: false }), item(1)];

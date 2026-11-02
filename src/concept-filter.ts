@@ -1,9 +1,13 @@
 import { canonicalTagKey } from './core.ts';
 import type { TagDefinition } from './core.ts';
+import {nativePaperBindingAllows} from './native-binding.ts';
+import type {NativeBindingProjection,NativePaperBindingExclusions} from './native-binding.ts';
 
+export type ConceptDefinition=TagDefinition&NativeBindingProjection;
 export interface ConceptSelection { conceptId:string; contextId?:string }
 export interface ConceptFilter { mode:'all'|'any'; selections:ConceptSelection[] }
-export interface ConceptFilterClause { groups:string[][] }
+export interface ConceptFilterBinding {tagId:string;names:string[];nativeBindingExclusions?:NativePaperBindingExclusions}
+export interface ConceptFilterClause { groups:string[][];bindings?:ConceptFilterBinding[][] }
 export interface CompiledConceptFilter { mode:'all'|'any'; clauses:ConceptFilterClause[]; empty:boolean }
 
 /** Literal names are retained for Zotero's case-sensitive native tag-is operator. */
@@ -30,33 +34,41 @@ function normalizedClauses(filter:CompiledConceptFilter):string[][][] {
 }
 
 /** Each selection is a compound clause: concept AND optional context; outer All/Any combines clauses. */
-export function compileConceptFilter(definitions:readonly TagDefinition[],filter:ConceptFilter):CompiledConceptFilter {
+export function compileConceptFilter(definitions:readonly ConceptDefinition[],filter:ConceptFilter):CompiledConceptFilter {
   const mode=filter.mode==='any'?'any':'all';
   if(!Array.isArray(filter.selections)||!filter.selections.length)return {mode,clauses:[],empty:false};
   const byId=new Map(definitions.filter(tag=>tag.status==='approved').map(tag=>[tag.id,tag]));
-  const expand=(id:string)=>[...new Set(descendantIds(id,definitions).flatMap(child=>equivalentTagNames(byId.get(child)!)))];
+  const expand=(id:string):ConceptFilterBinding[]=>descendantIds(id,definitions).map(tagId=>{const tag=byId.get(tagId)!;return {tagId,names:equivalentTagNames(tag),...(tag.nativeBindingExclusions?{nativeBindingExclusions:Object.fromEntries(Object.entries(tag.nativeBindingExclusions).map(([paperId,values])=>[paperId,[...values]]))}:{})};});
   const clauses:ConceptFilterClause[]=[];
   for(const selection of filter.selections){
-    const groups=[expand(selection.conceptId)];
-    if(selection.contextId!==undefined)groups.push(expand(selection.contextId));
+    const bindings=[expand(selection.conceptId)];
+    if(selection.contextId!==undefined)bindings.push(expand(selection.contextId));
+    const groups=bindings.map(group=>[...new Set(group.flatMap(binding=>binding.names))]);
     if(groups.some(group=>!group.length)){
       if(mode==='all')return {mode,clauses:[],empty:true};
       continue;
     }
-    clauses.push({groups});
+    clauses.push({groups,...(bindings.some(group=>group.some(binding=>Object.values(binding.nativeBindingExclusions??{}).some(values=>values.length)))?{bindings}:{})});
   }
   const compiled:CompiledConceptFilter={mode,clauses,empty:!clauses.length};normalizedClauses(compiled);return compiled;
 }
 
-export function matchCompiledConceptFilter(nativeNames:readonly string[],compiled:CompiledConceptFilter):boolean {
+const bindingKeys=new WeakMap<ConceptFilterBinding,Set<string>>();
+function matchesBinding(binding:ConceptFilterBinding,nativeNames:readonly string[],paperId?:string):boolean {
+  let keys=bindingKeys.get(binding);if(!keys){keys=new Set(binding.names.map(canonicalTagKey));bindingKeys.set(binding,keys);}
+  return nativeNames.some(name=>keys!.has(canonicalTagKey(name))&&nativePaperBindingAllows(paperId,name,binding.nativeBindingExclusions));
+}
+
+export function matchCompiledConceptFilter(nativeNames:readonly string[],compiled:CompiledConceptFilter,paperId?:string):boolean {
   if(compiled.empty)return false;
   if(!compiled.clauses.length)return true;
   const names=new Set(nativeNames.map(canonicalTagKey));
   const clauses=normalizedClauses(compiled);
   const matches=(groups:string[][])=>groups.every(group=>group.some(name=>names.has(name)));
-  return compiled.mode==='all'?clauses.every(matches):clauses.some(matches);
+  const clauseMatches=(clause:ConceptFilterClause,index:number)=>clause.bindings?clause.bindings.every(group=>group.some(binding=>matchesBinding(binding,nativeNames,paperId))):matches(clauses[index]);
+  return compiled.mode==='all'?compiled.clauses.every(clauseMatches):compiled.clauses.some(clauseMatches);
 }
 
-export function matchConceptFilter(nativeNames:readonly string[],definitions:readonly TagDefinition[],filter:ConceptFilter):boolean {
-  return matchCompiledConceptFilter(nativeNames,compileConceptFilter(definitions,filter));
+export function matchConceptFilter(nativeNames:readonly string[],definitions:readonly ConceptDefinition[],filter:ConceptFilter,paperId?:string):boolean {
+  return matchCompiledConceptFilter(nativeNames,compileConceptFilter(definitions,filter),paperId);
 }

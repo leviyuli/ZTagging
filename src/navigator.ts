@@ -22,7 +22,7 @@ export interface NavigatorHandle {
   readonly available: boolean;
   readonly message: string;
 }
-export interface LibraryTagItem { itemID: number; names: string[] }
+export interface LibraryTagItem { itemID: number; paperId?:string; names: string[] }
 
 export function navigatorReady(win: any): boolean {
   const pane = win.ZoteroPane;
@@ -42,7 +42,7 @@ export async function readLibraryTagItems(): Promise<LibraryTagItem[]> {
   const unique = new Map<number, LibraryTagItem>();
   for (const item of items) {
     if (!item?.isRegularItem?.() || item.deleted || item.libraryID !== libraryID || item.parentItemID) continue;
-    unique.set(item.id, { itemID: item.id, names: item.getTags().map((tag: any) => tag.tag) });
+    unique.set(item.id, { itemID: item.id, ...(typeof item.key==='string'&&item.key?{paperId:`${item.libraryID}:${item.key}`} : {}), names: item.getTags().map((tag: any) => tag.tag) });
   }
   return [...unique.values()];
 }
@@ -140,7 +140,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     if (counts.has(key)) return counts.get(key)!;
     const single: ConceptFilter = { mode: 'all', selections: [selection] };
     const compiled = compileConceptFilter(definitions(), single);
-    const value = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled)).length;
+    const value = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled,item.paperId)).length;
     counts.set(key, value);
     return value;
   }
@@ -262,7 +262,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
     }
     tools.append(el('span', 'smart-tags-combine-label', 'Match'), all, any);
     const compiled = compileConceptFilter(definitions(), filter);
-    const total = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled)).length;
+    const total = libraryItems.filter(item => matchCompiledConceptFilter(item.names, compiled,item.paperId)).length;
     tools.append(el('span', 'smart-tags-result-count', `${total} papers`));
     content.append(search, tools);
     if (filter.selections.length) {
@@ -349,7 +349,7 @@ export function mountNavigator(win: any, api: ManagerAPI, options: NavigatorOpti
       if (destroyed || request !== refreshGeneration) return;
       const wasReady = !!snapshot?.taxonomyReady;
       const priorKey = definitionKey;
-      definitionKey = JSON.stringify(next.tags.map(tag => [tag.id, tag.name, tag.fullName, tag.aliases, tag.broaderIds, tag.relatedIds, tag.status, tag.custom]));
+      definitionKey = JSON.stringify(next.tags.map(tag => [tag.id, tag.name, tag.fullName, tag.aliases, tag.broaderIds, tag.relatedIds, tag.status, tag.custom, tag.nativeBindingExclusions]));
       snapshot = next; libraryItems = items;
       if (indexGeneration === nativeDataGeneration) nativeDataDirty = false;
       counts.clear();

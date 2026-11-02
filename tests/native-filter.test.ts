@@ -39,7 +39,7 @@ function install() {
   (globalThis as any).Zotero = { Libraries: { userLibraryID: 1 }, Search, CollectionTreeRow: Row };
 }
 /** Evaluate native condition groups to catch accidental flattening of contextual Any clauses. */
-function evaluate(search: Search, names: string[]) {
+function evaluate(search: Search, names: string[],paperKey='') {
   const root: any = { mode: 'all', children: [] };
   const stack = [root];
   for (const [condition, operator, value] of search.conditions) {
@@ -48,12 +48,23 @@ function evaluate(search: Search, names: string[]) {
     else if (condition === 'groupEnd') stack.pop();
     else if (condition === 'joinMode') group.mode = operator;
     else if (condition === 'tag') group.children.push(names.includes(value));
+    else if (condition === 'key') group.children.push(operator==='isNot'?paperKey!==value:paperKey===value);
     else if (condition === 'itemID') group.children.push(value !== 0);
   }
   assert.equal(stack.length, 1, 'native groups must balance');
   const match = (node: any): boolean => typeof node === 'boolean' ? node : node.mode === 'any' ? node.children.some(match) : node.children.every(match);
   return match(root);
 }
+
+test('native queries exclude masked raw labels per alternative while preserving aliases and descendants',()=>{
+  install();const masked=definitions.map(value=>({...value,...(value.id==='fc'?{aliases:['Fuel cells'],nativeBindingExclusions:{'1:BAD':['FC','Fuel cells'],'2:OTHER':['FC']}}:{})}));
+  const search=buildConceptSearch(masked,{mode:'all',selections:[{conceptId:'fc'}]},1,['Fuel cells']);
+  assert.equal(evaluate(search,['FC'],'BAD'),false);assert.equal(evaluate(search,['Fuel cells'],'BAD'),false);assert.equal(evaluate(search,['fuel cell'],'BAD'),true);assert.equal(evaluate(search,['PEMFC'],'BAD'),true);
+  assert.equal(evaluate(search,['FC'],'GOOD'),true);assert.equal(evaluate(search,['FC'],'OTHER'),true,'a mask from another library does not affect this library key');
+  const compound=buildConceptSearch(masked,{mode:'any',selections:[{conceptId:'detail',contextId:'fc'},{conceptId:'eis'}]},1,['Fuel cells']);
+  assert.equal(evaluate(compound,['Schottky barrier','FC'],'BAD'),false);assert.equal(evaluate(compound,['Schottky barrier','PEMFC'],'BAD'),true);assert.equal(evaluate(compound,['EIS'],'BAD'),true);
+  assert.equal(evaluate(buildConceptSearch(masked,{mode:'all',selections:[]},1),['FC'],'BAD'),true);
+});
 
 function windowHarness(initial = '"quoted native phrase"') {
   const first = { id: 'C10', tags: new Set(['native-tag']), searchText: initial, searchMode: 'everything',

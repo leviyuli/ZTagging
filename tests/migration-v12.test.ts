@@ -44,17 +44,17 @@ function memory(original:Uint8Array) {
 
 test('schema-eleven migration preserves all unfinished paid work without adding automatic policies or admitting definitions',()=>{
   const old=schemaEleven(),before=structuredClone(old),next=migrateState(old);
-  assert.equal(validLegacyState(old),true);assert.equal(validState(old),false);assert.equal(next.schemaVersion,12);assert.equal(validState(next),true);
-  assert.deepEqual(next,{...before,schemaVersion:12});assert.deepEqual(old,before);assert.equal(migrateState(next),next);
+  assert.equal(validLegacyState(old),true);assert.equal(validState(old),false);assert.equal(next.schemaVersion,13);assert.equal(validState(next),true);
+  assert.deepEqual(next,{...before,schemaVersion:13});assert.deepEqual(old,before);assert.equal(migrateState(next),next);
   assert.equal(next.run!.processingPolicy,undefined);assert.equal(next.run!.selection!.adaptivePolicyVersion,undefined);assert.equal(next.tagPreparation!.processingPolicy,undefined);assert.equal(next.tagPreparation!.admissions,undefined);assert.equal(next.nativeDefinitionPreparation!.processingPolicy,undefined);assert.equal(next.maintenanceTasks![0].run.processingPolicy,undefined);
   assert.equal(next.run!.spentUSD,0.85);assert.equal(next.maintenanceTasks![0].run.spentUSD,0.12);assert.equal(fingerprint(next.facts),fingerprint(before.facts));assert.deepEqual(next.tags,before.tags);
 });
 
-test('schema-twelve migration retains exact original bytes and older backups before its only state write',async()=>{
+test('current migration retains exact original bytes and older backups before its only state write',async()=>{
   const old=schemaEleven(),original=bytes(old),mem=memory(original),occupied=bytes({historical:'Another pre-twelve source'}),earlier=bytes({historical:'Original pre-eleven source'});
-  mem.files.set('state.json.pre-v12.json',occupied);mem.files.set('state.json.pre-v11.json',earlier);
-  const store=new AtomicStore(mem.io,'state.json',initialState,validState,value=>{assert.deepEqual(mem.files.get('state.json.pre-v12.1.json'),original);return migrateState(value);},validLegacyState),next=await store.load();
-  assert.equal(next.schemaVersion,12);assert.equal(store.migrated,true);assert.deepEqual(mem.copies,['state.json.pre-v12.1.json']);assert.deepEqual(mem.writes,['state.json']);assert.deepEqual(mem.files.get('state.json.pre-v12.json'),occupied);assert.deepEqual(mem.files.get('state.json.pre-v11.json'),earlier);
+  mem.files.set('state.json.pre-v13.json',occupied);mem.files.set('state.json.pre-v11.json',earlier);
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,value=>{assert.deepEqual(mem.files.get('state.json.pre-v13.1.json'),original);return migrateState(value);},validLegacyState),next=await store.load();
+  assert.equal(next.schemaVersion,13);assert.equal(store.migrated,true);assert.deepEqual(mem.copies,['state.json.pre-v13.1.json']);assert.deepEqual(mem.writes,['state.json']);assert.deepEqual(mem.files.get('state.json.pre-v13.json'),occupied);assert.deepEqual(mem.files.get('state.json.pre-v11.json'),earlier);
   const reopened=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);assert.deepEqual(await reopened.load(),next);assert.equal(reopened.migrated,false);assert.equal(mem.copies.length,1);assert.equal(mem.writes.length,1);
 });
 
@@ -65,17 +65,17 @@ test('initializing migrated unfinished work neither sends model requests nor wri
   assert.equal(modelCalls,0);assert.equal(nativeWrites,0);assert.equal(fingerprint(state.nativeTags),nativeBefore);assert.equal(fingerprint(state.tags),tagsBefore);assert.equal(state.run!.processingPolicy,undefined);assert.equal(state.tagPreparation!.admissions,undefined);assert.equal(validState(state),true);
 });
 
-test('schema-twelve structural validation rejects corrupt new policies, admission metadata, and review states',()=>{
+test('current structural validation rejects corrupt policies, admission metadata, and review states',()=>{
   const good=migrateState(schemaEleven());assert.equal(validState(good),true);
   for(const mutate of [(state:any)=>state.run.processingPolicy='always',(state:any)=>state.run.selection.adaptivePolicyVersion=2,(state:any)=>state.nativeDefinitionPreparation.processingPolicy='always',(state:any)=>state.tagPreparation.admissions={tag:{definitionFingerprint:'meaning',changeId:0}},(state:any)=>state.reviewItems=[{id:'review',conditionFingerprint:'condition',taskId:'task',label:'Meaning',kind:'definition',state:'invalid',ownerPage:'cleanup'}],(state:any)=>state.automaticSuppressions=[42]]){
     const broken=structuredClone(good);mutate(broken);assert.equal(validState(broken),false);
   }
 });
 
-test('older applications refuse schema-twelve data and current applications refuse newer data despite older valid backups',async()=>{
+test('older applications refuse current data and current applications refuse newer data despite older valid backups',async()=>{
   const old=schemaEleven(),current=migrateState(old),mem=memory(bytes(current));mem.files.set('state.json.bak',bytes(old));
   const validEleven=(value:unknown):value is typeof old=>!!value&&typeof value==='object'&&(value as {schemaVersion?:unknown}).schemaVersion===11;
-  const older=new AtomicStore(mem.io,'state.json',()=>structuredClone(old),validEleven);await assert.rejects(older.load(),/newer schema 12/);await assert.rejects(older.save(old),/Refusing to replace newer/);assert.equal(mem.writes.length,0);
-  const future=bytes({...current,schemaVersion:13});mem.files.set('state.json',future);mem.files.set('state.json.bak',bytes(current));
-  const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/newer schema 13/);await assert.rejects(store.save(current),/Refusing to replace newer/);assert.deepEqual(mem.files.get('state.json'),future);assert.equal(mem.copies.length,0);assert.equal(mem.writes.length,0);
+  const older=new AtomicStore(mem.io,'state.json',()=>structuredClone(old),validEleven);await assert.rejects(older.load(),/newer schema 13/);await assert.rejects(older.save(old),/Refusing to replace newer/);assert.equal(mem.writes.length,0);
+  const future=bytes({...current,schemaVersion:14});mem.files.set('state.json',future);mem.files.set('state.json.bak',bytes(current));
+  const store=new AtomicStore(mem.io,'state.json',initialState,validState,migrateState,validLegacyState);await assert.rejects(store.load(),/newer schema 14/);await assert.rejects(store.save(current),/Refusing to replace newer/);assert.deepEqual(mem.files.get('state.json'),future);assert.equal(mem.copies.length,0);assert.equal(mem.writes.length,0);
 });

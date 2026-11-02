@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.5 — 2026-11-02
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5-source.zip)
+
+- Select and save a single clear, supported scientific meaning during new processing runs. Other AI proposals offer Use or Skip, with an explicit AI retry when no usable definition is available. Editing remains optional.
+- Save the scientific meaning independently of old native paper labels. Keep unverified old associations out of scientific filtering and counts until a paper-specific match establishes them; retain original labels and AI evidence without asking users to review papers.
+- Ask how to treat personal labels such as Important. Remember Keep as personal, leave the label undefined for scientific matching, and keep its papers eligible for other scientific tags.
+- Preserve native meaning drafts exactly when opening the editor. An unchanged Save no longer adds an alternate name that invalidates completed source checks or schedules new requests.
+- Introduce schema 13 with an exact pre-v13 backup. Migration preserves old processing policies and paid progress without accepting meanings, classifying papers or contacting AI.
+
 ## 1.0.4 — 2026-11-01
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4-source.zip)

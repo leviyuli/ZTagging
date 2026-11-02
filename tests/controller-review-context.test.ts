@@ -78,11 +78,11 @@ test('a chosen native scope survives restart and repeated choices without replac
   const entry=review.work.entries[0],row=(await h.app.snapshot()).nativeDefinitionPreparation!.rows[0],task=h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!,item=h.state.reviewItems!.find(item=>item.workId===review.work.id)!;
   assert.deepEqual(row.chosenMeaning,{name:entry.definition!.name,description:entry.definition!.description});assert.equal(row.questionKind,'information');assert.deepEqual(row.choices,[]);
   assert.deepEqual(row.sourceIssues,[{paperId:entry.paperIds[1],status:'uncertain',reason:'The selected scope is clear, but this source needs more evidence.'}]);assert.equal(row.canRecheckSources,true);
-  const before=fingerprint(review.work),queue=fingerprint(task);h.state.settings.model='changed-settings-model';
+  const proofs=structuredClone(entry.judgments),paid=fingerprint(review.work.tasks),spent=task.run.spentUSD;h.state.settings.model='changed-settings-model';
   await h.app.invoke('answer-tag-meaning',{id:review.work.id,entryId:entry.id,choiceId});await h.app.invoke('resolve-review-item',{id:item.id,choiceId});await h.app.waitForIdle();
-  assert.equal(fingerprint(review.work),before);assert.equal(fingerprint(task),queue);assert.equal(h.requests(),0);assert.equal(h.writes(),0);
+  assert.deepEqual(review.work.entries[0].judgments,proofs);assert.equal(fingerprint(review.work.tasks),paid);assert.equal(task.run.spentUSD,spent);assert.ok(review.work.entries[0].meaningAdmission);assert.equal(h.requests(),0);assert.equal(h.writes(),0);
   const restored=new AppController(structuredClone(h.state),h.env);await restored.initialize();const shown=(await restored.snapshot()).nativeDefinitionPreparation!.rows[0];
-  assert.deepEqual(shown.chosenMeaning,row.chosenMeaning);assert.deepEqual(shown.sourceIssues,row.sourceIssues);assert.deepEqual(shown.choices,[]);assert.equal(shown.reviewId,item.id);assert.equal(h.requests(),0);assert.equal(validState(restored.state),true);
+  assert.deepEqual(shown.chosenMeaning,row.chosenMeaning);assert.deepEqual(shown.sourceIssues,row.sourceIssues);assert.deepEqual(shown.choices,[]);assert.equal(shown.applied,true);assert.equal(shown.reviewId,undefined);assert.equal(h.state.reviewItems!.find(value=>value.id===item.id)!.state,'resolved');assert.equal(h.requests(),0);assert.equal(validState(restored.state),true);
 });
 
 test('completed legacy scope loops normalize on restart and archive opening while preserving Later and paid work',async()=>{
@@ -95,9 +95,11 @@ test('completed legacy scope loops normalize on restart and archive opening whil
   const normalized=fingerprint(review.work);await h.app.initialize();assert.equal(fingerprint(review.work),normalized);
   const item=h.state.reviewItems!.find(item=>item.workId===review.work.id&&item.state==='deferred')!;
   h.state.nativeDefinitionHistory=[legacy];const other=nativeReview(h.state,'Electrode marker','other-meanings');h.state.nativeDefinitionPreparation=other;await h.app.save();
-  await h.app.invoke('resolve-review-item',{id:item.id,choiceId:answer!.choiceId});await assertNormalized();assert.equal(h.saves.at(-1)!.nativeDefinitionPreparation!.work.entries[0].questionDetails!.kind,'information');
+  await h.app.invoke('open-review-item',{id:item.id});await assertNormalized();assert.equal(h.saves.at(-1)!.nativeDefinitionPreparation!.work.entries[0].questionDetails!.kind,'information');
+  await h.app.invoke('resolve-review-item',{id:item.id,choiceId:answer!.choiceId});
+  const accepted=h.state.nativeDefinitionPreparation!.work.entries[0];assert.deepEqual(accepted.judgments,proofs);assert.deepEqual(accepted.humanAnswer,{...answer,meaningAdmissionPolicy:1});assert.ok(accepted.meaningAdmission);assert.equal(h.state.reviewItems!.find(value=>value.id===item.id)!.state,'resolved');
   h.state.nativeDefinitionHistory!.push(legacy);h.state.nativeDefinitionPreparation=other;await h.app.save();
-  await h.app.invoke('open-review-item',{id:item.id});await assertNormalized();assert.equal(h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!.run.spentUSD,0.37);
+  await assert.rejects(h.app.invoke('open-review-item',{id:item.id}),/no longer pending/);assert.equal(h.state.nativeDefinitionPreparation,other);assert.equal(h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!.run.spentUSD,0.37);
   assert.equal(h.requests(),0);assert.equal(h.writes(),0);assert.equal(validState(h.state),true);
 });
 
@@ -117,6 +119,34 @@ test('only explicit source recheck requests uncertain papers while contradiction
   const protectedCase=fixture(),contradicted=chosenReview(protectedCase.state,'Battery marker','different-meaning','different');protectedCase.state.nativeDefinitionPreparation=contradicted.review;await protectedCase.app.initialize();
   const row=(await protectedCase.app.snapshot()).nativeDefinitionPreparation!.rows[0];assert.equal(row.sourceIssues![0].status,'different');assert.equal(row.canRecheckSources,false);
   await assert.rejects(protectedCase.app.invoke('recheck-tag-meaning-sources',{id:contradicted.review.work.id,entryId:row.id}),/no longer available/);assert.equal(protectedCase.requests(),0);assert.equal(protectedCase.writes(),0);
+});
+
+test('saving the selected fuel-cell meaning retains conflicting source checks without another request or meaning question',async()=>{
+  const h=fixture();
+  for(let index=1;index<16;index++){const paper={...structuredClone(h.paper),id:`1:FUEL-${index}`,itemID:index+1,key:`FUEL-${index}`};paper.fingerprint=paperFingerprint(paper);h.state.papers[paper.id]=paper;}
+  for(const paperId of Object.keys(h.state.papers))h.state.nativeTags[paperId]=[{tag:'Fuel cells',type:0}];
+  const review=nativeReview(h.state,'Fuel cells','fuel-source-checks');
+  let work=createNativeTagDefinitionWork(review.work.snapshot,['Fuel cells']);const entryId=work.entries[0].id;
+  h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!.definitionWorkId=work.id;
+  const request=nextNativeTagDefinitionRequests(work)[0],input=JSON.parse(request.prompt.split('INPUT_DATA_JSON:\n')[1]);
+  assert.equal(input.papers.length,3);
+  work=acceptNativeTagDefinitionResult(noteNativeTagDefinitionDispatch(work,request.id),request.id,{workId:work.id,fingerprint:work.fingerprint,taskId:request.id,definitions:[{entryId,name:'FC',fullName:'fuel cell',description:'Electrochemical devices converting chemical fuel into electricity.',facet:'system',aliases:[]}],judgments:input.papers.map((paper:any,index:number)=>({entryId,paperId:paper.paperId,sourceFingerprint:paper.sourceFingerprint,relation:index===2?'different':'same-meaning',reason:index===2?'Fuel cells appear only as a keyword, not as the studied system.':'The paper establishes this fuel-cell meaning.',evidence:[{source:'abstract',text:paper.paper.abstract}],supportFactConceptIds:[]}))},{provider:'retained-provider',model:'original-paid-model'});
+  const definition=structuredClone(work.entries[0].definition!);work=resolveNativeTagDefinition(work,work.snapshot,{entryId,definition});
+  review.work=work;h.state.nativeDefinitionPreparation=review;await h.app.initialize();
+  const proofs=structuredClone(review.work.entries[0].judgments),tasks=fingerprint(review.work.tasks),paid=h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!.run.spentUSD;
+  const assertNotes=async(app:AppController,saved:boolean)=>{const snapshot=await app.snapshot(),row=snapshot.nativeDefinitionPreparation!.rows[0];assert.equal(row.chosenMeaning!.name,'FC');assert.equal(row.questionKind,saved?'information':'meaning');assert.equal(row.sourceIssues!.filter(issue=>issue.status==='different').length,1);assert.equal(row.sourceIssues!.filter(issue=>issue.status==='unchecked').length,13);assert.match(row.question!,/selected meaning is kept.*1 paper does not support.*13 sources have not been checked/);assert.doesNotMatch(row.question!,/Clarify its meaning/);assert.match(snapshot.activityTasks!.find(task=>task.workId===review.work.id)!.message!,saved?/1 saved/:/1 tag needs a decision/);assert.equal(row.canRecheckSources,false);assert.equal(row.applied,saved);};
+  await assertNotes(h.app,false);let savedWork='';
+  for(let attempt=0;attempt<2;attempt++){await h.app.invoke('edit-tag-meaning',{id:review.work.id,entryId,tag:structuredClone(definition)});await h.app.waitForIdle();assert.deepEqual(review.work.entries[0].judgments,proofs);assert.equal(fingerprint(review.work.tasks),tasks);if(attempt)assert.equal(fingerprint(review.work),savedWork);else savedWork=fingerprint(review.work);await assertNotes(h.app,true);}
+  const restarted=new AppController(structuredClone(h.state),h.env);await restarted.initialize();await assertNotes(restarted,true);
+  assert.equal(h.state.maintenanceTasks!.find(task=>task.id===review.taskId)!.run.spentUSD,paid);assert.equal(h.requests(),0);assert.equal(h.writes(),0);assert.equal(h.state.tags.some(tag=>tag.id===definition.id),true);assert.equal(validState(h.state),true);
+});
+
+test('snapshot-protected chosen meanings keep their protection explanation instead of source-review copy',async()=>{
+  const h=fixture(),{review}=chosenReview(h.state,'Battery marker','snapshot-protected'),entry=review.work.entries[0],definition=structuredClone(entry.definition!);
+  h.state.tags.push(definition);review.work.snapshot.definitions.push(structuredClone(definition));entry.targetTagId=definition.id;
+  review.work.snapshot.decisions[`${entry.paperIds[0]}|${definition.id}`]={locked:true};review.work.fingerprint=fingerprint(review.work.snapshot);h.state.nativeDefinitionPreparation=review;
+  assert.equal(validState(h.state),true);const snapshot=await h.app.snapshot(),row=snapshot.nativeDefinitionPreparation!.rows[0];
+  assert.equal(row.chosenMeaning!.name,definition.name);assert.equal(row.questionKind,'protection');assert.match(row.question!,/earlier lock or rejection protects/);assert.doesNotMatch(row.question!,/selected meaning is kept/);assert.equal(row.canRecheckSources,false);assert.match(snapshot.activityTasks!.find(task=>task.workId===review.work.id)!.message!,/needs your choice/);assert.equal(h.requests(),0);assert.equal(h.writes(),0);
 });
 
 test('repeating the same native meaning question retains its deferred identity across new draft IDs',async()=>{

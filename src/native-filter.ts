@@ -1,9 +1,8 @@
-import type { TagDefinition } from './core.ts';
 import { canonicalTagKey } from './core.ts';
-import { compileConceptFilter, type ConceptFilter } from './concept-filter.ts';
+import { compileConceptFilter, type ConceptDefinition, type ConceptFilter } from './concept-filter.ts';
 
 /** A snapshot query: descendants and approved legacy names are resolved at creation. */
-export function buildConceptSearch(definitions: TagDefinition[], filter: ConceptFilter, libraryID = Zotero.Libraries.userLibraryID, nativeTagNames: readonly string[] = []): any {
+export function buildConceptSearch(definitions: ConceptDefinition[], filter: ConceptFilter, libraryID = Zotero.Libraries.userLibraryID, nativeTagNames: readonly string[] = []): any {
   const search = new Zotero.Search();
   search.libraryID = libraryID;
   search.addCondition('joinMode', 'all');
@@ -23,13 +22,28 @@ export function buildConceptSearch(definitions: TagDefinition[], filter: Concept
   for (const clause of compiled.clauses) {
     search.addCondition('groupStart', 'true', '');
     search.addCondition('joinMode', 'all');
-    for (const names of clause.groups) {
+    for (const [index,names] of clause.groups.entries()) {
       search.addCondition('groupStart', 'true', '');
       search.addCondition('joinMode', 'any');
-      // Preserve scientifically significant case while recognizing legacy prose capitalization.
-      const keys = new Set(names.map(canonicalTagKey));
-      const alternatives = new Set([...names, ...nativeTagNames.filter(name => keys.has(canonicalTagKey(name)))]);
-      for (const name of alternatives) search.addCondition('tag', 'is', name);
+      const bindings=clause.bindings?.[index];
+      if(bindings){
+        for(const binding of bindings){
+          const keys=new Set(binding.names.map(canonicalTagKey)),known=[...nativeTagNames,...Object.values(binding.nativeBindingExclusions??{}).flat()];
+          const alternatives=new Set([...binding.names,...known.filter(name=>keys.has(canonicalTagKey(name)))]);
+          for(const name of alternatives){
+            const excludedKeys=Object.entries(binding.nativeBindingExclusions??{}).filter(([,values])=>values.includes(name)).flatMap(([paperId])=>{const separator=paperId.indexOf(':');return separator>0&&Number(paperId.slice(0,separator))===libraryID?[paperId.slice(separator+1)]:[];}).filter(Boolean);
+            if(excludedKeys.length){search.addCondition('groupStart','true','');search.addCondition('joinMode','all');}
+            search.addCondition('tag','is',name);
+            for(const key of new Set(excludedKeys))search.addCondition('key','isNot',key);
+            if(excludedKeys.length)search.addCondition('groupEnd','true','');
+          }
+        }
+      }else{
+        // Preserve scientifically significant case while recognizing legacy prose capitalization.
+        const keys = new Set(names.map(canonicalTagKey));
+        const alternatives = new Set([...names, ...nativeTagNames.filter(name => keys.has(canonicalTagKey(name)))]);
+        for (const name of alternatives) search.addCondition('tag', 'is', name);
+      }
       search.addCondition('groupEnd', 'true', '');
     }
     search.addCondition('groupEnd', 'true', '');
@@ -41,7 +55,7 @@ export function buildConceptSearch(definitions: TagDefinition[], filter: Concept
 export interface NativeFilterAdapter {
   readonly available: boolean;
   readonly active: boolean;
-  apply(definitions: TagDefinition[], filter: ConceptFilter): Promise<void>;
+  apply(definitions: ConceptDefinition[], filter: ConceptFilter): Promise<void>;
   restore(): Promise<void>;
   destroy(): Promise<void>;
 }

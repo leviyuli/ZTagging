@@ -1,6 +1,6 @@
 import type { BuildMode, DisplayAssignmentReview, DisplayPaper, DisplayReviewItem, DisplaySuggestion, DisplayTag, ManagerAPI, ManagerPage, ManagerSettings, ManagerSnapshot, Scope } from './ui-contract';
 import { createDropdown, cleanupDropdowns } from './dropdown';
-import { compileConceptFilter, descendantIds } from './concept-filter';
+import { compileConceptFilter, descendantIds, matchCompiledConceptFilter } from './concept-filter';
 import type { ConceptFilter } from './concept-filter';
 import { canonicalTagKey } from './core';
 import type { WarningRecord } from './warnings';
@@ -84,7 +84,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
   let activityHistoryQuery = '';
   let activityHistoryPage = 0;
   let deferredReviewOpen = false;
-  let deferredSourceReviewOpen = false;
+  const nativeEditOptionsOpen = new Set<string>();
   let busy = false;
   let signingIn = false;
   let disposed = false;
@@ -487,36 +487,74 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const work = currentState().nativeDefinitionPreparation;
     return work && (work.id === item.taskId || work.id === item.workId) ? work.rows.find(row => row.reviewId === item.id || row.id === item.questionId) : undefined;
   }
-  function isSourceReview(item: DisplayReviewItem) {
-    const row = nativeReviewRow(item);
-    return nativeSourceReview(row);
-  }
   function nativeSourceReview(row?: NativeMeaningRow) {
-    return !!row?.chosenMeaning && row.questionKind === 'information' && !!row.sourceIssues?.length;
+    return !!row?.chosenMeaning && row.questionKind !== 'protection' && !nativePersonalReview(row) && row.personalTreatment !== 'personal' && !!row.sourceIssues?.length;
   }
-  function sourceReviewInbox(items: DisplayReviewItem[]) {
-    const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
-    if (!open.length && !deferred.length) return null;
-    return h('section','source-review-inbox',h('h3','','Source checks'),...open.map(reviewItemBody),deferred.length ? details(`Source checks for later (${deferred.length})`,deferredSourceReviewOpen,value => { deferredSourceReviewOpen = value; },() => h('div','',...deferred.map(reviewItemBody))) : null);
+  function nativePersonalReview(row?: NativeMeaningRow) { return row?.questionKind === 'personal' || row?.resolution === 'personal'; }
+  function nativeHasDraft(row: NativeMeaningRow) { return !!row.name?.trim() && !!row.description?.trim(); }
+  function nativeDraftMeaning(row: NativeMeaningRow) { return !row.chosenMeaning && !nativePersonalReview(row) && nativeHasDraft(row) ? h('div','native-meaning-status',h('p','meaning-selected',`AI proposal: ${row.name}`),h('p','',row.description!),h('p','card-description',row.status === 'ready' ? 'This meaning is ready to save.' : row.canUseProposedMeaning || row.canConfirmClear || row.choices?.length ? 'Use this meaning or skip defining this tag.' : 'AI has not supported this proposal yet. Skip this tag, or ask AI to try again.')) : null; }
+  async function defineScientificMeaning(name: string, row?: NativeMeaningRow) {
+    const work=currentState().nativeDefinitionPreparation;
+    await run('set-native-tag-treatment',{name,treatment:'scientific',...(row && work ? {id:work.id,entryId:row.id} : {})},'AI is preparing a scientific meaning. You can use its proposal or skip this tag.');
+  }
+  function nativePersonalActions(workId: string, row: NativeMeaningRow, disabled = false) {
+    const locked=disabled || row.canSetTreatment !== true;
+    const keep=button('Keep as personal label',() => run('set-native-tag-treatment',{name:row.sourceName,treatment:'personal',id:workId,entryId:row.id},'Kept as a personal label. Automatic assignment is off for this name.'),'primary small',locked);keep.id=`keep-native-personal-${row.id}`;
+    const define=button('Ask AI for a scientific meaning',() => defineScientificMeaning(row.sourceName,row),'small',locked || !canAnalyze());define.id=`define-native-scientific-${row.id}`;
+    return h('div','',h('p','card-description','Recommended: keep this label for your own organization. It stays on your papers and will not be assigned automatically; other scientific tags can still be assigned to those papers.'),h('div','actions',keep,define),locked ? h('p','card-description','Choose a treatment after the current processing finishes.') : null);
+  }
+  function clearNativeMeanings(work: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>) {
+    if (!(work.clearChoiceCount && work.clearChoiceCount > 0)) return null;
+    const use=button('Use clear meanings',() => run('use-clear-tag-meanings',{id:work.id},'Clear meanings selected.'),'primary small',!work.canUseClearMeanings || work.rows.some(row => row.canConfirmClear && nativeMeaningChanged(work.id,row)));use.id='use-clear-native-meanings';
+    return h('div','native-clear-meanings',h('p','card-description',`${work.clearChoiceCount} clear ${work.clearChoiceCount === 1 ? 'draft is' : 'drafts are'} ready to use. Use these meanings together, or choose individual proposals below.`),use);
+  }
+  function nativeSourceCounts(row: NativeMeaningRow) {
+    const counts={different:0,uncertain:0,unchecked:0};
+    for (const issue of row.sourceIssues || []) counts[issue.status]++;
+    return counts;
+  }
+  function nativeSourceMessage(row: NativeMeaningRow) {
+    return `${row.applied ? 'Meaning saved.' : 'Use this meaning or skip defining this tag.'} Existing paper tags stay unchanged.`;
+  }
+  function nativeReviewTarget(element: HTMLElement, row: NativeMeaningRow) { element.id=`native-review-${row.id}`;element.tabIndex=-1;return element; }
+  function nativeMeaningSaveMessage(workId: string, entryId: string) {
+    const work=currentState().nativeDefinitionPreparation,row=work?.id === workId ? work.rows.find(row => row.id === entryId) : undefined;
+    if (row?.applied) return 'Meaning saved to your tag library.';
+    if (work?.id === workId) {
+      if (work.status === 'queued') return 'Meaning kept. Linked papers are queued for checking.';
+      if (work.status === 'running') return 'Meaning kept. Checking the linked papers.';
+      if (work.status === 'paused') return 'Meaning kept. Source checks are paused.';
+    }
+    if (nativeSourceReview(row)) return 'Meaning kept. You can use the AI proposal or skip defining this tag.';
+    if (row?.questionKind === 'protection') return 'Meaning kept. A protected tag choice still needs review.';
+    if (row?.status === 'ready') return 'Meaning ready to save.';
+    return row?.status === 'question' ? 'Meaning kept. A review choice is still open.' : 'Meaning kept.';
   }
   function nativeMeaningSupport(row: NativeMeaningRow) {
     if (!row.chosenMeaning) return null;
-    const issues = row.sourceIssues || [];
-    const panel = h('details','native-meaning-support',h('summary','',`Selected meaning${issues.length ? ` and ${issues.length} source ${issues.length === 1 ? 'check' : 'checks'}` : ''}`),h('p','',row.chosenMeaning.description));
-    const labels = { uncertain: 'Uncertain match', different: 'Conflicting result', unchecked: 'Not checked' };
+    const issues = row.sourceIssues || [],counts=nativeSourceCounts(row),summary=[counts.different ? `${counts.different} conflicting` : '',counts.uncertain ? `${counts.uncertain} uncertain` : '',counts.unchecked ? `${counts.unchecked} not checked` : ''].filter(Boolean).join(' · ');
+    const panel = h('details','native-meaning-support',h('summary','',`AI source notes${summary ? ` · ${summary}` : ''}`),h('p','card-description','AI findings are shown for reference. You do not need to review or change the papers.'));
+    const labels = { uncertain: 'Uncertain match', different: 'Does not support this meaning', unchecked: 'Not checked' };
     for (const issue of issues) panel.append(h('div','native-source-issue',paperButton(issue.paperId),h('p','card-description',labels[issue.status]),h('p','',issue.reason)));
-    return h('div','native-meaning-status',h('p','meaning-selected',`Meaning selected: ${row.chosenMeaning.name}`),panel);
+    return h('div','native-meaning-status',h('p','meaning-selected',`${row.applied ? 'Meaning saved' : row.selectionOrigin === 'automatic' ? 'Meaning selected automatically' : 'Meaning selected'}: ${row.chosenMeaning.name}`),h('p','meaning-description',row.chosenMeaning.description),issues.length ? panel : null);
   }
-  function recheckNativeSources(workId: string, row: NativeMeaningRow, disabled = false) {
-    if (!row.canRecheckSources) return null;
-    const retry = button('Recheck sources',() => run('recheck-tag-meaning-sources',{id:workId,entryId:row.id},'Unresolved sources queued. Your meaning choice is kept.'),'small',disabled);
-    retry.id = `recheck-native-sources-${row.id}`;
-    return h('div','native-source-recheck',retry,h('small','','Uses AI to recheck only unresolved sources.'));
+  function nativeDecisionActions(workId: string, row: NativeMeaningRow, item?: DisplayReviewItem, disabled = false) {
+    const actions=h('div','actions');
+    if (row.canUseProposedMeaning && !row.choices?.length && !row.applied) { const use=button('Use this meaning',() => run('use-proposed-tag-meaning',{id:workId,entryId:row.id},'Meaning saved. Paper tags stay unchanged.'),'primary small',disabled);use.id=`use-native-proposed-${row.id}`;actions.append(use); }
+    else for (const choice of row.choices || []) { const use=button(choice.label,() => run(item ? 'resolve-review-item' : 'answer-tag-meaning',item ? {id:item.id,choiceId:choice.id} : {id:workId,entryId:row.id,choiceId:choice.id},'Meaning selected. AI is checking the proposal.'),'primary small meaning-choice-option',disabled);use.id=`answer-native-meaning-${row.id}-${choice.id}`;use.setAttribute('aria-label',choice.label);if(choice.description)use.append(h('small','',choice.description));actions.append(use); }
+    if (!row.applied) { const skip=button('Skip this tag',() => run(item ? 'resolve-review-item' : 'leave-tag-undefined',item ? {id:item.id,action:'leave'} : {id:workId,entryId:row.id},'Skipped defining this tag. Its existing paper tags stay unchanged.'),'quiet small',disabled);skip.id=`leave-native-meaning-${row.id}`;skip.setAttribute('aria-label',`Skip defining ${row.sourceName}`);actions.append(skip); }
+    const optional=h('details','native-meaning-options',h('summary','','Edit options'));
+    optional.id=`native-edit-options-${row.id}`;optional.open=nativeEditOptionsOpen.has(row.id);
+    optional.addEventListener('toggle',() => { if(optional.isConnected)optional.open ? nativeEditOptionsOpen.add(row.id) : nativeEditOptionsOpen.delete(row.id); });
+    if ((row.status === 'question' || row.status === 'failed') && !row.applied && !row.canUseProposedMeaning && !row.choices?.length && row.questionKind !== 'protection') { const retry=button('Ask AI again',() => run('retry-proposed-tag-meaning',{id:workId,entryId:row.id},'AI is preparing another proposal.'),'small',disabled || !canAnalyze() || currentState().canPrepareNativeMeanings === false);retry.id=`retry-native-proposed-${row.id}`;retry.setAttribute('aria-label',`Ask AI again for ${row.sourceName}`);actions.append(retry); }
+    const currentWork=currentState().nativeDefinitionPreparation;
+    const edit=button('Edit meaning',() => { if(page !== 'vocabulary')nav('vocabulary',true);nativeMeaningReviewHidden=false;editNativeMeaning(workId,row); },'quiet small',currentWork?.status === 'queued' || currentWork?.status === 'running');edit.id=`edit-native-meaning-${row.id}`;edit.setAttribute('aria-label',`Edit meaning for ${row.sourceName}`);optional.append(edit);
+    return h('div','',actions,optional);
   }
   function reviewItemBody(item: DisplayReviewItem): Node {
     const s = currentState();
     const later = () => run('defer-review-item', { id: item.id }, 'Left for later. Other work can continue.');
-    if (item.state === 'deferred') return h('div', 'inline between', h('span', '', item.label),button('Reopen', () => run('reopen-review-item', { id: item.id }), 'small'));
+    if (item.state === 'deferred') { const row=h('div', 'inline between', h('span', '', item.label),button('Reopen', () => run('reopen-review-item', { id: item.id }), 'small'));row.id=`deferred-review-${item.id}`;row.tabIndex=-1;return row; }
     if (item.kind === 'assignment') {
       const suggestion = s.suggestions.find(value => value.id === item.suggestionId);
       if (!suggestion) return h('div', '', h('p', '', item.message || item.label),button('Open assignment', () => openReviewItem(item), 'small'));
@@ -530,20 +568,22 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const native = nativeReviewRow(item);
     const preparation = s.tagPreparation;
     const question = preparation && (preparation.id === item.taskId || preparation.id === item.workId) ? preparation.questions.find(question => question.reviewId === item.id || question.id === item.questionId) : undefined;
-    const choices = native?.choices || question?.choices || [];
+    const choices = native?.canConfirmClear ? [] : native?.choices || question?.choices || [];
     const unsaved = !!native && !!work && nativeMeaningChanged(work.id,native);
+    if (native && work && nativePersonalReview(native)) return nativeReviewTarget(h('article','review-choice',h('strong','',native.sourceName),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,native,unsaved),button('Later',later,'quiet small')),native);
+    if (native && work) return nativeReviewTarget(h('article','review-choice',h('strong','',native.sourceName),nativeMeaningSupport(native) || nativeDraftMeaning(native),h('p','',native.questionKind === 'protection' ? native.question || 'An earlier tag choice is protected. You can skip defining this tag.' : nativeSourceReview(native) ? nativeSourceMessage(native) : nativeHasDraft(native) ? 'Use an AI proposal or skip defining this tag.' : 'AI has not found a supported scientific meaning. Skip this tag, or ask AI to try again.'),nativeDecisionActions(work.id,native,item,unsaved),button('Later',later,'quiet small')),native);
     const actions = h('div', 'actions',...choices.map(choice => {
       const answer = button(choice.label, () => run('resolve-review-item', { id: item.id, choiceId: choice.id }, 'Meaning selected. Supported definitions are saved automatically.'), 'small primary meaning-choice-option',unsaved);
       answer.setAttribute('aria-label', choice.label);
       if (native) answer.id = `answer-native-meaning-${native.id}-${choice.id}`;
       if (choice.description) answer.append(h('small', '', choice.description));return answer;
     }));
-    if (native && work) { const edit = button('Edit meaning', () => { if (page !== 'vocabulary') nav('vocabulary', true);editNativeMeaning(work.id,native); }, 'small');edit.id = `edit-native-meaning-${native.id}`;actions.append(edit); }
-    else if (item.tagId && preparation?.tags.some(tag => tag.id === item.tagId)) actions.append(button('Edit meaning', () => { nav('cleanup');editTag(preparation.tags.find(tag => tag.id === item.tagId)!,preparation.id); }, 'small'));
+    if (item.tagId && preparation?.tags.some(tag => tag.id === item.tagId)) actions.append(button('Edit meaning', () => { nav('cleanup');editTag(preparation.tags.find(tag => tag.id === item.tagId)!,preparation.id); }, 'small'));
     if (native) { const leave = button('Leave undefined', () => run('resolve-review-item', { id: item.id, action: 'leave' }, 'Name left undefined.'), 'small',unsaved);leave.id = `leave-native-meaning-${native.id}`;actions.append(leave); }
     if (!choices.length && !native) actions.append(button('Open meaning', () => openReviewItem(item), 'small'));
     actions.append(button('Later', later, 'quiet small'));
-    return h('article', 'review-choice',h('strong', '', item.sourceName || item.label),native ? nativeMeaningSupport(native) : null,h('p', '', native?.question || item.message || question?.description || ''),actions,native && work ? recheckNativeSources(work.id,native,unsaved) : null);
+    const article=h('article', 'review-choice',h('strong', '', item.sourceName || item.label),native ? nativeMeaningSupport(native) || nativeDraftMeaning(native) : null,h('p', '', native?.question || item.message || question?.description || ''),actions);
+    return native ? nativeReviewTarget(article,native) : article;
   }
   function reviewInbox(items: DisplayReviewItem[], title = 'Needs your choice'): Node | null {
     const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
@@ -551,17 +591,25 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const definitions = open.filter(item => item.kind === 'definition'), papers = new Map<string, DisplayReviewItem[]>();
     for (const item of open.filter(item => item.kind === 'assignment')) { const key = item.paperId || item.id;const group = papers.get(key) || [];group.push(item);papers.set(key,group); }
     const body = h('div', 'stack');
+    const nativeWork=currentState().nativeDefinitionPreparation;
+    if (nativeWork && definitions.some(item => nativeReviewRow(item)?.canConfirmClear)) { const clear=clearNativeMeanings(nativeWork);if (clear) body.append(clear); }
     if (definitions.length) body.append(h('section', 'review-group',h('h3', '', 'Tag meanings'),...definitions.map(reviewItemBody)));
     if (papers.size) body.append(h('section', '',h('h3', '', 'Paper tags'),...[...papers].map(([paperId, group]) => h('article', 'review-group',paperMap.has(paperId) ? paperButton(paperId) : h('strong', '', group[0].label),...group.map(reviewItemBody)))));
     if (deferred.length) body.append(details(`Later (${deferred.length})`, deferredReviewOpen, value => { deferredReviewOpen = value; }, () => h('div', 'stack',...deferred.map(reviewItemBody))));
     const count = [definitions.length ? `${definitions.length} ${definitions.length === 1 ? 'meaning' : 'meanings'}` : '',papers.size ? `${papers.size} ${papers.size === 1 ? 'paper' : 'papers'}` : ''].filter(Boolean).join(' · ');
-    return h('section', 'review-inbox',h('h2', '', title),h('p', 'card-description',count || 'Other work can continue.'),body);
+    const heading=title === 'Needs your choice' && definitions.length > 0 && !papers.size && definitions.every(item => nativeReviewRow(item)?.canConfirmClear) ? 'Clear meanings ready' : title;
+    return h('section', 'review-inbox',h('h2', '', heading),h('p', 'card-description',count || 'Other work can continue.'),body);
   }
   function taskUndo(changeId: string | undefined, id: string) {
     if (!changeId || currentState().history.find(change => change.id === changeId)?.canUndo === false) return null;
     const undo = button('Undo last change', () => run('undo', { id: changeId }, 'Change undone.'), 'quiet small');undo.id = id;return undo;
   }
   function approvedTags() { return currentState().tags.filter(tag => tag.status === 'approved' && !tag.builtin); }
+  function personalTag(tag: DisplayTag) {
+    const treatments=currentState().nativeTagTreatments;
+    return !!treatments && [tag.name,tag.fullName,...tag.aliases].some(name => name ? treatments[canonicalTagKey(name)] === 'personal' : false);
+  }
+  function assignmentTags() { return approvedTags().filter(tag => !personalTag(tag)); }
   function pagination(total: number, pageIndex: number, change: (next: number) => void, pageSize = PAGE_SIZE, noun = '') {
     const pages = Math.max(1, Math.ceil(total / pageSize));
     return h('div', 'inline between', h('span', 'muted', total ? `${pageIndex * pageSize + 1}–${Math.min(total, (pageIndex + 1) * pageSize)} of ${total}` : '0 results'),
@@ -764,6 +812,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const tag = editorTag;
     const preparationId = editorPreparationId;
     const nativeEntry = editorNativeEntry;
+    const nativeRow=nativeEntry && currentState().nativeDefinitionPreparation?.id === nativeEntry.workId ? currentState().nativeDefinitionPreparation!.rows.find(row => row.id === nativeEntry.entryId) : undefined;
     const draftKey = editorDraftKey(tag);
     const orphaned = !!preparationId && state?.tagPreparation?.id === preparationId && !state.tagPreparation.tags.some(saved => saved.id === tag.id);
     const lineField = (key: 'aliases' | 'inclusions' | 'exclusions' | 'examples', label: string, note: string) => field(label, textarea(`tag-${key}`, tag[key].join('\n'), value => { tag[key] = value.split('\n').map(line => line.trim()).filter(Boolean); }), note);
@@ -782,6 +831,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     advanced.addEventListener('toggle', () => { if (advanced.isConnected) editorAdvancedOpen = advanced.open; });
     const form = h('form', 'editor-scroll',
       orphaned ? h('p', 'notice warning', 'This tag left the suggested list. Copy your changes, save them to your tag library, or cancel this draft. Matching will start with suggestions; suggested-list relationships are not copied.') : null,
+      nativeRow ? h('p','card-description',nativeRow.chosenMeaning ? 'Your meaning is selected. Revisions may require new checks of the linked papers.' : nativeHasDraft(nativeRow) ? 'This draft is not selected yet. Saving uses this meaning in your tag library. Existing paper tags stay unchanged.' : 'Saving uses this meaning in your tag library. Existing paper tags stay unchanged.') : null,
       field('Tag name', input('tag-name', tag.name, value => { tag.name = value; }, 'A short name you recognize')),
       field('Meaning', textarea('tag-description', tag.description, value => { tag.description = value; }, 'What should papers with this tag discuss?')),
       advanced);
@@ -800,10 +850,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
         throw new Error('Add a tag name and meaning before saving.');
       }
       const submitted = copyTag(tag);
+      delete submitted.nativeBindingExclusions;
       if (nativeEntry) {
         const work = currentState().nativeDefinitionPreparation;
         if (work?.id !== nativeEntry.workId || !work.rows.some(row => row.id === nativeEntry.entryId)) throw new Error('This meaning preparation changed. Reopen the tag before saving.');
-        await run('edit-tag-meaning', { id: nativeEntry.workId, entryId: nativeEntry.entryId, tag: submitted }, 'Meaning updated. Checking the linked papers.');
+        await run('edit-tag-meaning', { id: nativeEntry.workId, entryId: nativeEntry.entryId, tag: submitted });
+        notify(nativeMeaningSaveMessage(nativeEntry.workId,nativeEntry.entryId));
       } else if (preparationId) {
         if (currentState().tagPreparation?.id !== preparationId) throw new Error('This tag list has changed. Open the tag again before saving.');
         await run('edit-prepared-tag', { id: preparationId, tag: submitted }, 'Tag saved.');
@@ -833,10 +885,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     return editor;
   }
   function workingTags(preparation?: ManagerSnapshot['tagPreparation']) { return (preparation?.tags || approvedTags()).filter(tag => !tag.builtin); }
-  function tagShelfOptions(): [string,string][] {
+  function tagShelfOptions(forAssignment = false): [string,string][] {
     const s = currentState();
+    const readyTags=forAssignment ? assignmentTags() : approvedTags();
     const label = (name: string, total: number, ready: number) => `${name} · ${total}${total === ready ? ' tags' : ` total · ${ready} ready`}`;
-    return [['all', label('All tags', s.tagLibraryEntries?.length ?? approvedTags().length, approvedTags().length)], ...(s.tagShelves || []).map(shelf => [shelf.id, label(shelf.name, shelf.count, approvedTags().filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string])];
+    return [['all', label('All tags', s.tagLibraryEntries?.length ?? approvedTags().length, readyTags.length)], ...(s.tagShelves || []).map(shelf => [shelf.id, label(shelf.name, shelf.count, readyTags.filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string])];
   }
   function libraryShelfControls() {
     const shelf = currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
@@ -891,7 +944,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     newTag(true, undefined, false);editorTag!.name = name;editorTag!.fullName = name;editorTag!.aliases = [name];render();focusTagEditorField('tag-description');
   }
   function nativeMeaningTag(row: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number]): DisplayTag {
-    return {id:row.tagId || row.id,name:row.name || row.sourceName,fullName:row.fullName || row.name || row.sourceName,description:row.description || '',facet:row.facet || 'phenomenon',aliases:[...new Set([...(row.aliases || []),row.sourceName])],inclusions:[...(row.inclusions || [])],exclusions:[...(row.exclusions || [])],examples:[...(row.examples || [])],broaderIds:[...(row.broaderIds || [])],relatedIds:[...(row.relatedIds || [])],matchingMode:row.matchingMode || 'suggest',custom:false,status:'approved'};
+    return {id:row.tagId || row.id,name:row.name || row.sourceName,fullName:row.fullName ?? (row.name || row.sourceName),description:row.description || '',facet:row.facet || 'phenomenon',aliases:[...(row.aliases || [])],inclusions:[...(row.inclusions || [])],exclusions:[...(row.exclusions || [])],examples:[...(row.examples || [])],broaderIds:[...(row.broaderIds || [])],relatedIds:[...(row.relatedIds || [])],matchingMode:row.matchingMode || 'suggest',custom:false,status:'approved'};
   }
   function nativeMeaningChanged(workId: string, row: NonNullable<ManagerSnapshot['nativeDefinitionPreparation']>['rows'][number]) {
     const draft = currentDrafts().get(`native:${workId}:${row.id}`);
@@ -906,8 +959,11 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     disable('save-native-meanings',running || !work.canApply || ready.some(row => unsaved.has(row.id)));
     disable('finish-native-meanings',!!unsaved.size);
     disable('continue-native-meanings',running || work.rows.some(row => row.needsContinuation && unsaved.has(row.id)));
+    disable('use-clear-native-meanings',!work.canUseClearMeanings || work.rows.some(row => row.canConfirmClear && unsaved.has(row.id)));
     for (const row of work.rows) {
       disable(`leave-native-meaning-${row.id}`,running || unsaved.has(row.id));
+      disable(`use-native-proposed-${row.id}`,running || unsaved.has(row.id));
+      disable(`retry-native-proposed-${row.id}`,running || unsaved.has(row.id) || !canAnalyze() || currentState().canPrepareNativeMeanings === false);
       disable(`suggest-native-meaning-${row.id}`,running || unsaved.has(row.id));
       for (const choice of row.choices || []) disable(`answer-native-meaning-${row.id}-${choice.id}`,running || unsaved.has(row.id));
     }
@@ -921,26 +977,38 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();focusTagEditorField('tag-description');
   }
   function openNativeMeanings() { nav('vocabulary',true); }
+  function openNativeSourceReview(row: NativeMeaningRow) {
+    const work=currentState().nativeDefinitionPreparation,item=(currentState().reviewItems || []).find(item => item.ownerPage === 'vocabulary' && item.workId === work?.id && item.questionId === row.id && item.state !== 'resolved');
+    if (item?.state === 'deferred') deferredReviewOpen=true;
+    if (work && work.processingPolicy !== 'auto-clear' && row.status === 'question') {
+      if (nativeMeaningWorkId !== work.id) { nativeMeaningWorkId=work.id;excludedNativeMeaningRows.clear(); }
+      const index=work.rows.filter(row => !row.applied && row.status !== 'left-undefined').findIndex(entry => entry.id === row.id);
+      if (index >= 0) nativeMeaningPage=Math.floor(index/20);
+    }
+    nativeMeaningReviewHidden=false;render();
+    const target=row.status === 'question' ? doc.getElementById(`native-review-${row.id}`) || (item ? doc.getElementById(`deferred-review-${item.id}`) : null) || doc.getElementById(`edit-native-meaning-${row.id}`) || doc.getElementById('native-meaning-summary') : doc.getElementById('native-meaning-summary');
+    target?.scrollIntoView({block:'nearest'});target?.focus({preventScroll:true});
+  }
   function nativeMeaningsReview() {
     const work = currentState().nativeDefinitionPreparation;
     if (!work || work.status === 'finished' && !(work.processingPolicy === 'auto-clear' && work.lastChangeId)) return null;
     if (work.processingPolicy === 'auto-clear') {
       const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id));
       const questions = work.rows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
-      const sourceQuestions = questions.filter(nativeSourceReview).length, meaningQuestions = questions.length - sourceQuestions;
+      const meaningQuestions = questions.length;
       const deferredCount = items.filter(item => item.state === 'deferred').length;
       const savedCount = work.savedCount ?? 0;
-      const summary = h('div', '',h('p', '', `${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${meaningQuestions ? ` · ${meaningQuestions} need your choice` : ''}${sourceQuestions ? ` · ${sourceQuestions} need evidence` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
+      const summary = h('div', '',h('p', '', `${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${meaningQuestions ? ` · ${meaningQuestions} to use or skip` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
         work.status === 'running' || work.status === 'queued' ? h('p', 'card-description',`${work.completed} of ${work.total} names checked. You can keep browsing.`) : null,
         work.error ? h('p', 'notice warning',humanMessage(work.error)) : null);
-      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(meaningQuestions ? 'Choose meanings' : sourceQuestions ? 'Review sources' : 'Open deferred meanings',openNativeMeanings,'small') : null,
+      if (!currentState().reviewItems) { const clear=clearNativeMeanings(work);if (clear) summary.append(clear); }
+      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(meaningQuestions ? 'Choose meanings' : 'Open deferred meanings',openNativeMeanings,'small') : null,
         !nativeMeaningReviewHidden ? button('Back to tags',() => { browseTags();render(); },'quiet small') : null,
         work.status === 'paused' ? button('Retry meanings',() => run('retry-tag-meanings',{id:work.id}),'small') : null,taskUndo(work.lastChangeId,'undo-native-meaning-change'));
-      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row),h('p', '', row.question || ''),
-        h('div', 'actions',...(row.choices || []).map(choice => button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id}),'small')),
-          button('Edit meaning',() => editNativeMeaning(work.id,row),'small'),button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id}),'quiet small')),recheckNativeSources(work.id,row)))) : null;
-      return h('div', 'stack',h('section','task-summary',h('h2','',work.status === 'running' || work.status === 'queued' ? 'Defining tag meanings' : 'Tag meanings'),summary,actions),
-        !nativeMeaningReviewHidden ? reviewInbox(items.filter(item => !isSourceReview(item))) : null,!nativeMeaningReviewHidden ? sourceReviewInbox(items.filter(isSourceReview)) : null,fallback);
+      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => nativePersonalReview(row) ? nativeReviewTarget(h('article','tag-row',h('strong','',row.sourceName),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row)),row) : nativeReviewTarget(h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row) || nativeDraftMeaning(row),h('p', '', nativeSourceReview(row) ? nativeSourceMessage(row) : 'Use an AI proposal or skip defining this tag.'),nativeDecisionActions(work.id,row)),row))) : null;
+      const taskSummary=h('section','task-summary',h('h2','',work.status === 'running' || work.status === 'queued' ? 'Defining tag meanings' : 'Tag meanings'),summary,actions);taskSummary.id='native-meaning-summary';taskSummary.tabIndex=-1;
+      return h('div', 'stack',taskSummary,
+        !nativeMeaningReviewHidden ? reviewInbox(items) : null,fallback);
     }
     if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
     if (nativeMeaningReviewHidden) return null;
@@ -957,28 +1025,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const spentUSD = work.spentUSD ?? 0;
     if (spentUSD > 0) body.append(h('p','card-description',`Estimated API use: $${spentUSD.toFixed(4)}${work.budgetUSD === undefined ? '' : ` of $${work.budgetUSD.toFixed(2)}`}`));
     if (work.error) body.append(h('p','notice warning',humanMessage(work.error)));
+    const clear=clearNativeMeanings(work);if (clear) body.append(clear);
     for (const row of rows.slice(nativeMeaningPage * 20,(nativeMeaningPage + 1) * 20)) {
+      if (nativePersonalReview(row)) { body.append(nativeReviewTarget(h('article','tag-row',h('div','inline between',h('strong','',row.sourceName),badge('Personal label','draft')),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row,unsaved.has(row.id))),row));continue; }
       const suggestible = row.canSuggestMeaning ?? row.needsContinuation;
-      const explanation = suggestible ? 'This earlier result has no usable draft. Suggest a meaning from the linked papers, write your own, or leave this name undefined.' : row.questionKind === 'protection' ? 'An earlier tag choice is protected. Revise that choice before matching, write a separate meaning, or leave this name undefined.' : row.questionKind === 'information' ? `${row.question || 'The linked papers do not establish a scientific meaning.'} Write the meaning you intend, or leave this name undefined.` : row.question || 'Use a suggested meaning, write your own, or leave this name undefined.';
+      const explanation = row.questionKind === 'protection' ? 'An earlier tag choice is protected. You can skip defining this tag; its paper tags stay unchanged.' : nativeHasDraft(row) ? 'Use an AI proposal or skip defining this tag.' : 'AI has not found a supported scientific meaning. Skip this tag, or ask AI to try again.';
       const source = row.name && row.name !== row.sourceName ? h('p','card-description',`From: ${row.sourceName}`) : null;
       const heading = row.status === 'ready' ? checkbox(`prepared-native-tag-${row.id}`,!excludedNativeMeaningRows.has(row.id),row.name || row.sourceName,checked => { checked ? excludedNativeMeaningRows.delete(row.id) : excludedNativeMeaningRows.add(row.id);render(); }) : h('strong','',row.sourceName);
-      const article = h('article','tag-row',h('div','inline between',heading,row.status === 'ready' ? badge(row.targetTagId ? 'Use saved tag' : 'New tag','approved') : row.status === 'pending' ? badge('Waiting') : badge(suggestible ? 'Needs a draft' : row.questionKind === 'information' ? 'Needs information' : row.questionKind === 'protection' ? 'Protected choice' : 'Needs your choice','draft')),source,nativeMeaningSupport(row),row.description && !row.chosenMeaning ? h('p','',row.description) : null,row.status === 'question' || row.status === 'failed' ? h('p','card-description',row.chosenMeaning ? row.question || '' : explanation) : null,row.paperIds.length && !row.chosenMeaning ? h('div','warning-papers',...row.paperIds.slice(0,3).map(id => paperButton(id))) : null);
-      if (row.status === 'question' && row.choices?.length) {
-        const choices = h('div','question-choices');
-        for (const choice of row.choices) {
-          const answer = button(choice.label,() => run('answer-tag-meaning',{id:work.id,entryId:row.id,choiceId:choice.id},'Choice saved. Checking the linked papers.'),'question-choice meaning-choice-option',running || unsaved.has(row.id));answer.id = `answer-native-meaning-${row.id}-${choice.id}`;answer.setAttribute('aria-label',choice.label);
-          if (choice.description) answer.append(h('small','',choice.description));choices.append(answer);
-        }
-        article.append(choices);
-      }
-      const edit = button(row.status === 'ready' ? 'Edit meaning' : 'Write my own meaning',() => editNativeMeaning(work.id,row),'quiet small',running);edit.id = `edit-native-meaning-${row.id}`;edit.setAttribute('aria-label',`Edit meaning for ${row.sourceName}`);
-      const suggest = suggestible ? button('Suggest a meaning',() => run('continue-tag-meanings',{id:work.id,rowIds:[row.id]},'Preparing a meaning from the linked papers.'),'primary small',running || unsaved.has(row.id)) : null;
-      if (suggest) { suggest.id = `suggest-native-meaning-${row.id}`;suggest.setAttribute('aria-label',`Suggest a meaning for ${row.sourceName}`); }
-      const leave = button('Leave undefined',() => run('leave-tag-undefined',{id:work.id,entryId:row.id},'This name will stay visible without automatic matching.'),'quiet small',running || unsaved.has(row.id));leave.id = `leave-native-meaning-${row.id}`;leave.setAttribute('aria-label',`Leave ${row.sourceName} undefined`);
-      if (row.status !== 'pending') {
-        article.append(h('div','actions',suggest,edit,leave));
-        const recheck = recheckNativeSources(work.id,row,running || unsaved.has(row.id));if (recheck) article.append(recheck);
-      }
+      const article = h('article','tag-row',h('div','inline between',heading,row.status === 'ready' ? badge(row.targetTagId ? 'Use saved tag' : 'New tag','approved') : row.status === 'pending' ? badge('Waiting') : badge(nativeSourceReview(row) ? 'Meaning selected' : row.canConfirmClear ? 'Clear draft' : suggestible ? 'Needs a draft' : row.questionKind === 'information' ? 'Needs information' : row.questionKind === 'protection' ? 'Protected choice' : 'Needs your choice','draft')),source,nativeMeaningSupport(row) || nativeDraftMeaning(row),row.status === 'question' || row.status === 'failed' ? h('p','card-description',nativeSourceReview(row) ? nativeSourceMessage(row) : row.chosenMeaning ? row.question || '' : explanation) : null,row.paperIds.length && !row.chosenMeaning ? h('div','warning-papers',...row.paperIds.slice(0,3).map(id => paperButton(id))) : null);
+      nativeReviewTarget(article,row);
+      if (row.status !== 'pending') article.append(nativeDecisionActions(work.id,row,undefined,running || unsaved.has(row.id)));
       body.append(article);
     }
     if (rows.length > 20) body.append(pagination(rows.length,nativeMeaningPage,next => { nativeMeaningPage = next; },20,'meanings'));
@@ -994,6 +1050,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     else if (!rows.length && !running) actions.children[0].id = 'finish-native-meanings';
     if (continueInFooter) [...actions.children].find(control => control.textContent === 'Continue preparation')!.id = 'continue-native-meanings';
     const panel = card(work.status === 'queued' ? 'Meanings queued' : running ? 'Preparing meanings…' : work.status === 'paused' ? 'Meaning preparation paused' : 'Prepared meanings',work.status === 'queued' ? 'Starts after the current analysis finishes.' : 'Names and meanings are based on the linked papers.',body,actions,'native-meaning-panel');
+    panel.id='native-meaning-summary';panel.tabIndex=-1;
     const scroll = panel.querySelector<HTMLElement>('.card-body')!;scroll.id = 'tag-list-scroll';scroll.setAttribute('data-view-key',`meanings:${work.id}:${nativeMeaningPage}`);
     return panel;
   }
@@ -1005,11 +1062,16 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     const query = vocabQuery.trim().toLocaleLowerCase();
     const shelf = !prepared ? s.tagShelves?.find(shelf => shelf.id === libraryTagShelfId) : undefined;
     const libraryEntries = !prepared ? shelf ? shelf.nativeNames : s.tagLibraryEntries : undefined;
+    const nativeRows=new Map((s.nativeDefinitionPreparation?.rows || []).map(row => [row.sourceName,row]));
+    const personalName=(name: string) => (s.nativeTagTreatments?.[canonicalTagKey(name)] ?? nativeRows.get(name)?.personalTreatment) === 'personal';
+    const personalQuestions=new Map((s.nativeDefinitionPreparation?.rows || []).filter(row => !row.applied && row.status === 'question' && nativePersonalReview(row)).map(row => [row.sourceName,row]));
+    const nativeSourceRows=new Map((s.nativeDefinitionPreparation?.rows || []).filter(row => !row.applied && row.status !== 'left-undefined' && !nativePersonalReview(row)).map(row => [row.sourceName,row]));
+    if (!prepared) for (const name of selectedNativeNames) if (personalName(name) || personalQuestions.has(name) || nativeSourceRows.has(name)) selectedNativeNames.delete(name);
     if (!prepared && s.tagLibraryEntries) {
-      const available = new Set(s.tagLibraryEntries.filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag').map(entry => entry.name));
+      const available = new Set(s.tagLibraryEntries.filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag' && !nativeSourceRows.has(entry.name) && !personalQuestions.has(entry.name) && !personalName(entry.name)).map(entry => entry.name));
       for (const name of selectedNativeNames) if (!available.has(name)) selectedNativeNames.delete(name);
     }
-    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return (libraryTagStatus === 'all' || libraryTagStatus === 'ready' && !!tag || libraryTagStatus === 'undefined' && !tag && !entry.protected && entry.name !== 'no_tag') && (!query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query)); });
+    const nativeNames = libraryEntries?.filter(entry => { const tag = entry.tagId ? tagById(entry.tagId) : undefined;return (libraryTagStatus === 'all' || libraryTagStatus === 'ready' && !!tag || libraryTagStatus === 'undefined' && !tag && !entry.protected && entry.name !== 'no_tag' && !personalName(entry.name)) && (!query || (tag ? conceptText(tag) : entry.name.toLocaleLowerCase()).includes(query)); });
     const tags = workingTags(preparation).filter(tag => (!shelf || shelf.tagIds.includes(tag.id)) && (!query || conceptText(tag).includes(query)) && (prepared || libraryTagStatus !== 'undefined'));
     const questions = preparation?.questions || [];
     const view = preparation && questions.length ? tagView : 'tags';
@@ -1047,17 +1109,33 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       if (questions.length > 10) content.append(pagination(questions.length, tagQuestionPage, next => { tagQuestionPage = next; }, 10, 'questions'));
     } else {
       content.append(h('div', 'tag-list-search', input('vocabulary-search', vocabQuery, value => { vocabQuery = value;vocabularyPage = 0;render(); }, 'Find a tag or another name…', 'search')));
-      const selectable = (nativeNames || []).filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag');
+      const selectable = (nativeNames || []).filter(entry => !entry.tagId && !entry.protected && entry.name !== 'no_tag' && !nativeSourceRows.has(entry.name) && !personalQuestions.has(entry.name) && !personalName(entry.name));
       if (!preparation && (selectable.length || selectedNativeNames.size)) {
         const selection = h('div','tag-meaning-selection',selectable.length ? button('Select all names',() => { for(const entry of selectable)selectedNativeNames.add(entry.name);render(); },'quiet small') : null);
-        if (selectedNativeNames.size) selection.append(h('span','muted',`${selectedNativeNames.size} selected`),button('Suggest meanings',async () => { await run('prepare-tag-meanings',{names:[...selectedNativeNames],shelfId:libraryTagShelfId,processingPolicy:'auto-clear'},'Defining meanings from the selected tags and their papers.');selectedNativeNames.clear();render(); },'primary small',!canAnalyze() || s.nativeDefinitionPreparation?.status === 'queued' || s.nativeDefinitionPreparation?.status === 'running'),button('Clear selection',() => { selectedNativeNames.clear();render(); },'quiet small'));
+        if (selectedNativeNames.size) selection.append(h('span','muted',`${selectedNativeNames.size} selected`),button('Suggest meanings',async () => { await run('prepare-tag-meanings',{names:[...selectedNativeNames],shelfId:libraryTagShelfId,processingPolicy:'auto-clear'},'Defining meanings from the selected tags and their papers.');selectedNativeNames.clear();render(); },'primary small',!canAnalyze() || s.canPrepareNativeMeanings === false || s.nativeDefinitionPreparation?.status === 'queued' || s.nativeDefinitionPreparation?.status === 'running'),button('Clear selection',() => { selectedNativeNames.clear();render(); },'quiet small'));
         content.append(selection);
       }
       if (!(nativeNames?.length ?? tags.length)) content.append(empty('No tags here yet', 'Build tags from a few papers, or add a tag of your own.'));
       for (const entry of (nativeNames || []).slice(vocabularyPage * 20, (vocabularyPage + 1) * 20)) {
         const tag = entry.tagId ? tagById(entry.tagId) : undefined;
         const protectedName = entry.protected || entry.name === 'no_tag' || tag?.builtin;
-        if (tag && !protectedName) { content.append(savedTagRow(tag, entry.paperCount));continue; }
+        if (personalName(entry.name) && !protectedName) {
+          const row=nativeRows.get(entry.name),define=button('Ask AI for a scientific meaning',() => defineScientificMeaning(entry.name,row),'quiet small',!canAnalyze() || (row ? row.canSetTreatment !== true : s.canPrepareNativeMeanings === false));define.setAttribute('aria-label',`Ask AI for a scientific meaning for ${entry.name}`);
+          content.append(h('article','tag-row',h('div','inline between',h('strong','',entry.name),define),h('p','card-description',`${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · Personal label · Automatic assignment off`)));continue;
+        }
+        const personal=personalQuestions.get(entry.name);
+        if (personal && !protectedName) {
+          const review=button('Review label',() => openNativeSourceReview(personal),'quiet small');review.setAttribute('aria-label',`Review personal label ${entry.name}`);
+          content.append(h('article','tag-row',h('div','inline between',h('strong','',entry.name),review),h('p','card-description',`${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · Choose how to use this personal label`)));continue;
+        }
+        const sourceReview=nativeSourceRows.get(entry.name);
+        if (sourceReview && !protectedName) {
+          const action=sourceReview.status === 'question' ? 'Choose meaning' : s.nativeDefinitionPreparation?.status === 'paused' || sourceReview.status === 'failed' ? 'View paused checks' : 'View checks';
+          const review=button(action,() => openNativeSourceReview(sourceReview),'quiet small');review.setAttribute('aria-label',`${action} for ${entry.name}`);
+          content.append(h('article','tag-row',h('div','inline between',h('strong','',entry.name),review),h('p','card-description',`${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${sourceReview.chosenMeaning ? `Meaning selected: ${sourceReview.chosenMeaning.name}` : sourceReview.name ? `AI proposal: ${sourceReview.name}` : 'AI meaning preparation'}`),nativeSourceReview(sourceReview) ? h('p','card-description',nativeSourceMessage(sourceReview)) : null));continue;
+        }
+        const native=nativeRows.get(entry.name),savedMeaning=tag || (native?.applied ? tagById(native.targetTagId || native.tagId || '') : undefined);
+        if (savedMeaning && !protectedName) { const savedRow=savedTagRow(savedMeaning,savedMeaning.currentlyTaggedCount ?? (native?.applied ? undefined : entry.paperCount)),notes=native?.applied && native.sourceIssues?.length ? nativeMeaningSupport(native) : null;if(notes)savedRow.append(notes);content.append(savedRow);continue; }
         const edit = !protectedName ? button('Add meaning', () => addNativeMeaning(entry.name), 'quiet small') : null;
         edit?.setAttribute('aria-label', `Add meaning for ${entry.name}`);
         content.append(h('article', 'tag-row', h('div', 'inline between', protectedName ? h('strong','',entry.name) : checkbox(`select-native-tag-${encodeURIComponent(entry.name)}`,selectedNativeNames.has(entry.name),entry.name,checked => { checked ? selectedNativeNames.add(entry.name) : selectedNativeNames.delete(entry.name);render(); }), edit), h('p', 'card-description', `${entry.paperCount} ${entry.paperCount === 1 ? 'paper' : 'papers'} · ${protectedName ? 'Excluded from tagging' : 'No meaning added'}`), entry.paperIds?.length ? h('div','warning-papers',...entry.paperIds.slice(0,3).map(id => paperButton(id))) : null));
@@ -1115,7 +1193,7 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const body = h('div', 'stack',h('p', '', `${preparation.savedCount ?? 0} tags saved${choices ? ` · ${choices} meanings need your choice` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
         h('p', 'card-description', preparation.status === 'checking' ? 'Supported meanings are saved as their checks finish. Other choices can wait.' : 'Saved definitions are ready to use. Remaining choices do not block them.'),
         preparation.error ? h('p', 'notice warning',humanMessage(preparation.error)) : null,
-        h('div', 'task-actions',button('Open tag library',openLibrary,'small'),button('Assign tags',() => { if (preparation.shelfId) assignmentTagShelfId = preparation.shelfId;assignmentView = 'setup';nav('assignment'); },'primary',!approvedTags().length),taskUndo(preparation.lastChangeId,'undo-build-change'),
+        h('div', 'task-actions',button('Open tag library',openLibrary,'small'),button('Assign tags',() => { if (preparation.shelfId) assignmentTagShelfId = preparation.shelfId;assignmentView = 'setup';nav('assignment'); },'primary',!assignmentTags().length),taskUndo(preparation.lastChangeId,'undo-build-change'),
           preparation.status === 'failed' ? button('Retry build',() => run('retry-tag-preparation',{id:preparation.id}),'small') : null));
       const fallback = !s.reviewItems && preparation.questions.length ? h('div', 'stack',...preparation.questions.map(question => h('article', 'tag-question',h('h3', '', question.title),h('p', '', question.description),
         ...question.choices.map(choice => button(choice.label,() => run('answer-tag-question',{id:preparation.id,questionId:question.id,choiceId:choice.id},'Meaning selected.'),'small'))))) : null;
@@ -1135,13 +1213,13 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
     }
     if (assignmentView === 'suggestions') return h('div', 'stack', tabs, renderReview());
     const shelf = s.tagShelves?.find(shelf => shelf.id === assignmentTagShelfId);
-    const shelfTags = approvedTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id));
+    const shelfTags = assignmentTags().filter(tag => !shelf || shelf.tagIds.includes(tag.id));
     const unavailable = !canAnalyze() || !shelfTags.length || s.queue.status === 'running';
     const suggest = async () => { assignmentRunSelection = null;selectedSuggestions.clear();const result = await run('tag', { scope: assignmentScope, tagShelfId: assignmentTagShelfId, processingPolicy: 'auto-clear' }, 'Assigning supported tags. Other choices can wait.');if (result?.runId) assignmentRunSelection = result.runId;assignmentView = 'suggestions';render(); };
     const assignButton = button('Assign tags', suggest, 'primary', unavailable);assignButton.id = 'start-assignment';assignButton.setAttribute('aria-label', 'Assign tags to these papers');
-    const group = h('section', 'task-setup', field('Tags to use', select('assignment-tag-shelf', assignmentTagShelfId, tagShelfOptions(), value => { assignmentTagShelfId = value;render(); }, 'Assignment tag shelf')),
+    const group = h('section', 'task-setup', field('Tags to use', select('assignment-tag-shelf', assignmentTagShelfId, tagShelfOptions(true), value => { assignmentTagShelfId = value;render(); }, 'Assignment tag shelf')),
       field('Papers', scopeSelect('assignment-scope', assignmentScope, value => { assignmentScope = value;render(); })),
-      shelf && !shelfTags.length ? h('p', 'notice info', 'This shelf has no tags with meanings yet. Add a meaning or choose another shelf.') : null,
+      shelf && !shelfTags.length ? h('p', 'notice info', 'This shelf has no scientific tags available for assignment. Define a scientific meaning or choose another shelf.') : null,
       s.workflow?.assignmentScope === assignmentScope ? h('p', 'card-description', `${s.workflow.assignmentPaperCount} papers in the last chosen group · ${s.workflow.assignedPaperCount} with Smart Tags assignments`) : null,
       h('p', 'card-description', 'High-confidence additions apply automatically; other changes wait for your choice.'),h('div', 'task-actions', assignButton));
     const incoming = checkbox('assignment-auto-assign', s.settings.autoAssign, 'Tag new papers automatically', value => {
@@ -1460,7 +1538,8 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       for (const name of group) for (const id of papersByNativeTag.get(canonicalTagKey(name)) || []) ids.add(id);
       return ids;
     })));
-    return compiled.mode === 'all' ? intersect(clauses) : new Set(clauses.flatMap(ids => [...ids]));
+    const candidates=compiled.mode === 'all' ? intersect(clauses) : new Set(clauses.flatMap(ids => [...ids]));
+    return compiled.clauses.some(clause => clause.bindings) ? new Set([...candidates].filter(id => matchCompiledConceptFilter(paperMap.get(id)?.tags || [],compiled,id))) : candidates;
   }
   function filterSelectionKey(conceptId: string, contextId?: string) { return `${conceptId}\u0000${contextId || ''}`; }
   function isConceptSelected(conceptId: string, contextId?: string) { return conceptFilter.selections.some(selection => selection.conceptId === conceptId && selection.contextId === contextId); }
@@ -1638,14 +1717,12 @@ export function mountManager(win: Window, api: ManagerAPI, options: ManagerUIOpt
       const meaningCounts = [task.savedCount === undefined ? '' : `${task.savedCount} meanings saved`,task.leftUndefinedCount === undefined ? '' : `${task.leftUndefinedCount} left undefined`].filter(Boolean).join(' · ');
       return h('article','completed-task',h('strong','',task.label),task.kind === 'meanings' ? meaningCounts ? h('p','card-description',meaningCounts) : null : task.total !== undefined ? h('p','card-description',`${task.completed ?? task.total} of ${task.total} papers`) : null,task.message ? h('p','card-description',humanMessage(task.message)) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
     }))) : null;
-    const sourceItems = (s.reviewItems || []).filter(isSourceReview);
-    const inbox = reviewInbox((s.reviewItems || []).filter(item => !isSourceReview(item)));
-    const sourceChecks = sourceReviewInbox(sourceItems);
+    const inbox = reviewInbox(s.reviewItems || []);
     const hasPaperProblems = s.paperAttention?.papers.some(paper => paper.status === 'needsInformation' || paper.status === 'failed');
     const paperInfo = details('Paper information',activityPaperInfoOpen,value => { activityPaperInfoOpen = value; },paperAttention);paperInfo.id = 'activity-paper-information';
-    const recovery = h('section','activity-recovery',h('h2','','Recovery'),sourceChecks,notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
+    const recovery = h('section','activity-recovery',h('h2','','Recovery'),notices,hasPaperProblems ? h('div','section-gap',h('h3','','Papers that need attention'),paperAttention()) : paperInfo,paperExclusionReview(),metadataReview());recovery.id = 'activity-recovery';
     const past = details('History',activityHistoryOpen,value => { activityHistoryOpen = value; },() => h('div','activity-history-body',h('section','',h('h3','','Applied changes'),h('p','card-description','Undo checks for later edits before changing a saved batch.'),history),completedWork,warningHistory()));past.id = 'activity-history';
-    const hasRecovery = sourceChecks || hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
+    const hasRecovery = hasPaperProblems || active.length || s.paperExclusionPreview || s.metadataPreview;
     return h('div', 'stack activity-page',inbox,paperWork,...current,!paperWork && !current.length && !inbox && !hasRecovery ? empty('No work waiting','Build tags, define meanings, or choose papers to tag.') : null,hasRecovery ? recovery : paperInfo,past);
   }
 

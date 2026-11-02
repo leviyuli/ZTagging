@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {compileConceptFilter,matchConceptFilter,matchCompiledConceptFilter,descendantIds,equivalentTagNames} from '../src/concept-filter.ts';
-import type {ConceptFilter} from '../src/concept-filter.ts';
+import type {ConceptDefinition,ConceptFilter} from '../src/concept-filter.ts';
 import type {TagDefinition} from '../src/core.ts';
 
 function tag(id:string,name:string,overrides:Partial<TagDefinition>={}):TagDefinition{return {id,name,fullName:name,description:`Meaning of ${name}`,facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto',...overrides};}
@@ -18,6 +18,35 @@ const definitions=[
   tag('draft','Draft fuel cell',{status:'draft',broaderIds:['fc']}),
 ];
 const filter=(mode:'all'|'any',...ids:string[]):ConceptFilter=>({mode,selections:ids.map(conceptId=>({conceptId}))});
+
+test('concept membership ignores only masked old raw labels and keeps other labels on the same paper',()=>{
+  const masked:ConceptDefinition[]=[tag('fc','FC',{fullName:'fuel cell',aliases:['fuel cells']}),tag('eis','EIS')];
+  masked[0].nativeBindingExclusions={'1:BAD':['FC','Fuel cells']};const compiled=compileConceptFilter(masked,filter('all','fc'));
+  assert.equal(matchCompiledConceptFilter(['FC','Fuel cells'],compiled,'1:BAD'),false);
+  assert.equal(matchCompiledConceptFilter(['FC'],compiled,'1:OTHER'),true);
+  assert.equal(matchCompiledConceptFilter(['fuel cell'],compiled,'1:BAD'),true);
+  assert.equal(matchCompiledConceptFilter(['fuel cells'],compiled,'1:BAD'),true,'an unmasked exact raw label remains independent');
+  assert.equal(matchCompiledConceptFilter(['FC'],compiled),false,'missing paper identities cannot bypass masks');
+  assert.equal(matchConceptFilter(['FC','EIS'],masked,filter('any','fc','eis'),'1:BAD'),true);
+  assert.equal(matchConceptFilter(['FC','EIS'],masked,filter('all','fc','eis'),'1:BAD'),false);
+  assert.equal(matchConceptFilter(['FC'],masked,filter('all'),'1:BAD'),true,'clearing concept filters keeps raw native browsing unchanged');
+});
+
+test('descendant and contextual alternatives apply each definition mask independently',()=>{
+  const masked:ConceptDefinition[]=definitions.map(value=>structuredClone(value));masked.find(value=>value.id==='fc')!.nativeBindingExclusions={'1:BAD':['FC']};masked.find(value=>value.id==='aemfc')!.nativeBindingExclusions={'1:BAD':['AEMFC']};
+  assert.equal(matchConceptFilter(['FC','AEMFC'],masked,filter('all','fc'),'1:BAD'),false);
+  assert.equal(matchConceptFilter(['FC','PEMFC'],masked,filter('all','fc'),'1:BAD'),true);
+  const context:ConceptFilter={mode:'all',selections:[{conceptId:'sb',contextId:'fc'}]};
+  assert.equal(matchConceptFilter(['Schottky barrier','FC'],masked,context,'1:BAD'),false);
+  assert.equal(matchConceptFilter(['Schottky barrier','PEMFC'],masked,context,'1:BAD'),true);
+  assert.equal(matchConceptFilter(['AEMFC'],masked,filter('all','fc'),'1:OTHER'),true);
+});
+
+test('compiled binding masks retain their snapshot when a later definition projection changes',()=>{
+  const projected:ConceptDefinition=tag('fc','FC');projected.nativeBindingExclusions={'1:BAD':['FC']};const compiled=compileConceptFilter([projected],filter('all','fc'));
+  projected.nativeBindingExclusions['1:BAD']=[];
+  assert.equal(matchCompiledConceptFilter(['FC'],compiled,'1:BAD'),false);assert.equal(matchConceptFilter(['FC'],[projected],filter('all','fc'),'1:BAD'),true);
+});
 
 test('cleared filters match the library, including papers without any tags',()=>{
   const compiled=compileConceptFilter(definitions,filter('all'));

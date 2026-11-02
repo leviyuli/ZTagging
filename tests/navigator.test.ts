@@ -13,7 +13,7 @@ const tags = [tag('fc', 'FC', { fullName: 'fuel cell', aliases: ['Fuel Cell'] })
   tag('rcl', 'RCL', { description: 'Catalyst-layer resistance in water electrolysis or fuel cells', custom: true, relatedIds: ['fc'], matchingMode: 'suggest' }),
   tag('draft', 'Unapproved', { status: 'draft' })];
 function item(id: number, names: string[], extra: any = {}) {
-  return { id, libraryID: 1, deleted: false, isRegularItem: () => true, getTags: () => names.map(tag => ({ tag, type: 0 })), ...extra };
+  return { id, key:'ITEM'+id, libraryID: 1, deleted: false, isRegularItem: () => true, getTags: () => names.map(tag => ({ tag, type: 0 })), ...extra };
 }
 
 function harness(ready = true, available = true) {
@@ -119,6 +119,14 @@ test('native counts include every eligible personal paper, deduplicating parents
   assert.equal(h.sidebar.getAttribute('data-smart-tags-mode'), null);
   assert.equal(h.sidebar.children.some(node => node.id === 'zotero-collections-tree-container'), true);
   assert.equal(h.observers.size, 0); assert.equal(h.subscriptions.size, 0);
+});
+
+test('native counts and installed concept searches refresh when only a paper binding mask changes',async()=>{
+  const h=harness();h.items.push(item(9,['Fuel cells']));const masked=tags.map(value=>({...value,...(value.id==='fc'?{aliases:['Fuel cells'],nativeBindingExclusions:{'1:ITEM1':['FC'],'1:ITEM9':['Fuel cells']}}:{})}));h.setSnapshot({tags:masked});
+  const navigator=mountNavigator(h.win,h.api);await navigator.refresh();assert.equal(h.label('FC')?.textContent,'FC2');assert.ok(h.nodes().some(node=>node.textContent==='5 papers'),'unfiltered native browsing still includes the masked papers');
+  h.label('FC')!.fire('click');await h.flush();let search=h.win.ZoteroPane.itemsView.collectionTreeRows[0].ref;assert.ok(search.conditions.some(([field,operator,value]:string[])=>field==='key'&&operator==='isNot'&&value==='ITEM1'));
+  h.setSnapshot({tags:masked.map(value=>({...value,...(value.id==='fc'?{nativeBindingExclusions:{'1:ITEM9':['Fuel cells']}}:{})}))});await navigator.refresh();assert.equal(h.label('FC')?.textContent,'✓FC3');search=h.win.ZoteroPane.itemsView.collectionTreeRows[0].ref;assert.equal(search.conditions.some(([field,,value]:string[])=>field==='key'&&value==='ITEM1'),false);assert.ok(search.conditions.some(([field,,value]:string[])=>field==='key'&&value==='ITEM9'));
+  h.setSnapshot({tags:masked.map(value=>({...value,nativeBindingExclusions:undefined}))});await navigator.refresh();assert.equal(h.label('FC')?.textContent,'✓FC4');search=h.win.ZoteroPane.itemsView.collectionTreeRows[0].ref;assert.equal(search.conditions.some(([field]:string[])=>field==='key'),false);await navigator.destroy();
 });
 
 test('selection expands independently, contextual details stay compound, and clearing search retains selected filters', async () => {

@@ -1,7 +1,7 @@
 import type { PaperRecord } from './core.ts';
 import { paperFingerprint } from './core.ts';
 import type { TagDefinition } from './core.ts';
-import type { ConceptFilter } from './concept-filter.ts';
+import {compileConceptFilter,type ConceptFilter} from './concept-filter.ts';
 import { buildConceptSearch } from './native-filter.ts';
 import { METADATA_FIELDS, buildMetadataPreview, extractPaperIdentifiers, normalizeMetadataCreators, parsePaperIdentifier, sameMetadata } from './paper-recovery.ts';
 import type { MetadataPatch, MetadataPreview, MetadataSnapshot, PaperIdentifier, PaperInputAssessment, PDFInputStatus } from './paper-recovery.ts';
@@ -200,6 +200,7 @@ export class ZoteroHost implements LibraryHost {
   }
   async saveConceptSearch(name:string,filter:ConceptFilter,definitions:TagDefinition[]) {
     if(!name.trim()||!filter.selections.length)throw new Error('Name the search and select at least one concept.');
+    if(compileConceptFilter(definitions,filter).clauses.some(clause=>clause.bindings))throw new Error('This filter uses verified paper matches that Zotero saved searches cannot retain. Use Find papers or the live tag navigator for these results.');
     const libraryID=Zotero.Libraries.userLibraryID;
     const names=(await Zotero.Tags.getAll(libraryID)).map((tag:any)=>tag.tag);
     const search=buildConceptSearch(definitions,filter,libraryID,names);

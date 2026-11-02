@@ -1,5 +1,19 @@
 # Migration notes
 
+## Version 1.0.5: Use or Skip meanings (schema 13)
+
+Install the [v1.0.5 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi) over your existing extension, then reopen Smart Tags. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.0.5) includes the installer and [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5-source.zip).
+
+Version 1.0.5 keeps an exact-byte **state.json.pre-v13.json** backup before upgrading to **schema 13**. Different existing backup bytes receive a numbered suffix. Migration preserves saved definitions, choices, scientific checks, paid replies, spending, settings and history. It performs no AI request, tag admission or native library write. Older unfinished runs keep their original policy; **Use clear meanings** confirms available meanings in one explicit batch. Native-definition protocol 2 is unchanged.
+
+New automatic runs save a single clear, grounded scientific meaning during processing. Other proposals offer **Use this meaning** or **Skip defining this tag**. A complete AI glossary definition can be accepted explicitly even when its old paper labels are not supported; that records a researcher-accepted meaning without inventing evidence or approving the old assignments. A missing usable proposal offers an explicit AI retry or Skip. Writing a definition and inspecting papers are optional tools.
+
+Saving a meaning does not change existing Zotero labels. Unverified old label associations stay separate from the scientific definition in Find papers, navigation and counts. A later validated assignment can establish an individual paper's match without taking ownership of a manual label. Undo restores the affected definitions and binding records; admission markers prevent immediate restart from recreating an undone result.
+
+**Important** and other recognized personal labels ask for a treatment. **Keep as personal label** leaves the native label in place and keeps it out of automatic scientific matching. Those papers can still receive other scientific tags. An explicit **Ask AI for a scientific meaning** can change that treatment later.
+
+Zotero saved searches cannot retain the per-paper exclusions used by some verified scientific filters. Those filters remain available in Find papers and the live tag navigator; the extension refuses to save a search that would lose the exclusions on reload.
+
 ## Version 1.0.4: keep meaning editing usable
 
 Install the [v1.0.4 XPI](https://github.com/leviyuli/ZTagging/releases/download/v1.0.4/smart-tags-1.0.4.xpi) over your existing extension, then reopen Smart Tags. The meaning editor uses the existing full-height drawer when a long review list leaves too little room. Save and Close stay visible, drafts survive resizing and refresh, and reopening a deeply scrolled draft reveals its focused field without moving the page.
