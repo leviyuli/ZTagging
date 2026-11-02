@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Refine Tag library with one search, shelf and filter toolbar, compact meaning choices, optional source notes and linked papers, clearer empty results, and keyboard search. Preserve editor drafts, shelf management, meaning decisions and Undo.
+- Show the saved definition when an AI meaning overlaps its name, with Keep saved meaning to close the duplicate proposal. Exclude these proposals from Use clear meanings and preserve saved definitions, paper tags and paid progress.
+- Remove conflicting generated alternate names when the proposed scientific name remains available. Keep existing aliases unchanged, and remove repeated Use/Skip instructions from meaning reviews.
+
 ## 1.0.5 — 2026-11-02
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.0.5/smart-tags-1.0.5-source.zip)

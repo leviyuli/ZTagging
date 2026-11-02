@@ -345,7 +345,7 @@ export function autoSelectClearNativeTagDefinitions(work:NativeTagDefinitionWork
 }
 export function resolveNativeTagDefinition(work:NativeTagDefinitionWork,currentInput:ReconciliationInput,answer:{entryId:string;choiceId?:string;definition?:TagDefinition;leaveUndefined?:boolean;preserveUncertainty?:true;meaningAdmissionPolicy?:1}):NativeTagDefinitionWork {
   assertSettled(work);
-  const source=work.entries.find(entry=>entry.id===answer.entryId),usePending=source?.status==='pending'&&answer.meaningAdmissionPolicy===1&&!!answer.definition&&fingerprint(answer.definition)===fingerprint(source.definition)&&canUseNativeTagMeaning(work,source.id);if(!source||!['question','ready'].includes(source.status)&&!usePending||answer.choiceId&&source.status!=='question')throw new Error('This tag no longer has a meaning available to edit or answer.');
+  const source=work.entries.find(entry=>entry.id===answer.entryId),usePending=source?.status==='pending'&&(answer.leaveUndefined===true||answer.meaningAdmissionPolicy===1&&!!answer.definition&&fingerprint(answer.definition)===fingerprint(source.definition)&&canUseNativeTagMeaning(work,source.id));if(!source||!['question','ready'].includes(source.status)&&!usePending||answer.choiceId&&source.status!=='question')throw new Error('This tag no longer has a meaning available to edit or answer.');
   if(source.meaningAdmission)throw new Error('This scientific meaning is already saved. Open its tag-library definition to change it.');
   if(answer.meaningAdmissionPolicy!==undefined&&answer.meaningAdmissionPolicy!==1)throw new Error('Choose a supported meaning-admission policy.');
   if([!!answer.choiceId,!!answer.definition,answer.leaveUndefined===true].filter(Boolean).length!==1)throw new Error('Choose one meaning, edit its definition, or leave this tag undefined.');
@@ -445,6 +445,19 @@ export function canUseNativeTagMeaning(work:NativeTagDefinitionWork,entryId:stri
 function conceptMeaning(tag:TagDefinition):string {
   return fingerprint({name:canonicalTagKey(tag.name),fullName:canonicalTagKey(tag.fullName??tag.name),description:tag.description,facet:tag.facet,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples,broaderIds:tag.broaderIds,relatedIds:tag.relatedIds??[]});
 }
+function preparedMeaningDefinition(entry:NativeTagDefinitionEntry,available:readonly TagDefinition[],rawNames:Set<string>):TagDefinition {
+  const candidate=entry.definition!,equivalent=available.find(tag=>tag.status==='approved'&&(tag.id===entry.targetTagId||conceptMeaning(tag)===conceptMeaning(candidate)));
+  if(equivalent)return clone(equivalent);
+  const claimed=new Set(available.filter(tag=>tag.id!==candidate.id).flatMap(tag=>labels(tag).map(labelKey)));
+  return {...clone(candidate),aliases:candidate.aliases.filter(alias=>!rawNames.has(canonicalTagKey(alias))&&!isPersonalNativeTagName(alias)&&!claimed.has(labelKey(alias)))};
+}
+export function nativeTagMeaningNameConflicts(work:NativeTagDefinitionWork,entryId:string,definitions:readonly TagDefinition[]):TagDefinition[] {
+  const entry=work.entries.find(entry=>entry.id===entryId);if(!entry?.definition||entry.meaningAdmission)return [];
+  const candidate=entry.definition,current=definitions.find(tag=>tag.id===(entry.targetTagId??candidate.id));
+  if(current&&(current.status!=='approved'||(entry.targetTagId?fingerprint(current)!==fingerprint(candidate):conceptMeaning(current)!==conceptMeaning(candidate))))return [current];
+  const definition=preparedMeaningDefinition(entry,definitions,new Set([canonicalTagKey(entry.sourceName)]));
+  return definitions.filter(tag=>tag.id!==definition.id&&labels(tag).some(label=>labels(definition).some(name=>labelKey(label)===labelKey(name))));
+}
 export function compileNativeTagMeanings(work:NativeTagDefinitionWork,currentInput:ReconciliationInput,entryIds:readonly string[]=work.entries.filter(entry=>nativeTagDefinitionMeaningChosen(work,entry)&&!entry.meaningAdmission).map(entry=>entry.id)):PreparedNativeTagMeanings {
   const result:PreparedNativeTagMeanings={beforeDefinitions:{},afterDefinitions:{},entries:[],questions:[],conflicts:[]};
   if(new Set(entryIds).size!==entryIds.length||entryIds.some(id=>!work.entries.some(entry=>entry.id===id)))throw new Error('Choose each current scientific meaning once.');
@@ -456,8 +469,8 @@ export function compileNativeTagMeanings(work:NativeTagDefinitionWork,currentInp
     const candidate=entry.definition!,available=[...currentInput.definitions,...Object.values(result.afterDefinitions).filter((tag):tag is TagDefinition=>!!tag)],target=entry.targetTagId?currentInput.definitions.find(tag=>tag.id===entry.targetTagId):undefined;
     if(entry.targetTagId&&(!target||target.status!=='approved'||fingerprint(target)!==fingerprint(candidate))){result.questions.push({entryId:id,sourceName:entry.sourceName,message:'The saved meaning changed. Keep its current definition or retry this AI proposal.'});continue;}
     const identity=currentInput.definitions.find(tag=>tag.id===candidate.id);if(!target&&identity&&(identity.status!=='approved'||conceptMeaning(identity)!==conceptMeaning(candidate))){result.questions.push({entryId:id,sourceName:entry.sourceName,message:'This tag identity was edited after preparation. Keep its current definition or skip the proposal.'});continue;}
-    const equivalent=target??available.find(tag=>tag.status==='approved'&&conceptMeaning(tag)===conceptMeaning(candidate));
-    const definition=equivalent?clone(equivalent):{...clone(candidate),...(!supportPaperIds.length?{custom:true,matchingMode:'suggest' as const}:{}),aliases:candidate.aliases.filter(alias=>!rawNames.has(canonicalTagKey(alias))&&!isPersonalNativeTagName(alias))},tagId=definition.id;
+    const prepared=preparedMeaningDefinition(entry,available,rawNames),equivalent=available.find(tag=>tag.id===prepared.id);
+    const definition=equivalent?prepared:{...prepared,...(!supportPaperIds.length?{custom:true,matchingMode:'suggest' as const}:{})},tagId=definition.id;
     const collisions=available.filter(tag=>tag.id!==tagId&&labels(tag).some(label=>labels(definition).some(name=>labelKey(label)===labelKey(name))));
     if(collisions.length){result.questions.push({entryId:id,sourceName:entry.sourceName,message:'This proposed name belongs to another saved meaning. Keep the saved definition or skip this proposal.'});continue;}
     const conflicts=entry.paperIds.filter(paperId=>{const current=currentInput.decisions[`${paperId}|${tagId}`],saved=work.snapshot.decisions[`${paperId}|${tagId}`];return current?.locked||current?.rejected||saved?.locked||saved?.rejected;}).map(paperId=>({entryId:id,paperId,tagId,message:'An earlier lock or rejection protects this saved tag choice.'}));result.conflicts.push(...conflicts);if(conflicts.length)continue;

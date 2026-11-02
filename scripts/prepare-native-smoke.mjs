@@ -10,12 +10,13 @@ const editorOverflow = process.argv.includes('--editor-overflow');
 const editorBaseline = editorOverflow && process.argv.includes('--editor-before');
 const meaningSave = process.argv.includes('--meaning-save');
 const meaningSaveBaseline = meaningSave && process.argv.includes('--meaning-save-before');
+const libraryRefinement = process.argv.includes('--library-refinement');
 const theme = process.argv.includes('--dark-theme') ? 'dark' : process.argv.includes('--light-theme') ? 'light' : 'system';
 const source = path.join(root, meaningSaveBaseline ? 'build/meaning-save-before-addon' : editorBaseline ? 'build/editor-before-addon' : automaticWorkflow && !builtAddon ? 'addon' : 'build/addon');
 const nativeAddon = path.join(root, 'build', automaticWorkflow ? 'native-automatic-addon' : 'native-addon');
 const profile = path.join(root, automaticWorkflow ? '.test-profile-native-automatic' : process.argv.includes('--fresh-profile') ? '.test-profile-native-fresh' : '.test-profile-native');
 const data = path.join(root, 'build', automaticWorkflow ? 'native-automatic-data' : 'native-data');
-const reportPath = path.join(root, 'build', meaningSave ? `native-meaning-save-${meaningSaveBaseline ? 'before' : 'after'}-${theme}-report.json` : editorOverflow ? `native-editor-${editorBaseline ? 'before' : 'after'}-${theme}-report.json` : automaticWorkflow ? `native-automatic-${theme}-report.json` : 'native-smoke-report.json');
+const reportPath = path.join(root, 'build', libraryRefinement ? `native-library-refinement-${theme}-report.json` : meaningSave ? `native-meaning-save-${meaningSaveBaseline ? 'before' : 'after'}-${theme}-report.json` : editorOverflow ? `native-editor-${editorBaseline ? 'before' : 'after'}-${theme}-report.json` : automaticWorkflow ? `native-automatic-${theme}-report.json` : 'native-smoke-report.json');
 const marker = path.join(profile, '.smart-tags-smoke-profile.json');
 const exists = async target => { try { await access(target); return true; } catch { return false; } };
 for (const target of [nativeAddon, profile, data, reportPath]) {
@@ -43,6 +44,7 @@ const configuration = { root, data, profile, reportPath, port: automaticWorkflow
 if (process.argv.includes('--meaning-recovery')) configuration.meaningRecovery = true;
 if (editorOverflow) Object.assign(configuration,{ editorOverflow, editorBaseline });
 if (meaningSave) Object.assign(configuration,{ meaningSave, meaningSaveBaseline });
+if (libraryRefinement) configuration.libraryRefinement = true;
 if (process.argv.includes('--preview-xpi')) {
   const requestedVersion = process.argv.find(value => value.startsWith('--preview-version='))?.slice('--preview-version='.length);
   const previewVersion = requestedVersion ?? '1.0.1pre';

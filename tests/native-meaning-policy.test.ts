@@ -4,7 +4,7 @@ import {fingerprint,paperFingerprint} from '../src/core.ts';
 import type {PaperRecord,TagDefinition} from '../src/core.ts';
 import type {ReconciliationInput} from '../src/tag-reconciliation.ts';
 import {isPersonalNativeTagName,validNativeTagTreatments} from '../src/native-meaning-policy.ts';
-import {acceptNativeTagDefinitionResult,automaticNativeTagDefinitionChoiceIds,autoSelectClearNativeTagDefinitions,canUseNativeTagMeaning,clearNativeTagDefinitionChoiceIds,compileNativeTagDefinitions,compileNativeTagMeanings,continueNativeTagDefinitionWork,createNativeTagDefinitionWork,failNativeTagDefinitionTask,nativeTagDefinitionMeaningChosen,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,refreshUndispatchedNativeTagDefinitionWork,resolveClearNativeTagDefinitionChoices,resolveNativeTagDefinition,resolveNativeTagTreatment,resumeNativeTagDefinitionWork,settleNativeTagMeaningAdmissions,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
+import {acceptNativeTagDefinitionResult,automaticNativeTagDefinitionChoiceIds,autoSelectClearNativeTagDefinitions,canUseNativeTagMeaning,clearNativeTagDefinitionChoiceIds,compileNativeTagDefinitions,compileNativeTagMeanings,continueNativeTagDefinitionWork,createNativeTagDefinitionWork,failNativeTagDefinitionTask,nativeTagDefinitionMeaningChosen,nativeTagMeaningNameConflicts,nextNativeTagDefinitionRequests,noteNativeTagDefinitionDispatch,refreshUndispatchedNativeTagDefinitionWork,resolveClearNativeTagDefinitionChoices,resolveNativeTagDefinition,resolveNativeTagTreatment,resumeNativeTagDefinitionWork,settleNativeTagMeaningAdmissions,validNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 import type {NativeTagDefinitionOptions,NativeTagDefinitionRequest,NativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 
 const clone=<T>(value:T):T=>structuredClone(value);
@@ -120,6 +120,7 @@ test('explicit Use can accept an unchanged complete AI candidate while its remai
   for(const supported of [false,true]){
     const data=fixture(),created=createNativeTagDefinitionWork(data,['ion movement']),draft=nextNativeTagDefinitionRequests(created)[0],response=reply(draft,false);if(!supported)response.judgments=[];const partial=accept(created,draft,response),request=nextNativeTagDefinitionRequests(partial)[0],paused=failNativeTagDefinitionTask(noteNativeTagDefinitionDispatch(partial,request.id),request.id,null,'Synthetic paused remaining checks.',{retryable:true}),entry=paused.entries[0];assert.equal(entry.status,'pending');assert.equal(paused.status,'failed');assert.equal(canUseNativeTagMeaning(paused,entry.id),true);
     assert.throws(()=>resolveNativeTagDefinition(paused,data,{entryId:entry.id,definition:clone(entry.definition!)}),/no longer/);assert.throws(()=>resolveNativeTagDefinition(paused,data,{entryId:entry.id,definition:{...clone(entry.definition!),description:'A changed manual scope.'},meaningAdmissionPolicy:1}),/no longer/);assert.throws(()=>resolveNativeTagDefinition(noteNativeTagDefinitionDispatch(partial,request.id),data,{entryId:entry.id,definition:clone(entry.definition!),meaningAdmissionPolicy:1}),/Wait/);
+    const skipped=resolveNativeTagDefinition(paused,data,{entryId:entry.id,leaveUndefined:true});assert.equal(skipped.entries[0].status,'left-undefined');assert.equal(nextNativeTagDefinitionRequests(skipped).length,0);assert.deepEqual(skipped.history!.at(-1)!.tasks,paused.tasks);assert.equal(validNativeTagDefinitionWork(skipped),true);
     const chosen=resolveNativeTagDefinition(paused,data,{entryId:entry.id,definition:clone(entry.definition!),preserveUncertainty:true,meaningAdmissionPolicy:1}),compiled=compileNativeTagMeanings(chosen,data,[entry.id]),output=compiled.entries[0],definition=compiled.afterDefinitions[output.tagId]!,marker={tagId:output.tagId,definitionFingerprint:fingerprint(definition),candidateFingerprint:output.candidateFingerprint,changeId:`paused-meaning-${supported}`,bindingVerified:false as const},settled=settleNativeTagMeaningAdmissions(chosen,{[entry.id]:marker});
     assert.equal(chosen.entries[0].humanAnswer!.meaningAdmissionPolicy,1);assert.equal(chosen.entries[0].automaticAnswer,undefined);assert.deepEqual(chosen.history!.at(-1)!.tasks,paused.tasks);assert.deepEqual(settled.entries[0].judgments,entry.judgments);assert.equal(output.supportPaperIds.length,supported?3:0);assert.equal(definition.custom,!supported);assert.equal(definition.matchingMode,'suggest');assert.equal(nextNativeTagDefinitionRequests(settled).length,0);assert.equal(settled.tasks.reduce((count,task)=>count+task.dispatches,0),paused.tasks.reduce((count,task)=>count+task.dispatches,0));assert.deepEqual(settled.tasks.flatMap(task=>task.attempts),paused.tasks.flatMap(task=>task.attempts));assert.equal(validNativeTagDefinitionWork(JSON.parse(JSON.stringify(settled))),true);
   }
@@ -154,4 +155,32 @@ test('meaning-only admission respects current support, existing definitions, col
 
 test('model personal metadata asks for treatment while weak scientific context stays information',()=>{
   for(const resolution of ['personal','needs-information']){const data=fixture(),created=createNativeTagDefinitionWork(data,['ion movement'],{selectionPolicyVersion:1}),request=nextNativeTagDefinitionRequests(created)[0],response=reply(request);response.definitions[0].resolution=resolution;const work=accept(created,request,response),entry=work.entries[0];assert.equal(entry.status,'question');assert.equal(entry.questionDetails!.kind,resolution==='personal'?'personal':'information');assert.equal(entry.humanAnswer,undefined);assert.equal(entry.automaticAnswer,undefined);if(resolution==='personal')assert.equal(entry.definition,undefined);assert.equal(validNativeTagDefinitionWork(work),true);}
+});
+
+function chosenCollisionCandidate(fields:Partial<TagDefinition>={}){
+  const data=fixture(3),created=createNativeTagDefinitionWork(data,['ion movement'],{selectionPolicyVersion:1}),request=nextNativeTagDefinitionRequests(created)[0],response=reply(request);Object.assign(response.definitions[0],fields);
+  const work=accept(created,request,response),entry=work.entries[0],chosen=resolveNativeTagDefinition(work,data,{entryId:entry.id,definition:clone(entry.definition!),preserveUncertainty:true,meaningAdmissionPolicy:1});
+  assert.equal(validNativeTagDefinitionWork(chosen),true);return {data,work:chosen,entry:chosen.entries[0]};
+}
+
+test('meaning admission drops only generated alternate names already owned by another saved meaning',()=>{
+  const {data,work,entry}=chosenCollisionCandidate({aliases:['shared generated alias','useful unclaimed alias']}),saved:TagDefinition={...clone(entry.definition!),id:'existing-other-meaning',name:'Other transport concept',fullName:'Other transport concept',description:'A distinct saved transport concept.',aliases:['Shared generated alias'],matchingMode:'manual'},current={...clone(data),definitions:[saved]},before=clone(work),savedBefore=clone(saved);
+  assert.deepEqual(nativeTagMeaningNameConflicts(work,entry.id,current.definitions),[]);
+  const compiled=compileNativeTagMeanings(work,current,[entry.id]);assert.equal(compiled.entries.length,1);assert.deepEqual(compiled.afterDefinitions[entry.tagId]!.aliases,['useful unclaimed alias']);assert.deepEqual(saved,savedBefore);assert.deepEqual(work,before);assert.equal(compiled.beforeDefinitions[saved.id],undefined);assert.equal(compiled.afterDefinitions[saved.id],undefined);
+});
+
+test('main names and full names report every saved owner without inferring scientific equivalence',()=>{
+  const {data,work,entry}=chosenCollisionCandidate({name:'Transport resistance',fullName:'Membrane ionic resistance',aliases:['unclaimed alias']}),candidate=entry.definition!,first:TagDefinition={...clone(candidate),id:'saved-main-owner',name:'transport resistance',fullName:'transport resistance',description:'A different existing resistance meaning.',aliases:[]},second:TagDefinition={...clone(candidate),id:'saved-full-name-owner',name:'Distinct scientific concept',fullName:'membrane ionic resistance',description:'A second independently saved meaning.',aliases:[]},definitions=[first,second],before=clone(definitions);
+  assert.deepEqual(nativeTagMeaningNameConflicts(work,entry.id,definitions).map(tag=>tag.id),[first.id,second.id]);
+  const compiled=compileNativeTagMeanings(work,{...clone(data),definitions},[entry.id]);assert.equal(compiled.entries.length,0);assert.equal(compiled.questions.length,1);assert.deepEqual(compiled.afterDefinitions,{});assert.deepEqual(definitions,before);
+});
+
+test('a compatible current saved meaning is reused without a conflict or any saved-field change',()=>{
+  const {data,work,entry}=chosenCollisionCandidate(),saved:TagDefinition={...clone(entry.definition!),id:'same-saved-meaning',aliases:['researcher alias'],matchingMode:'manual'},current={...clone(data),definitions:[saved]};
+  assert.deepEqual(nativeTagMeaningNameConflicts(work,entry.id,current.definitions),[]);const compiled=compileNativeTagMeanings(work,current,[entry.id]);assert.equal(compiled.entries[0].tagId,saved.id);assert.deepEqual(compiled.beforeDefinitions[saved.id],saved);assert.deepEqual(compiled.afterDefinitions[saved.id],saved);
+});
+
+test('a current edit to the allocated tag identity becomes a saved-meaning conflict',()=>{
+  const {data,work,entry}=chosenCollisionCandidate(),edited:TagDefinition={...clone(entry.definition!),description:'A researcher changed the meaning after this proposal.',aliases:['researcher alias']},current={...clone(data),definitions:[edited]};
+  assert.deepEqual(nativeTagMeaningNameConflicts(work,entry.id,current.definitions),[edited]);const compiled=compileNativeTagMeanings(work,current,[entry.id]);assert.equal(compiled.entries.length,0);assert.match(compiled.questions[0].message,/identity was edited/);assert.deepEqual(compiled.afterDefinitions,{});
 });

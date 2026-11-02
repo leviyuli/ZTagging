@@ -235,6 +235,51 @@ input[aria-invalid="true"] { border-color:var(--danger); }
 .shelf-controls > button { margin-bottom:3px; }
 .shelf-buttons { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-bottom:3px; }
 .shelf-merge-sources { display:flex; flex-direction:column; gap:10px; margin:18px 0; }
+.tag-library .library-overview { margin-bottom:12px; }
+.library-overview .card-description { margin-top:0; font-variant-numeric:tabular-nums; }
+.library-page-header { align-items:center; flex-direction:row; flex-wrap:wrap; gap:8px 16px; margin-bottom:14px; }
+.library-page-header .library-overview { flex:1; justify-content:flex-end; gap:16px; margin:0; }
+.library-toolbar { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,1.8fr); align-items:start; gap:14px; padding-bottom:16px; border-bottom:1px solid var(--line); }
+.library-toolbar .library-search,.library-toolbar .field { min-width:0; margin-bottom:0; }
+.library-toolbar .shelf-toolbar { min-width:0; padding:0; border:0; }
+.library-toolbar .shelf-controls { grid-template-columns:minmax(160px,1fr) minmax(118px,.65fr) auto; align-items:start; gap:10px; }
+.library-toolbar .smart-tags-dropdown-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.library-toolbar .library-shelf-options { min-width:0; align-self:start; margin-top:0; padding:28px 0 0; }
+.library-shelf-options > summary { cursor:pointer; color:var(--muted); font-size:12px; white-space:nowrap; }
+.library-shelf-options > summary:hover { color:var(--ink); }
+.library-shelf-options[open] > summary { margin-bottom:8px; }
+.library-shelf-options .shelf-buttons { align-items:flex-start; flex-direction:column; padding:0; }
+.library-shelf-options .shelf-buttons > button { text-align:left; }
+.tag-library > .stack { gap:8px; }
+.tag-library .library-meaning-summary { padding:8px 0; border-top:0; gap:8px 16px; }
+.tag-library .library-meaning-summary > div:first-child { flex:1; min-width:200px; }
+.tag-library .library-meaning-summary p { font-size:13px; }
+.tag-library .library-meaning-summary .card-description { font-size:12px; }
+.tag-library .library-meaning-summary .notice { margin-top:8px; }
+.tag-library .library-review-inbox { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 12px; padding-top:8px; border-top:0; }
+.tag-library .library-review-inbox > .card-description { margin-top:0; align-self:center; font-variant-numeric:tabular-nums; }
+.tag-library .library-review-inbox > .stack { grid-column:1/-1; gap:0; }
+.tag-library .library-review-inbox .review-group { padding:0; }
+.tag-library .library-review-inbox .review-choice { padding:12px 0; }
+.tag-library .library-review-inbox .review-choice > strong { display:block; font-size:15px; font-weight:600; }
+.tag-library .library-review-inbox .native-meaning-status p { max-width:75ch; overflow-wrap:anywhere; }
+.tag-library .library-review-inbox .meaning-description { margin-top:4px; }
+.tag-library .native-saved-meanings { margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+.tag-library .native-saved-meanings .native-meaning-status:first-child { margin-top:0; }
+.tag-library .native-decision-footer { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.tag-library .native-decision-footer .actions,.tag-library .native-decision-footer details { margin-top:0; }
+.tag-library .native-decision-footer > .native-meaning-options { margin-inline-start:auto; }
+.tag-library .native-clear-meanings { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; padding:6px 0; }
+.tag-library .native-clear-meanings .card-description { margin:0; }
+.tag-library .library-result-count { padding:10px 14px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+.tag-library .tag-workspace-list > .tag-row { padding:14px 16px; }
+.tag-library .tag-workspace-list .tag-row > p { max-width:75ch; }
+.tag-library .tag-workspace-list .tag-row .tag-meta { margin-top:8px; gap:6px 14px; }
+.tag-library .library-source-papers,.tag-library .library-saved-notes { margin-top:8px; }
+.tag-library .library-source-papers > summary,.tag-library .library-saved-notes > summary { cursor:pointer; color:var(--muted); font-size:12px; }
+.tag-library .library-source-papers .warning-papers { margin-top:8px; }
+.tag-library .library-saved-notes .native-meaning-support { margin-top:0; }
+.tag-library .tag-row:last-child { border-bottom:0; }
 .tag-meaning-selection { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--surface-2); }
 .native-meaning-review > .tag-row { margin-top:10px; }
 .native-meaning-panel { display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-height:180px; }
@@ -425,6 +470,7 @@ td .muted { display:block; font-size:11px; }
   .split { grid-template-columns:minmax(0,1fr) 300px; gap:20px; }
   .grid { gap:20px; }
   h1 { font-size:26px; }
+  .library-toolbar { grid-template-columns:minmax(0,1fr); gap:12px; }
 }
 @media (max-width:900px) {
   :root { --sidebar-width:180px; }
@@ -434,6 +480,7 @@ td .muted { display:block; font-size:11px; }
   .editor { position:static; }
   .overview-guide .card-header { padding-top:4px; }
   .page-header { flex-direction:column; gap:12px; margin-bottom:18px; }
+  .library-page-header { flex-direction:row; gap:8px 16px; margin-bottom:14px; }
   .header-status { margin-top:0; }
   .brand { padding-inline:6px; gap:7px; }
   .brand-mark { width:27px; height:27px; }
@@ -451,6 +498,10 @@ td .muted { display:block; font-size:11px; }
   .find-search-form { align-items:stretch; flex-direction:column; gap:6px; }
   .find-search-form > button { align-self:flex-start; margin:0; }
   .shelf-controls { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .library-toolbar .shelf-controls { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .library-toolbar .library-shelf-options { grid-column:1/-1; padding:0; }
+  .library-shelf-options .shelf-buttons { flex-direction:row; flex-wrap:wrap; }
+  .tag-library .native-decision-footer > .native-meaning-options { margin-inline-start:0; }
   .brand small { font-size:10px; }
   .nav-button { font-size:12px; }
   .sidebar-footer { padding-inline:8px; }
