@@ -13,6 +13,7 @@ type MenuAction = { id: string; label: string; run: () => void | Promise<unknown
 type ModalState = { kind: 'apply' | 'create-diy'; ids: string[] } | { kind: 'finish'; ids: string[]; runId: string; acceptRemaining: boolean } | { kind: 'cleanup-history'; records: number; bytes: number } | { kind: 'search' | 'reset-analysis' | 'merge-shelves' } | null;
 const facets = ['system', 'component', 'phenomenon', 'method'] as const;
 const facetNames: Record<string, string> = { system: 'Systems', component: 'Components & materials', phenomenon: 'Phenomena', method: 'Methods' };
+const UNDEFINED_TAGS_SHELF='my-undefined-tags';
 const pageTitles: Record<ManagerPage, [string, string]> = {
   overview: ['Your library, clearly tagged', 'Prepare a useful tag list, then review its paper suggestions.'],
   connection: ['Connect AI', 'Choose the connection and model used for your papers.'],
@@ -68,6 +69,8 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
   let nativeMeaningWorkId = '';
   let nativeMeaningReviewHidden = true;
   let pendingNativeReview:{workId:string;entryId:string}|null=null;
+  let requestedNativeWorkId:string|undefined;
+  let buildRunFilter:{runId:string;savedCount:number}|null=null;
   let nativeMeaningPage = 0;
   const excludedNativeMeaningRows = new Set<string>();
   let reviewDetailsOpen = false;
@@ -359,8 +362,8 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     const active = doc.activeElement as HTMLElement | null;
     editorReturnFocus = active?.id && !doc.getElementById('tag-editor-form')?.contains(active) ? active.id : fallback;
   }
-  function browseTags() { nativeMeaningReviewHidden = true;pendingNativeReview=null;if (editorNativeEntry) hideEditor(); }
-  function nav(target: ManagerPage, showMeanings = false) { hideEditor();page = target; if (target === 'review') assignmentView = 'suggestions';if (target === 'vocabulary') nativeMeaningReviewHidden = !showMeanings;modal = null;win.scrollTo(0,0);render(); }
+  function browseTags() { nativeMeaningReviewHidden = true;pendingNativeReview=null;requestedNativeWorkId=undefined;if (editorNativeEntry) hideEditor(); }
+  function nav(target: ManagerPage, showMeanings = false) { hideEditor();page = target; if (target === 'review') assignmentView = 'suggestions';if(target==='vocabulary'){if(showMeanings)nativeMeaningReviewHidden=false;else browseTags();}else{pendingNativeReview=null;requestedNativeWorkId=undefined;}modal = null;win.scrollTo(0,0);render(); }
   function empty(title: string, message: string, action?: Node) {
     return h('div', 'empty', h('strong', '', title), h('p', '', message), action ? h('div', 'actions', action) : null);
   }
@@ -387,8 +390,8 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     listen(element,'input', event => { onInput((event.currentTarget as HTMLTextAreaElement).value);updateTagApplyState(); });
     return element;
   }
-  function select<T extends string>(id: string, value: T, choices: [T, string][], onChange: (value: T) => void, accessibleName?: string) {
-    const options:DropdownOptions={ id, value, choices, onChange: next => { onChange(next as T);updateTagApplyState(); }, disabled: busy };
+  function select<T extends string>(id: string, value: T, choices: [T, string][], onChange: (value: T) => void, accessibleName?: string, disabled=false) {
+    const options:DropdownOptions={ id, value, choices, onChange: next => { onChange(next as T);updateTagApplyState(); }, disabled: busy||disabled };
     const control = createDropdown(win,options);dropdownOptions.set(control,options);
     if (accessibleName) control.setAttribute('aria-label', accessibleName);
     return control;
@@ -452,9 +455,9 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     return receipt.result;
   }
   function viewQuery():ViewQuery {
-    const params={paperQuery,vocabQuery,libraryTagShelfId,libraryTagStatus,...(page==='build'||page==='cleanup'?{buildScope,buildMode}:{}),...(page==='assignment'?{assignmentScope,assignmentTagShelfId}:{}),...(page==='settings'?{settingsTransfersOpen}:{}),conceptFilter,conceptQuery,expandedConceptIds:[...expandedConcepts],selectedPaper,assignmentRunId:assignmentRunSelection,reviewFilter,activityHistoryQuery,activityHistoryOpen,completedActivityOpen,activityPaperInfoOpen,deferredReviewOpen,attentionQuery,attentionFilter,attentionPage,paperExclusionPage,keepPreviewPage,existingTagQuery,existingTagView,keepFilter,existingTagFilter,existingTagFacet,existingTagPage,existingPreviewPage,diyComparisonPage,diyPreviewPage,topicPage,expandedExistingGroups:[...expandedExistingGroups],existingPaperPages:Object.fromEntries(existingPaperPages),nativeMeaningReviewHidden,nativeReviewTarget:pendingNativeReview,tagView,editorTagId:editorTag?.id,editorPreparationId,editorNativeEntry,libraryLinkedPaperNames:[...libraryLinkedPapersOpen],libraryNoteNames:[...libraryNotesOpen],relationshipQueries:Object.fromEntries(relationQueries),openRelationshipPickers:[...openRelationshipPickers],libraryFiltersOpen,assignmentView};
-    const pageSize=page==='vocabulary'?20:page==='cleanup'?tagView==='questions'?10:20:PAGE_SIZE;
-    const pageIndex=page==='vocabulary'?nativeMeaningReviewHidden?vocabularyPage:nativeMeaningPage:page==='library'?libraryPage:page==='activity'?activityHistoryPage:page==='assignment'||page==='review'?reviewPage:page==='cleanup'?tagView==='questions'?tagQuestionPage:vocabularyPage:0;
+    const params={paperQuery,vocabQuery,libraryTagShelfId,libraryTagStatus,...(page==='vocabulary'?{buildRunId:buildRunFilter?.runId}:{}),...(page==='build'||page==='cleanup'?{buildScope,buildMode}:{}),...(page==='assignment'?{assignmentScope,assignmentTagShelfId}:{}),...(page==='settings'?{settingsTransfersOpen}:{}),conceptFilter,conceptQuery,expandedConceptIds:[...expandedConcepts],selectedPaper,assignmentRunId:assignmentRunSelection,reviewFilter,activityHistoryQuery,activityHistoryOpen,completedActivityOpen,activityPaperInfoOpen,deferredReviewOpen,attentionQuery,attentionFilter,attentionPage,paperExclusionPage,keepPreviewPage,existingTagQuery,existingTagView,keepFilter,existingTagFilter,existingTagFacet,existingTagPage,existingPreviewPage,diyComparisonPage,diyPreviewPage,topicPage,expandedExistingGroups:[...expandedExistingGroups],existingPaperPages:Object.fromEntries(existingPaperPages),nativeMeaningReviewHidden,nativeMeaningWorkId:requestedNativeWorkId,nativeReviewTarget:pendingNativeReview,tagView,editorTagId:editorTag?.id,editorPreparationId,editorNativeEntry,libraryLinkedPaperNames:[...libraryLinkedPapersOpen],libraryNoteNames:[...libraryNotesOpen],relationshipQueries:Object.fromEntries(relationQueries),openRelationshipPickers:[...openRelationshipPickers],libraryFiltersOpen,assignmentView};
+    const pageSize=page==='vocabulary'?20:page==='cleanup'||page==='build'?tagView==='questions'?10:20:PAGE_SIZE;
+    const pageIndex=page==='vocabulary'?nativeMeaningReviewHidden?vocabularyPage:nativeMeaningPage:page==='library'?libraryPage:page==='activity'?activityHistoryPage:page==='assignment'||page==='review'?reviewPage:page==='cleanup'||page==='build'?tagView==='questions'?tagQuestionPage:vocabularyPage:0;
     const query:ViewQuery={page,params:{...params,pageSize},limit:pageSize},key=JSON.stringify(query);
     let cursors=viewCursors.get(key);if(!cursors){cursors=new Map([[0,'0']]);viewCursors.set(key,cursors);if(viewCursors.size>32)viewCursors.delete(viewCursors.keys().next().value!);}
     query.cursor=cursors.get(pageIndex)??String(pageIndex*pageSize);queryPageIndexes.set(query,pageIndex);return query;
@@ -464,10 +467,11 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     if(query.page==='activity')return model.history.length;
     if(query.page==='assignment'||query.page==='review')return model.suggestions.length;
     if(query.page==='vocabulary'&&!query.params?.nativeMeaningReviewHidden)return model.nativeDefinitionPreparation?.rows.length??model.tagLibraryEntries?.length??model.tags.length;
-    if(query.page==='cleanup'&&query.params?.tagView==='questions')return model.tagPreparation?.questions.length??0;
+    if((query.page==='cleanup'||query.page==='build')&&query.params?.tagView==='questions')return model.tagPreparation?.questions.length??0;
     return model.tagLibraryEntries?.length??model.tagPreparation?.tags.length??model.tags.length;
   }
   function acceptViewModel(model:ManagerSnapshot) {
+    if(model.nativeDefinitionPreparation?.id&&model.nativeDefinitionPreparation.id!==state?.nativeDefinitionPreparation?.id)nativeMeaningPage=0;
     state=model;
     if(model.queue.switchingToFasterBuild||!model.queue.canUseFasterBuild)requestingFasterBuild=false;
     if(model.connection.signingIn!==undefined)signingIn=model.connection.signingIn;
@@ -498,7 +502,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     }
     if (state.tagShelves) {
       const shelfIds = new Set(state.tagShelves.map(shelf => shelf.id));
-      if (libraryTagShelfId !== 'all' && !shelfIds.has(libraryTagShelfId)) { libraryTagShelfId = 'all';vocabularyPage = 0;renamingShelf = ''; }
+      if (libraryTagShelfId !== 'all' && libraryTagShelfId!==UNDEFINED_TAGS_SHELF&&!shelfIds.has(libraryTagShelfId)) { libraryTagShelfId = 'all';vocabularyPage = 0;renamingShelf = ''; }
       if (assignmentTagShelfId !== 'all' && !shelfIds.has(assignmentTagShelfId)) assignmentTagShelfId = state.workflow?.assignmentTagShelfId && shelfIds.has(state.workflow.assignmentTagShelfId) ? state.workflow.assignmentTagShelfId : 'all';
     }
     if (pendingNavigation) { const next = pendingNavigation; pendingNavigation = null; navigate(next, false); }
@@ -606,7 +610,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
   async function openReviewItem(item: DisplayReviewItem) {
     const destination = await run('open-review-item', { id: item.id });
     if (item.kind === 'assignment') { assignmentRunSelection = destination?.runId || item.taskId;assignmentView = 'suggestions';nav('assignment');return; }
-    if (item.ownerPage === 'vocabulary') openNativeMeanings({workId:item.workId||item.taskId,entryId:item.questionId||''});
+    if (item.ownerPage === 'vocabulary') {openNativeMeanings({workId:item.workId||item.taskId,entryId:item.questionId||''});if(item.state==='deferred'){deferredReviewOpen=true;render();}}
     else { tagView = 'questions';nav(destination?.page || 'cleanup'); }
   }
   function nativeReviewRow(item: DisplayReviewItem) {
@@ -694,7 +698,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
   function reviewItemBody(item: DisplayReviewItem, library = false): Node {
     const s = currentState();
     const later = () => run('defer-review-item', { id: item.id }, 'Left for later. Other work can continue.');
-    if (item.state === 'deferred') { const row=h('div', 'inline between', h('span', '', item.label),button('Reopen', () => run('reopen-review-item', { id: item.id }), 'small'));row.id=`deferred-review-${item.id}`;row.tabIndex=-1;return row; }
+    if (item.state === 'deferred') { const row=h('div', 'inline between', h('span', '', item.label),button('Reopen', async () => {await run('reopen-review-item', { id: item.id });if(library){deferredReviewOpen=false;nativeMeaningPage=0;render();}}, 'small'));row.id=`deferred-review-${item.id}`;row.tabIndex=-1;return row; }
     if (item.kind === 'assignment') {
       const suggestion = s.suggestions.find(value => value.id === item.suggestionId);
       if (!suggestion) return h('div', '', h('p', '', item.message || item.label),button('Open assignment', () => openReviewItem(item), 'small'));
@@ -725,9 +729,10 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     const article=h('article', 'review-choice',h('strong', '', item.sourceName || item.label),native ? nativeMeaningSupport(native) || nativeDraftMeaning(native) : null,h('p', '', native?.question || item.message || question?.description || ''),actions);
     return native ? nativeReviewTarget(article,native) : article;
   }
-  function reviewInbox(items: DisplayReviewItem[], title = 'Needs your choice', library = false): Node | null {
+  function reviewInbox(items: DisplayReviewItem[], title = 'Needs your choice', library = false,deferredTotal?:number): Node | null {
     const open = items.filter(item => item.state === 'open'), deferred = items.filter(item => item.state === 'deferred');
-    if (!open.length && !deferred.length) return null;
+    const deferredCount=deferredTotal??deferred.length;
+    if (!open.length && !deferred.length&&!deferredCount) return null;
     const definitions = open.filter(item => item.kind === 'definition'), papers = new Map<string, DisplayReviewItem[]>();
     for (const item of open.filter(item => item.kind === 'assignment')) { const key = item.paperId || item.id;const group = papers.get(key) || [];group.push(item);papers.set(key,group); }
     const body = h('div', 'stack');
@@ -735,7 +740,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     if (nativeWork && definitions.some(item => nativeReviewRow(item)?.canConfirmClear)) { const clear=clearNativeMeanings(nativeWork,library);if (clear) body.append(clear); }
     if (definitions.length) body.append(h('section', 'review-group',library && !papers.size ? null : h('h3', '', 'Tag meanings'),...definitions.map(item => reviewItemBody(item,library))));
     if (papers.size) body.append(h('section', '',h('h3', '', 'Paper tags'),...[...papers].map(([paperId, group]) => h('article', 'review-group',paperMap.has(paperId) ? paperButton(paperId) : h('strong', '', group[0].label),...group.map(item => reviewItemBody(item,library))))));
-    if (deferred.length) body.append(details(`Later (${deferred.length})`, deferredReviewOpen, value => { deferredReviewOpen = value; }, () => h('div', 'stack',...deferred.map(item => reviewItemBody(item,library)))));
+    if (deferredCount) body.append(details(`Later (${deferredCount})`, deferredReviewOpen, value => { deferredReviewOpen = value;if(library)nativeMeaningPage=0; }, () => h('div', 'stack',...deferred.map(item => reviewItemBody(item,library)))));
     const count = [definitions.length ? `${definitions.length} ${definitions.length === 1 ? 'meaning' : 'meanings'}` : '',papers.size ? `${papers.size} ${papers.size === 1 ? 'paper' : 'papers'}` : ''].filter(Boolean).join(' · ');
     const heading=title === 'Needs your choice' && definitions.length > 0 && !papers.size && definitions.every(item => nativeReviewRow(item)?.canConfirmClear) ? 'Clear meanings ready' : title;
     return h('section', `review-inbox${library ? ' library-review-inbox' : ''}`,h('h2', '', heading),h('p', 'card-description',count || 'Other work can continue.'),body);
@@ -753,7 +758,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
   function assignmentTagCount() {return currentState().totals?.assignableTags??assignmentTags().length;}
   function remotePage(noun=''):boolean {
     if(viewTotal===undefined)return false;
-    return page==='library'&&!noun||page==='activity'&&noun==='changes'||(page==='assignment'||page==='review')&&!noun||page==='vocabulary'&&noun===(nativeMeaningReviewHidden?'tags':'meanings')||page==='cleanup'&&noun===(tagView==='questions'?'questions':'tags');
+    return page==='library'&&!noun||page==='activity'&&noun==='changes'||(page==='assignment'||page==='review')&&!noun||page==='vocabulary'&&noun===(nativeMeaningReviewHidden?'tags':'meanings')||(page==='cleanup'||page==='build')&&noun===(tagView==='questions'?'questions':'tags');
   }
   function pageRows<T>(rows:T[],pageIndex:number,size:number,noun=''):T[] {return remotePage(noun)?rows:rows.slice(pageIndex*size,(pageIndex+1)*size);}
   function pageTotal(local:number,noun=''):number {return remotePage(noun)?viewTotal!:local;}
@@ -1039,16 +1044,16 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     const s = currentState();
     const readyTags=forAssignment ? assignmentTags() : approvedTags();
     const label = (name: string, total: number, ready: number) => `${name} · ${total}${total === ready ? ' tags' : ` total · ${ready} ready`}`;
-    return [['all', label('All tags', s.totals?.tags??s.tagLibraryEntries?.length??approvedTags().length, forAssignment?s.totals?.assignableTags??readyTags.length:s.totals?.definedTags??readyTags.length)], ...(s.tagShelves || []).map(shelf => [shelf.id, label(shelf.name, shelf.count, (forAssignment?shelf.assignableCount:shelf.readyCount)??readyTags.filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string])];
+    return [['all', label('All tags', s.totals?.tags??s.tagLibraryEntries?.length??approvedTags().length, forAssignment?s.totals?.assignableTags??readyTags.length:s.totals?.definedTags??readyTags.length)], ...(s.tagShelves || []).filter(shelf=>shelf.id!==UNDEFINED_TAGS_SHELF).map(shelf => [shelf.id, label(shelf.name, shelf.count, (forAssignment?shelf.assignableCount:shelf.readyCount)??readyTags.filter(tag => shelf.tagIds.includes(tag.id)).length)] as [string,string]),...(!forAssignment?[[UNDEFINED_TAGS_SHELF,'My tags without meanings'] as [string,string]]:[])];
   }
   function libraryShelfControls(search: HTMLElement) {
-    const shelf = currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
+    const virtual=libraryTagShelfId===UNDEFINED_TAGS_SHELF,shelf = virtual?undefined:currentState().tagShelves?.find(shelf => shelf.id === libraryTagShelfId);
     const merge = () => {
       mergeShelfIds.clear();if (shelf) mergeShelfIds.add(shelf.id);
       mergedShelfName = 'Combined tags';let suffix = 2;while (currentState().tagShelves?.some(value => value.name === mergedShelfName)) mergedShelfName = `Combined tags ${suffix++}`;
       modal = {kind:'merge-shelves'};render();
     };
-    const controls = h('div', 'shelf-controls', field('Shelf', select('tag-library-shelf', libraryTagShelfId, tagShelfOptions(), value => { browseTags();libraryTagShelfId = value;vocabularyPage = 0;renamingShelf = '';render(); }, 'Tag library shelf')), field('Show', select('tag-library-status', libraryTagStatus, [['all','All tags'],['ready','Defined'],['undefined','Needs meaning']], value => { browseTags();libraryTagStatus = value;vocabularyPage = 0;render(); }, 'Tag readiness')), details('Shelf options',libraryShelfOptionsOpen,value => { libraryShelfOptionsOpen = value; },() => h('div','shelf-buttons',button('Merge shelves…',merge,'small',(currentState().tagShelves?.length || 0) < 2),shelf ? button('Rename shelf…',() => { renamingShelf = shelf.id;shelfNameDrafts.set(shelf.id,shelf.name);render(); },'quiet small') : null)));
+    const controls = h('div', 'shelf-controls', field('Shelf', select('tag-library-shelf', libraryTagShelfId, tagShelfOptions(), value => { browseTags();buildRunFilter=null;libraryTagShelfId = value;if(value===UNDEFINED_TAGS_SHELF)libraryTagStatus='undefined';vocabularyPage = 0;renamingShelf = '';render(); }, 'Tag library shelf')), field('Show', select('tag-library-status', virtual?'undefined':libraryTagStatus, [['all','All tags'],['ready','Defined'],['undefined','Needs meaning']], value => { browseTags();buildRunFilter=null;libraryTagStatus = value;vocabularyPage = 0;render(); }, 'Tag readiness',virtual)), !virtual?details('Shelf options',libraryShelfOptionsOpen,value => { libraryShelfOptionsOpen = value; },() => h('div','shelf-buttons',button('Merge shelves…',merge,'small',(currentState().tagShelves?.length || 0) < 2),shelf ? button('Rename shelf…',() => { renamingShelf = shelf.id;shelfNameDrafts.set(shelf.id,shelf.name);render(); },'quiet small') : null)):null);
     if (shelf && renamingShelf === shelf.id) controls.append(field('Shelf name', input('tag-shelf-name', shelfNameDrafts.get(shelf.id) ?? shelf.name, value => { shelfNameDrafts.set(shelf.id, value); })), button('Save shelf name', async () => { await run('rename-tag-shelf', { id: shelf.id, name: (shelfNameDrafts.get(shelf.id) || '').trim() }, 'Shelf renamed.');renamingShelf = '';render(); }, 'small'), button('Cancel rename', () => { renamingShelf = '';render(); }, 'small quiet'));
     controls.querySelector('details')?.classList.add('library-shelf-options');
     return h('div','library-toolbar',search,h('div','shelf-toolbar',controls));
@@ -1127,7 +1132,16 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     const proposed = nativeMeaningTag(row);
     editorTag = copyTag(editorDrafts.get(editorDraftKey(proposed)) || proposed);relationQueries.clear();openRelationshipPickers.clear();render();focusTagEditorField('tag-description');
   }
-  function openNativeMeanings(target?:{workId:string;entryId:string}) { pendingNativeReview=target??null;nav('vocabulary',true); }
+  function openNativeMeanings(target?:{workId:string;entryId:string}) { nativeMeaningPage=0;deferredReviewOpen=false;pendingNativeReview=target??null;requestedNativeWorkId=target?.workId??currentState().nativeDefinitionPreparation?.id;nav('vocabulary',true); }
+  async function openMeaningTask(task:NonNullable<ManagerSnapshot['activityTasks']>[number]) {
+    const workId=task.workId,current=currentState();
+    if(workId&&current.nativeDefinitionPreparation?.id!==workId){
+      const item=current.reviewItems?.find(item=>item.ownerPage==='vocabulary'&&item.state!=='resolved'&&(item.workId===workId||item.taskId===task.id));
+      if(item){await openReviewItem(item);return;}
+      const result=await run('open-meaning-work',{id:workId,taskId:task.id});openNativeMeanings({workId,entryId:typeof result?.entryId==='string'?result.entryId:''});return;
+    }
+    openNativeMeanings(workId?{workId,entryId:''}:undefined);
+  }
   function openNativeSourceReview(row: NativeMeaningRow) {
     const work=currentState().nativeDefinitionPreparation,item=(currentState().reviewItems || []).find(item => item.ownerPage === 'vocabulary' && item.workId === work?.id && item.questionId === row.id && item.state !== 'resolved');
     if (item?.state === 'deferred') deferredReviewOpen=true;
@@ -1136,31 +1150,33 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
       const index=work.rows.filter(row => !row.applied && row.status !== 'left-undefined').findIndex(entry => entry.id === row.id);
       if (index >= 0) nativeMeaningPage=Math.floor(index/20);
     }
-    nativeMeaningReviewHidden=false;render();
+    requestedNativeWorkId=work?.id;pendingNativeReview=work?{workId:work.id,entryId:row.id}:null;nativeMeaningReviewHidden=false;render();
     const target=row.status === 'question' ? doc.getElementById(`native-review-${row.id}`) || (item ? doc.getElementById(`deferred-review-${item.id}`) : null) || doc.getElementById(`edit-native-meaning-${row.id}`) || doc.getElementById('native-meaning-summary') : doc.getElementById('native-meaning-summary');
     target?.scrollIntoView({block:'nearest'});target?.focus({preventScroll:true});
   }
   function nativeMeaningsReview() {
     const work = currentState().nativeDefinitionPreparation;
-    if (!work || work.status === 'finished' && !(work.processingPolicy === 'auto-clear' && work.lastChangeId)) return null;
+    if (!work || work.status === 'finished' && !(work.questionCount||work.deferredCount||nativeMeaningRows().some(row=>!row.applied&&row.status==='question'))&&!(work.processingPolicy === 'auto-clear' && work.lastChangeId)) return null;
     if (work.processingPolicy === 'auto-clear') {
       const displayedRows=nativeMeaningRows(),displayedIds=new Set(displayedRows.map(row=>row.id));
       const items = (currentState().reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === work.id || item.workId === work.id)&&(!remotePage('meanings')||!!item.questionId&&displayedIds.has(item.questionId)));
-      const questions = displayedRows.filter(row => !row.applied && row.status === 'question' && (!currentState().reviewItems || items.some(item => (item.questionId === row.id || item.id === row.reviewId) && item.state === 'open')));
-      const meaningQuestions = questions.length;
-      const deferredCount = items.filter(item => item.state === 'deferred').length;
+      const itemFor=(row:NativeMeaningRow)=>items.find(item=>item.questionId===row.id||item.id===row.reviewId);
+      const questions = displayedRows.filter(row => !row.applied && row.status === 'question' && !['deferred','resolved'].includes(itemFor(row)?.state??''));
+      const deferredCount = work.deferredCount??items.filter(item => item.state === 'deferred').length;
+      const meaningQuestions = work.rows.length>=work.total?questions.length:Math.max(questions.length,Math.max(0,(work.questionCount??questions.length+deferredCount)-deferredCount));
       const savedCount = work.savedCount ?? 0;
       const summary = h('div', '',h('p', '', `${work.status === 'running' || work.status === 'queued' ? 'Defining tag meanings · ' : ''}${savedCount} ${savedCount === 1 ? 'meaning' : 'meanings'} saved${meaningQuestions ? ` · ${meaningQuestions} to use or skip` : ''}${deferredCount ? ` · ${deferredCount} left for later` : ''}.`),
         work.status === 'running' || work.status === 'queued' ? h('p', 'card-description',`${work.completed} of ${work.total} names checked. You can keep browsing.`) : null,
         work.error ? h('p', 'notice warning',humanMessage(work.error)) : null);
       if (!currentState().reviewItems) { const clear=clearNativeMeanings(work);if (clear) summary.append(clear); }
-      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (questions.length || deferredCount) ? button(meaningQuestions ? 'Choose meanings' : 'Open deferred meanings',openNativeMeanings,'small') : null,
+      const actions = h('div', 'task-actions',nativeMeaningReviewHidden && (meaningQuestions || deferredCount) ? button(meaningQuestions ? 'Choose meanings' : 'Open deferred meanings',() => {openNativeMeanings();if(!meaningQuestions&&deferredCount){deferredReviewOpen=true;render();}},'small') : null,
         !nativeMeaningReviewHidden ? button('Back to tags',() => { browseTags();render(); },'quiet small') : null,
         work.status === 'paused' ? button('Retry meanings',() => run('retry-tag-meanings',{id:work.id}),'small') : null,taskUndo(work.lastChangeId,'undo-native-meaning-change'));
-      const fallback = !currentState().reviewItems && !nativeMeaningReviewHidden ? h('div', 'stack',...questions.map(row => nativePersonalReview(row) ? nativeReviewTarget(h('article','tag-row',h('strong','',row.sourceName),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row)),row) : nativeReviewTarget(h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row) || nativeDraftMeaning(row),nativeSavedMeanings(row),h('p', '',nativeDecisionMessage(row)),nativeDecisionActions(work.id,row)),row))) : null;
+      const fallbackRows=questions.filter(row=>!itemFor(row));
+      const fallback = fallbackRows.length&&!nativeMeaningReviewHidden ? h('div', 'stack',...fallbackRows.map(row => nativePersonalReview(row) ? nativeReviewTarget(h('article','tag-row',h('strong','',row.sourceName),h('p','','How should Smart Tags use this personal label?'),nativePersonalActions(work.id,row)),row) : nativeReviewTarget(h('article', 'tag-row',h('strong', '', row.sourceName),nativeMeaningSupport(row) || nativeDraftMeaning(row),nativeSavedMeanings(row),h('p', '',nativeDecisionMessage(row)),nativeDecisionActions(work.id,row)),row))) : null;
       const taskSummary=h('section','task-summary library-meaning-summary',summary,actions);taskSummary.id='native-meaning-summary';taskSummary.tabIndex=-1;
       return h('div', 'stack',taskSummary,
-        !nativeMeaningReviewHidden ? reviewInbox(items,'Needs your choice',true) : null,fallback,!nativeMeaningReviewHidden&&hasPages(work.rows.length,20,'meanings')?pagination(work.rows.length,nativeMeaningPage,next=>{nativeMeaningPage=next;},20,'meanings'):null);
+        !nativeMeaningReviewHidden ? reviewInbox(items,'Needs your choice',true,deferredCount) : null,fallback,!nativeMeaningReviewHidden&&!meaningQuestions&&!deferredCount&&!['queued','running'].includes(work.status)?h('p','card-description','All checked meanings are saved or skipped.'):null,!nativeMeaningReviewHidden&&hasPages(work.rows.length,20,'meanings')?pagination(work.rows.length,nativeMeaningPage,next=>{nativeMeaningPage=next;},20,'meanings'):null);
     }
     if (work.id !== nativeMeaningWorkId) { nativeMeaningWorkId = work.id;nativeMeaningPage = 0;excludedNativeMeaningRows.clear(); }
     if (nativeMeaningReviewHidden) return null;
@@ -1344,12 +1360,14 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
     const nativeWork = s.nativeDefinitionPreparation;
     const automaticMeanings = nativeWork?.processingPolicy === 'auto-clear';
     const reopenMeanings = !preparation && nativeWork && !automaticMeanings && nativeWork.status !== 'finished' && nativeMeaningReviewHidden ? h('div','notice info inline between',h('span','',nativeWork.status === 'running' || nativeWork.status === 'queued' ? 'Your tag meanings are being prepared. You can keep browsing.' : 'Prepared tag meanings are available. Your tag library is ready to browse.'),button('Review meanings',openNativeMeanings,'small')) : null;
-    const workspace = h('div', `tag-workspace${prepared ? '' : ' tag-library'} ${editorVisible ? 'has-editor' : ''}`, header, !prepared ? libraryShelfControls(librarySearch()) : null, preparation && questions.length ? tabs : null, note, recovery, reopenMeanings,automaticMeanings ? meanings : null, h('div', 'tag-workspace-columns', automaticMeanings ? content : meanings || content, tagEditor(editorVisible)));
+    const buildScope=!prepared&&buildRunFilter?h('div','notice info inline between',h('span','',`${buildRunFilter.savedCount} ${buildRunFilter.savedCount===1?'tag':'tags'} saved by this build`),button('Back to library',()=>{buildRunFilter=null;libraryTagShelfId='all';libraryTagStatus='all';vocabularyPage=0;render();},'quiet small')):null;if(buildScope)buildScope.id='build-tag-filter';
+    const workspace = h('div', `tag-workspace${prepared ? '' : ' tag-library'} ${editorVisible ? 'has-editor' : ''}`, header,buildScope, !prepared ? libraryShelfControls(librarySearch()) : null, preparation && questions.length ? tabs : null, note, recovery, reopenMeanings,automaticMeanings ? meanings : null, h('div', 'tag-workspace-columns', automaticMeanings ? content : meanings || content, tagEditor(editorVisible)));
     return workspace;
   }
 
   function renderCleanup() {
     const s = currentState();
+    const outcome=buildOutcome();
     if (s.tagPreparation?.processingPolicy === 'auto-clear') {
       const preparation = s.tagPreparation, items = (s.reviewItems || []).filter(item => item.kind === 'definition' && (item.taskId === preparation.id || item.workId === preparation.id));
       const choices = s.reviewItems ? items.filter(item => item.state === 'open').length : preparation.questions.length;
@@ -1363,9 +1381,20 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
       const fallback = !s.reviewItems && preparation.questions.length ? h('div', 'stack',...preparation.questions.map(question => h('article', 'tag-question',h('h3', '', question.title),h('p', '', question.description),
         ...question.choices.map(choice => button(choice.label,() => run('answer-tag-question',{id:preparation.id,questionId:question.id,choiceId:choice.id},'Meaning selected.'),'small'))))) : null;
       return h('div','stack',h('div','actions',button(buildSetupOpen ? 'Hide build setup' : 'Change build group',() => { buildSetupOpen = !buildSetupOpen;render(); },'quiet small')),buildSetupOpen ? renderBuild() : null,
-        h('section','task-summary',h('h2','',preparation.status === 'checking' ? 'Building tags' : preparation.status === 'failed' ? 'Build needs attention' : 'Your tags are saved'),body),reviewInbox(items),fallback,editorPreparationId === preparation.id ? tagEditor() : null);
+        outcome??h('section','task-summary',h('h2','',preparation.status === 'checking' ? 'Building tags' : preparation.status === 'failed' ? 'Build needs attention' : 'Your tags are saved'),body),reviewInbox(items),fallback,editorPreparationId === preparation.id ? tagEditor() : null);
     }
-    return s.tagPreparation ? h('div', 'stack', h('div', 'actions', button(buildSetupOpen ? 'Hide build setup' : 'Change build group', () => { buildSetupOpen = !buildSetupOpen;render(); }, 'quiet small')), buildSetupOpen ? renderBuild() : null, renderVocabulary(true)) : renderBuild();
+    return s.tagPreparation ? h('div', 'stack',outcome, h('div', 'actions', button(buildSetupOpen ? 'Hide build setup' : 'Change build group', () => { buildSetupOpen = !buildSetupOpen;render(); }, 'quiet small')), buildSetupOpen ? renderBuild() : null, renderVocabulary(true)) : outcome?h('div','stack',outcome,renderBuild()):renderBuild();
+  }
+  function buildOutcome():Node|null {
+    const result=currentState().buildResult;if(!result)return null;
+    const running=result.status==='running',incomplete=result.status==='needs-information'||result.reason==='needs-information',failed=result.status==='failed',paused=result.status==='paused',unknown=result.status==='unknown';
+    const preparation=currentState().tagPreparation,manualReview=result.status==='completed'&&!result.savedCount&&preparation&&preparation.processingPolicy!=='auto-clear'&&preparation.canApply;
+    const title=running?'Building tags':paused?'Build paused':failed?'Build needs another try':incomplete?'More paper information is needed':unknown?'Earlier build':manualReview?'Tag list ready for review':'Build complete';
+    const saved=`${result.savedCount} ${result.savedCount===1?'tag':'tags'} saved`,choices=result.questionCount?`${result.questionCount} ${result.questionCount===1?'meaning needs':'meanings need'} your choice`:'';
+    const outcome=manualReview?'Your proposed replacement is ready. Review and save it to replace the current tag list.':result.savedCount||result.questionCount?[saved,choices].filter(Boolean).join(' · '):unknown?'This earlier build has no saved outcome details.':result.reason==='saved'?'No tags from this build remain in the saved library.':result.reason==='reused'?'Your existing tags already cover this group. No new tags were needed.':result.reason==='no-eligible-papers'?'No eligible papers were found in this group.':incomplete?'No tags were saved from the available paper information.':running?'Supported tags will appear as their checks finish.':paused||failed?'Completed work is saved.':'No new tags were needed for these papers.';
+    const view=()=>{buildRunFilter={runId:result.runId,savedCount:result.savedCount};libraryTagShelfId='all';libraryTagStatus='all';vocabQuery='';vocabularyPage=0;nav('vocabulary');};
+    const assign=()=>{if(result.shelfId)assignmentTagShelfId=result.shelfId;assignmentView='setup';nav('assignment');};
+    const names=result.tagNames?.slice(0,8),summary=h('section','task-summary',h('h2','',title),h('p','',outcome),!unknown||result.paperCount?h('p','card-description',`${result.completedPaperCount} of ${result.paperCount} papers read`):null,names?.length?h('p','card-description',`Saved: ${names.join(', ')}${result.savedCount>names.length?` and ${result.savedCount-names.length} more`:''}.`):null,result.message?h('p',paused||failed||incomplete?'notice warning':'card-description',humanMessage(result.message)):null,h('div','task-actions',manualReview?button('Review tag list',()=>{doc.getElementById('apply-tag-list')?.scrollIntoView({block:'nearest'});doc.getElementById('apply-tag-list')?.focus({preventScroll:true});},'primary'):null,result.savedCount?button('View built tags',view,'primary'):null,result.savedCount?button('Assign tags',assign,'small'):null,result.questionCount?button('Choose meanings',()=>nav('activity'),'small'):null,incomplete||failed?button('Open Activity',()=>nav('activity'),'small'):null));summary.id='build-result';summary.setAttribute('aria-label','Tag build result');return summary;
   }
 
   function renderAssignment() {
@@ -1881,7 +1910,7 @@ export function mountManager(win: Window, api: Workspace, options: ManagerUIOpti
       const body = h('div','',task.message ? h('p','',humanMessage(task.message)) : null,sourceProgress ? h('p','card-description',`${sourceProgress.label}: ${sourceProgress.completed} of ${sourceProgress.total}`) : meaning && task.total !== undefined && ['running','queued'].includes(task.state) ? h('p','card-description',`${task.completed ?? 0} of ${task.total} names prepared`) : null,task.spentUSD ? h('p','card-description',`Estimated API use: ${number(task.spentUSD)}`) : null);
       const ownsQueue = currentMeanings && q.ownerPage === 'vocabulary' && ['running','paused'].includes(q.status) && ['running','paused'].includes(task.state);
       const open = button(meaning ? 'Open meanings' : task.ownerPage === 'assignment' ? 'Open assignment' : 'Open tags',() => {
-        if (meaning) openNativeMeanings();
+        if (meaning) return openMeaningTask(task);
         else if (task.ownerPage === 'assignment') { assignmentRunSelection = task.workId || null;assignmentView = 'suggestions';nav('assignment'); }
         else nav(task.ownerPage === 'activity' ? 'activity' : task.ownerPage);
       },ownsQueue ? 'small' : 'primary small');

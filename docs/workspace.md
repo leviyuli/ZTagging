@@ -1,6 +1,6 @@
 # Workspace storage and responsiveness
 
-This document describes the 1.1.0 schema-14 implementation and its release gates. Version 1.0.7 uses schema 13. The validation status below distinguishes measured results from pending package checks.
+This document describes the 1.1.x schema-14 implementation and its release gates. Version 1.0.7 uses schema 13. The validation status below records the original workspace rollout; [VALIDATION.md](../VALIDATION.md) describes the current patch release.
 
 ## Application interface
 

@@ -3,9 +3,9 @@
     "smart-tags@zotero-local.org": {
       "updates": [
         {
-          "version": "1.1.0",
-          "update_link": "https://raw.githubusercontent.com/leviyuli/ZTagging/main/dist/smart-tags-1.1.0.xpi",
-          "update_hash": "sha256:f6b5e7edc2fb5850dbcff59562b238d594252574ac1e59880fa6e7407a642dcb",
+          "version": "1.1.1",
+          "update_link": "https://raw.githubusercontent.com/leviyuli/ZTagging/main/dist/smart-tags-1.1.1.xpi",
+          "update_hash": "sha256:704ea0eca99264953af8237e0f736416d959867fb1f6ca33ef067daac8d4e42c",
           "applications": {
             "zotero": {
               "strict_min_version": "10.0.6",

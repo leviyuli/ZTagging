@@ -3,7 +3,7 @@ import type { PaperRecord, Suggestion, TagDefinition, Neighbor } from './core.ts
 import type { ApiKeyProvider, CompletionResult, ProviderClient, ProviderError, ProviderMode, ProviderSettings } from './providers.ts';
 import type { LibraryHost, NativeTag, TagPatch } from './platform.ts';
 import { sameTags } from './platform.ts';
-import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayCleanup, DisplayReviewItem, BuildMode, Scope } from './ui-contract.ts';
+import type { ManagerAPI, ManagerSettings, ManagerSnapshot, DisplayBuildResult, DisplayCleanup, DisplayReviewItem, BuildMode, Scope } from './ui-contract.ts';
 import { compileReadyPreparedDefinitions } from './definition-admission.ts';
 import { buildFactExtractionPrompt, normalizeFacts, createTaxonomyProposal, validateTaxonomy, refreshProposalEvidence, confirmProposalMapping, confirmProposalMappings, removeProposalEvidenceLinks, isProposalIssueBlocking, conceptMappingFingerprint } from './taxonomy.ts';
 import type { PaperFacts, TaxonomyProposal } from './taxonomy.ts';
@@ -63,6 +63,7 @@ type Run = {
   settings:ManagerSettings;vocabularyVersion:number;detailId?:string;proposalFingerprint?:string;
   preparationOnly?:boolean;
   buildMode?:BuildMode;
+  buildOutcome?:{reason:DisplayBuildResult['reason'];savedTagIds?:string[];shelfId?:string};
   extensionBaseline?:VocabularyBaseline;
   additionalTargetCount?:number;
   tagShelfId?:string;
@@ -726,6 +727,16 @@ export class AppController implements ManagerAPI {
       await this.changeNativeMeaning(item.workId!,{entryId:item.questionId!,...(action==='leave'?{leaveUndefined:true}:{choiceId})});
     }
   }
+  private async openMeaningWork(id:string) {
+    if(!id)throw new Error('Choose a meaning preparation in Activity.');
+    if(this.state.nativeDefinitionPreparation?.work.id===id)return {page:'vocabulary',workId:id};
+    await this.ensureReviewIdle();
+    const archived=this.state.nativeDefinitionHistory?.findLast(review=>review.work.id===id);
+    if(!archived)throw new Error('This saved meaning preparation is unavailable.');
+    if(this.state.nativeDefinitionPreparation)(this.state.nativeDefinitionHistory??=[]).push(copyNativeReview(this.state.nativeDefinitionPreparation));
+    this.state.nativeDefinitionPreparation=copyNativeReview(archived);this.normalizeCompletedNativeMeaningQuestions();await this.save();
+    return {page:'vocabulary',workId:id};
+  }
   private async openReviewItem(id:string) {
     const item=this.state.reviewItems?.find(item=>item.id===id&&item.state!=='resolved');
     if(!item)throw new Error('This choice is no longer pending.');
@@ -927,6 +938,24 @@ export class AppController implements ManagerAPI {
     for(const tag of this.state.tags)if(tag.custom&&!tags.has(tag.id)&&!removed.has(tag.id))tags.set(tag.id,tag);
     return {id:preparation.id,lastChangeId:this.lastTaskChangeId(proposal.id),processingPolicy:preparation.processingPolicy,savedCount:Object.keys(preparation.admissions??{}).length,shelfId:preparation.shelfId,status:preparation.status,verificationScope:proposal.verificationScope,tags:[...tags.values()].map(tag=>({...copy(tag),...(retained.has(tag.id)?{retained:true}:{}),relatedIds:[...new Set([...(tag.relatedIds??[]),...(retained.has(tag.id)?[]:proposal.extension?.relatedIds[tag.id]??[])])],coverage:proposal.support[tag.id]?.paperIds.length??0})),questions:preparation.questions.map(question=>({id:question.id,reviewId:this.state.reviewItems?.find(item=>item.workId===preparation.id&&item.questionId===question.id&&item.state!=='resolved')?.id,title:question.title,description:question.description,paperIds:[...question.paperIds],choices:question.choices.map(choice=>({id:choice.id,label:choice.label,description:choice.description}))})),canApply:tags.size>0&&preparation.status==='ready'&&!preparation.questions.length&&this.state.run?.status!=='running',needsRefresh:this.extensionNeedsRefresh(proposal),scopeCount:proposal.paperIds.length,targetCount:proposal.coreLimit,...(preparation.status==='failed'?{error:'The AI could not finish organizing these tags. Try the automatic checks again.'}:{})};
   }
+  private buildResultTagIds():string[] {
+    const run=this.state.run;if(run?.kind!=='rebuild')return [];
+    const preparation=this.state.tagPreparation,proposal=this.state.taxonomyProposal;
+    const current=preparation&&proposal&&preparation.proposalId===proposal.id&&(!run.selection||run.selection.id===proposal.id);
+    const admitted=current?Object.keys(preparation.admissions??{}):run.buildOutcome?.savedTagIds??[];
+    const saved=new Set(this.state.tags.filter(tag=>tag.status==='approved'&&!isNoTagDefinition(tag)).map(tag=>tag.id));
+    return [...new Set(admitted)].filter(id=>saved.has(id));
+  }
+  private buildResultDisplay():DisplayBuildResult|undefined {
+    const run=this.state.run;if(run?.kind!=='rebuild')return;
+    const preparation=this.state.tagPreparation,proposal=this.state.taxonomyProposal;
+    const current=preparation&&proposal&&preparation.proposalId===proposal.id&&(!run.selection||run.selection.id===proposal.id)?preparation:undefined;
+    const ids=this.buildResultTagIds(),questionCount=current?.questions.length??0,shelfId=current?.shelfId??run.buildOutcome?.shelfId;
+    const hadSaved=ids.length||Object.keys(current?.admissions??{}).length||run.buildOutcome?.savedTagIds?.length;
+    const reason=hadSaved?'saved':run.buildOutcome?.reason??(current?.processingPolicy==='auto-clear'&&run.vocabFinished?'no-new-tags':undefined);
+    const status=run.status==='running'?'running':run.status==='paused'?'paused':current?.status==='failed'||!run.vocabFinished?'failed':reason==='needs-information'||reason==='no-eligible-papers'?'needs-information':'completed';
+    return {runId:run.id,status,paperCount:run.jobs.length,completedPaperCount:run.jobs.filter(job=>job.status==='completed').length,savedCount:ids.length,questionCount,...(shelfId?{shelfId}:{}),...(reason?{reason}:{}),message:run.message,tagNames:ids.slice(0,10).map(id=>this.state.tags.find(tag=>tag.id===id)!.name)};
+  }
   private extensionNeedsRefresh(proposal=this.state.taxonomyProposal) {
     return !!proposal?.extension&&proposal.extension.baseline.fingerprint!==captureVocabularyBaseline(scientificDefinitions(this.state.tags),this.state.vocabularyVersion).fingerprint;
   }
@@ -1086,12 +1115,16 @@ export class AppController implements ManagerAPI {
     if(current.state.status==='checking'||(current.state.pendingSourceCount??0)>0){await this.continueSelectionReview(current,true);return {page:'cleanup'};}
     if(current.state.status==='questions')return {page:'cleanup'};
     if(current.state.status!=='ready'||current.state.questions.length)throw new Error('Answer the remaining questions, or finish the automatic checks first.');
-    const preparation=copy(current.state);
+    const preparation=copy(current.state),before=new Map(this.state.tags.map(tag=>[tag.id,fingerprint(tag)])),beforeShelves=new Set(this.shelves().map(shelf=>shelf.id));
     this.rememberPreparation();
     await this.approveTaxonomy(current.proposal.id,true);
     this.state.activeTagPreparation=preparation;
     delete this.state.tagPreparation;
-    if(this.state.run?.kind==='rebuild')this.state.run.message='Your tag list is saved. Choose papers to preview assignments.';
+    if(this.state.run?.kind==='rebuild'){
+      const savedTagIds=this.state.tags.filter(tag=>!isNoTagDefinition(tag)&&before.get(tag.id)!==fingerprint(tag)).map(tag=>tag.id),shelf=this.shelves().find(shelf=>!beforeShelves.has(shelf.id));
+      this.state.run.buildOutcome={reason:savedTagIds.length?'saved':'no-new-tags',savedTagIds,...(shelf?{shelfId:shelf.id}:{})};
+      this.state.run.message='Your tag list is saved. Choose papers to preview assignments.';
+    }
     await this.save();
     return {page:'assignment'};
   }
@@ -1864,6 +1897,8 @@ export class AppController implements ManagerAPI {
       nativeDefinitionPreparation,
       assignmentReviews:this.assignmentDisplays(),
       tagPreparation:this.preparationDisplay(),
+      buildResult:this.buildResultDisplay(),
+      buildResultTagIds:this.buildResultTagIds(),
       activityTasks:this.activityDisplay(nativeDefinitionPreparation),
       paperAttention:this.paperAttentionDisplay(),
       existingTags:this.existingTagDisplay(),
@@ -1955,6 +1990,7 @@ export class AppController implements ManagerAPI {
       }
       case 'resolve-review-item': await this.resolveReviewItem(String(payload.id),payload.action,payload.choiceId);break;
       case 'open-review-item': return this.openReviewItem(String(payload.id));
+      case 'open-meaning-work': return this.openMeaningWork(String(payload.id??''));
       case 'inspect-old-processing-history': return inspectOldProcessingHistory(this.state);
       case 'clean-old-processing-history': return this.cleanOldHistory(payload.expectEmpty===true);
       case 'reset-paper-analysis': await this.resetAnalysis();break;
@@ -2728,10 +2764,11 @@ export class AppController implements ManagerAPI {
     });
   }
   private async consolidateRun(run:Run) {
+    delete run.buildOutcome;
     const facts=run.jobs.filter(job=>!run.skippedIds?.includes(job.paperId)&&!this.excluded(job.paperId)).map(job=>this.state.facts[job.paperId]).filter(Boolean).sort((a,b)=>a.paperId.localeCompare(b.paperId));
     if(!facts.length||!facts.some(fact=>fact.concepts.length)){
       if(run.selection||run.cachedSelection){this.archiveSelection(run);delete run.selection;delete run.cachedSelection;delete run.selectionReplies;delete run.selectionInputFingerprint;}
-      run.vocabFinished=true;run.message=facts.length?'These papers need more information before tags can be prepared. Check the paper-attention list in Activity.':'No eligible papers remain in this build. Excluded items and their existing tags are unchanged.';return;
+      run.vocabFinished=true;run.buildOutcome={reason:facts.length?'needs-information':'no-eligible-papers'};run.message=facts.length?'These papers need more information before tags can be prepared. Check the paper-attention list in Activity.':'No eligible papers remain in this build. Excluded items and their existing tags are unchanged.';return;
     }
     const existing=this.consolidationDefinitions(),inputFingerprint=fingerprint({protocolVersion:2,facts,existing,limit:run.settings.coreConceptLimit??60,baseVersion:this.state.vocabularyVersion,...(run.buildMode==='extend'?{buildMode:'extend',baselineFingerprint:run.extensionBaseline?.fingerprint}:{}),...(run.additionalTargetCount!==undefined?{additionalTargetCount:run.additionalTargetCount}:{})});
     if(run.cachedSelection){
@@ -2739,7 +2776,7 @@ export class AppController implements ManagerAPI {
       else this.archiveSelection(run);
       delete run.cachedSelection;
     }
-    if(this.state.approvedTaxonomyInput===inputFingerprint){run.vocabFinished=true;run.message='The unchanged papers and approved tag list were reused.';return;}
+    if(this.state.approvedTaxonomyInput===inputFingerprint){run.vocabFinished=true;run.buildOutcome={reason:'reused'};run.message='The unchanged papers and approved tag list were reused.';return;}
     if(run.selection&&run.selectionInputFingerprint!==inputFingerprint){this.archiveSelection(run);delete run.selection;delete run.selectionReplies;}
     if(!run.selection){
       const retained=run.consolidation?.snapshot,snapshot=retained&&!validateSnapshotAgainstFacts(retained,facts).length?copy(retained):createRegistrySnapshot(facts,this.state.evidenceCatalog);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 — 2026-11-03
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1-source.zip)
+
+- Open the exact meaning preparation from Activity and page unresolved choices before saved or skipped results. Keep deferred choices reachable without rescanning saved proof bodies.
+- Add **My tags without meanings** to the library shelf selector. Include manually added and mixed-origin names, exclude imported-only keywords and defined aliases, and retain search, pagination and personal-label protections.
+- Keep a clear Build tags outcome with saved names, counts, remaining choices and **View built tags**. That view contains only the selected run's current saved tags and keeps search within the run. Distinguish successful reuse, missing information and unavailable historical details.
+
 ## 1.1.0 — 2026-11-02
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0-source.zip)

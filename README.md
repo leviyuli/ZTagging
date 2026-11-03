@@ -2,11 +2,11 @@
 
 A local, open-source extension for **Zotero 10.0.6–10.0.x on Windows**. It learns useful tag meanings from your papers, saves clear definitions, and applies supported paper tags. Scientific choices that need your judgment remain available without blocking completed work. Your existing item-list columns and collections stay in place.
 
-**Version 1.1.0** moves saved work into shared SQLite storage and background workers, with bounded page updates and seven-day retention. It keeps recent Undo, scientific checks and unfinished choices. See the [release](https://github.com/leviyuli/ZTagging/releases/tag/v1.1.0) and [validation report](VALIDATION.md). **Restart Zotero after updating**; the first update migrates saved work while showing progress.
+**Version 1.1.1** opens pending meaning choices directly, adds **My tags without meanings**, and shows Build tags outcomes with an exact **View built tags** link. Shared SQLite storage, background workers, seven-day retention and recent Undo remain available. See the [release](https://github.com/leviyuli/ZTagging/releases/tag/v1.1.1) and [validation report](VALIDATION.md). **Restart Zotero after updating**.
 
 ## Install and start
 
-1. Download [smart-tags-1.1.0.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi).
+1. Download [smart-tags-1.1.1.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1.xpi).
 2. In Zotero, open **Tools → Plugins**, choose the gear menu, then **Install Plugin From File…** and select the downloaded XPI. Existing users can install it over their current version. Restart Zotero after updating.
 3. Open **Tools → Smart Tags…**, then **Settings → AI connection and budget**, or use **Connect AI** on a task page. Configure ChatGPT, an OpenAI API key, or a DeepSeek API key; choose a text-capable model and click **Save and test** (or **Test connection** for saved settings).
 4. Open **Build tags**, choose papers or collections, and click **Build tags** or **Extend tags**. A 50-paper sample is available for a small first run. Clear, checked meanings save automatically; questions stay on the page and in Activity. Building definitions does not write paper tags.
@@ -20,7 +20,7 @@ The classifier usually proposes up to five direct tags from the chosen shelf; it
 
 The extension checks this repository's [update manifest](updates.json) for new versions. Each published installer has a SHA-256 hash in that manifest. You can also update manually by installing a newer XPI.
 
-The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.0/smart-tags-1.1.0-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
+The release includes the [installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1.xpi) and [TypeScript source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1-source.zip). Read the [changelog](CHANGELOG.md), [migration notes](MIGRATION.md), and [validation report](VALIDATION.md) when upgrading an existing review.
 
 In **Tag library**, press **/** to focus search and **Escape** to clear it. **All tags / Defined / Needs meaning** filters stay beside the shelf selector; **Shelf options** contains Rename and Merge. Linked papers and AI source notes are optional disclosures. Meaning choices, editor drafts and Undo remain available while you browse.
 

@@ -1,4 +1,4 @@
-import type {ManagerSnapshot,DisplayTag,DisplayPaper,DisplaySuggestion,DisplayAssignmentReview,DisplayTagPreparation} from '../ui-contract.ts';
+import type {ManagerSnapshot,DisplayTag,DisplayPaper,DisplaySuggestion,DisplayAssignmentReview,DisplayTagPreparation,DisplayReviewItem,DisplayBuildResult} from '../ui-contract.ts';
 import type {ViewEvent,ViewQuery} from '../workspace-contract.ts';
 import {WORKSPACE_LIMITS} from '../workspace-contract.ts';
 import {canonicalTagKey} from '../core.ts';
@@ -105,6 +105,11 @@ export async function buildView(store:WorkspaceStore,query:ViewQuery,deps:ViewDe
   const workflowRef=await store.reference('state','workflow');
   if(workflowRef)for(const [key,target] of [['buildPaperIds','buildPaperCount'],['assignmentPaperIds','assignmentPaperCount']] as const){const token=await store.codec.lookup(workflowRef.token,[key]);if(token)workflow[target]=(await store.codec.entries(token,{limit:1})).total;}
   model.workflow=workflow;
+  const selectedBuild=safeString(params.buildRunId)||await state('latestBuildRunId','');
+  if(selectedBuild&&['build','cleanup','vocabulary','activity'].includes(query.page)){
+    const result=await read<DisplayBuildResult|undefined>('buildResults',selectedBuild,undefined);
+    if(result){const options={referencedBy:{collection:'buildResultTags',taskId:selectedBuild}},saved=await count('tags',options),tags=await store.scan('tags',{...options,limit:10,orderBy:'title'});model.buildResult={...result,savedCount:saved,tagNames:tags.rows.map(tag=>tag.metadata.title??tag.id)};}
+  }
 
   if(query.page!=='settings'&&query.page!=='connection'){
     const shelves=await store.scan('tagShelves',{limit:50,orderBy:'order'});model.tagShelves=[];
@@ -124,16 +129,18 @@ export async function buildView(store:WorkspaceStore,query:ViewQuery,deps:ViewDe
     model.conceptCounts={};
     for(let index=0;index<selections.length;index++){const selection=selections[index],conceptId=safeString(selection.conceptId),contextId=safeString(selection.contextId);await detailTag(conceptId);if(contextId)await detailTag(contextId);model.conceptCounts[conceptId+'\u0000'+contextId]=await count('papers',{referenceClauses:[clauses[index]]});}
   }else if(query.page==='vocabulary'||query.page==='overview'){
-    const requestedStatus=params.libraryTagStatus==='ready'?'ready':params.libraryTagStatus==='undefined'?'undefined':undefined;
     const shelf=safeString(params.libraryTagShelfId,'all');
-    const references=shelf!=='all'?[[{collection:'tagShelves',id:shelf,relation:'member'}]]:undefined;
-    const library=await store.scan('libraryTags',{offset,limit,search:safeString(params.vocabQuery),status:requestedStatus,references,orderBy:'title'});primary(library);model.tagLibraryEntries=[];
+    const manualUndefined=shelf==='my-undefined-tags',requestedStatus=manualUndefined?'undefined':params.libraryTagStatus==='ready'?'ready':params.libraryTagStatus==='undefined'?'undefined':undefined;
+    const references=shelf!=='all'&&!manualUndefined?[[{collection:'tagShelves',id:shelf,relation:'member'}]]:undefined;
+    const buildRunId=safeString(params.buildRunId);
+    const library=buildRunId?await store.scan('tags',{offset,limit,search:safeString(params.vocabQuery),referencedBy:{collection:'buildResultTags',taskId:buildRunId},orderBy:'title'}):await store.scan('libraryTags',{offset,limit,search:safeString(params.vocabQuery),status:requestedStatus,references,...(manualUndefined?{type:'manual-native'}:{}),orderBy:'title'});primary(library);model.tagLibraryEntries=[];
     for(const record of library.rows){
-      const row=object(await load(record)),name=safeString(row.name,record.metadata.title??record.id),tagId=typeof row.tagId==='string'?row.tagId:undefined;
-      model.tagLibraryEntries.push({name,paperCount:record.metadata.count??safeNumber(row.paperCount),tagId,protected:row.protected===true,paperIds:[]});
+      const row=object(await load(record)),name=safeString(row.name,record.metadata.title??record.id),tagId=buildRunId?record.id:typeof row.tagId==='string'?row.tagId:undefined;
+      const counts=buildRunId&&tagId?await store.reference('libraryTags',tagId):record;
+      model.tagLibraryEntries.push({name,paperCount:counts?.metadata.count??safeNumber(row.paperCount),tagId,protected:row.protected===true,paperIds:[]});
       if(tagId){const tag=await read<TagDefinition|undefined>('tags',tagId,undefined);if(tag)model.tags.push(projectTag(tag));}
     }
-    if(!library.total&&requestedStatus!=='undefined'&&shelf==='all'){
+    if(!library.total&&!buildRunId&&requestedStatus!=='undefined'&&shelf==='all'){
       const tags=await store.scan('tags',{offset,limit,search:safeString(params.vocabQuery),orderBy:'title'});primary(tags);model.tags=(await values<TagDefinition>(tags)).map(projectTag);model.tagLibraryEntries=model.tags.map(tag=>({name:tag.name,tagId:tag.id,paperCount:0,paperIds:[]}));
     }
     for(const item of model.tagShelves??[]){item.tagIds=model.tags.filter(()=>shelf==='all'||item.id===shelf).map(tag=>tag.id);if(item.id===shelf)item.nativeNames=model.tagLibraryEntries;}
@@ -143,6 +150,7 @@ export async function buildView(store:WorkspaceStore,query:ViewQuery,deps:ViewDe
       for(const record of examples.rows){const id=await load<unknown>(record);if(typeof id==='string'){entry.paperIds!.push(id);await detailPaper(id);}}
     }
     if(params.nativeMeaningReviewHidden===false||params.editorNativeEntry||params.nativeReviewTarget)await nativeMeanings(true);
+    else{const header=await read<NativePreparation|undefined>('viewHeaders','nativeDefinitionPreparation',undefined);if(header)model.nativeDefinitionPreparation={...header,rows:[]};}
   }else if(query.page==='activity'){
     const choices=await store.scan('reviewItems',{limit:50,status:params.deferredReviewOpen?'deferred':'open'});model.reviewItems=await values(choices);
     if(params.activityHistoryOpen||params.completedActivityOpen){const history=await store.scan('history',{offset,limit,search:safeString(params.activityHistoryQuery),orderBy:'completed'});primary(history);model.history=history.rows.map(record=>({id:record.id,date:new Date(record.metadata.completedAt??record.metadata.updatedAt??0).toISOString(),label:record.metadata.title??'Saved change',count:record.metadata.count??0,canUndo:record.metadata.status==='applied'&&(record.metadata.completedAt??0)>=now-7*86400000,status:record.metadata.status}));}
@@ -197,11 +205,33 @@ export async function buildView(store:WorkspaceStore,query:ViewQuery,deps:ViewDe
   async function nativeMeanings(primaryRows:boolean){
     const header=await read<NativePreparation|undefined>('viewHeaders','nativeDefinitionPreparation',undefined);
     const workId=header?.id??await field('nativeDefinitionPreparation',['work','id'],'');if(!workId)return;
-    const requested=[object(params.editorNativeEntry),object(params.nativeReviewTarget)],page=await store.scan('nativeMeaningEntries',{offset:primaryRows?offset:0,limit:primaryRows?limit:10,taskId:workId,orderBy:'order'});
-    if(primaryRows)primary(page);
-    const rows:NativeRow[]=[];
-    for(const record of page.rows)rows.push(await nativeRow(record));
-    model.nativeDefinitionPreparation={id:workId,status:header?.status??'ready',completed:header?.completed??rows.filter(row=>row.status!=='pending').length,total:header?.total??page.total,canApply:header?.canApply??false,...header,rows};
+    if(typeof params.nativeMeaningWorkId==='string'&&params.nativeMeaningWorkId&&params.nativeMeaningWorkId!==workId)throw new Error('Open this meaning preparation from Activity again to see its saved choices.');
+    const reviews=new Map<string,DisplayReviewItem>(),requested=[object(params.editorNativeEntry),object(params.nativeReviewTarget)],records:StoredRecord[]=[],start=primaryRows?offset:0,maximum=primaryRows?limit:10;let eligible=0,deferredCount=0,entryOffset=0;
+    const indexed=(await store.reference('viewHeaders','nativeDefinitionPreparation'))?.metadata.type==='native-decisions-v2';
+    if(indexed){
+      const page=await store.scan('nativeMeaningQueue',{taskId:workId,status:params.deferredReviewOpen?'deferred':'open',offset:start,limit:maximum,orderBy:'order'});eligible=page.total;
+      deferredCount=await count('nativeMeaningQueue',{taskId:workId,status:'deferred'});
+      for(const item of page.rows){const value=object(await load(item)),record=await store.reference('nativeMeaningEntries',safeString(value.entryId,item.id));if(record)records.push(record);if(typeof value.reviewId==='string'){const review=await read<DisplayReviewItem|undefined>('reviewItems',value.reviewId,undefined);if(review?.questionId&&review.state!=='resolved')reviews.set(review.questionId,review);}}
+    }else{
+    const taskId=await field('nativeDefinitionPreparation',['taskId'],workId);let after:string|undefined;
+    do{const page=await store.scan('reviewItems',{taskId,statuses:['open','deferred'],after,limit:50});for(const record of page.rows){const item=await load<DisplayReviewItem>(record);if(item.ownerPage==='vocabulary'&&item.workId===workId&&item.questionId)reviews.set(item.questionId,item);}after=page.next;}while(after);
+    // A saved admission can still carry status='question'. Filter the durable
+    // decision state before pagination, without decoding its source proof map.
+    for(;;){
+      const page=await store.scan('nativeMeaningEntries',{offset:entryOffset,limit:50,taskId:workId,orderBy:'order'});
+      for(const record of page.rows){
+        check();const display=await store.reference('nativeMeaningDisplays',record.id),source=display??record,status=await projected(source,['status'],'pending');
+        if(status==='left-undefined'||await projected(source,['applied'],false)||await store.codec.lookup(record.token,['meaningAdmission']))continue;
+        const item=reviews.get(record.id),deferred=item?.state==='deferred';if(deferred)deferredCount++;
+        if(deferred!==!!params.deferredReviewOpen)continue;
+        if(eligible>=start&&records.length<maximum)records.push(record);eligible++;
+      }
+      entryOffset+=page.rows.length;if(entryOffset>=page.total||!page.rows.length)break;
+    }
+    }
+    if(primaryRows){total=eligible;nextCursor=start+records.length<eligible?String(start+records.length):undefined;if(reviews.size)model.reviewItems=records.flatMap(record=>{const item=reviews.get(record.id);return item?[item]:[];});}
+    const rows:NativeRow[]=[];for(const record of records)rows.push(await nativeRow(record));
+    model.nativeDefinitionPreparation={id:workId,status:header?.status??'ready',completed:header?.completed??rows.filter(row=>row.status!=='pending').length,total:header?.total??eligible,canApply:header?.canApply??false,...header,deferredCount,rows};
     for(const target of requested)if(target.workId===workId&&typeof target.entryId==='string'&&!rows.some(row=>row.id===target.entryId)&&!model.detailNativeMeaningRows?.some(row=>row.id===target.entryId)){
       const record=await store.reference('nativeMeaningEntries',target.entryId);if(record?.metadata.taskId===workId)(model.detailNativeMeaningRows??=[]).push(await nativeRow(record));
     }

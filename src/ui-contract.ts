@@ -103,6 +103,18 @@ export interface DisplayTagPreparation {
   targetCount: number;
   error?: string;
 }
+export interface DisplayBuildResult {
+  runId: string;
+  status: 'running' | 'paused' | 'completed' | 'needs-information' | 'failed' | 'unknown';
+  paperCount: number;
+  completedPaperCount: number;
+  savedCount: number;
+  questionCount: number;
+  shelfId?: string;
+  reason?: 'saved' | 'reused' | 'no-new-tags' | 'needs-information' | 'no-eligible-papers';
+  message?: string;
+  tagNames?: string[];
+}
 export interface ManagerSettings {
   provider: 'api' | 'chatgpt' | 'deepseek';
   model: string;
@@ -149,6 +161,7 @@ export interface DisplayReviewItem {
   workId?: string;
 }
 export interface ManagerSnapshot {
+  buildResult?: DisplayBuildResult;
   /** Query totals are independent of the bounded rows returned for this page. */
   totals?: { papers: number; tags: number; openChoices: number; history: number; definedTags?: number; assignableTags?: number };
   conceptCounts?: Record<string,number>;
@@ -178,7 +191,7 @@ export interface ManagerSnapshot {
   tagShelves?: { id: string; name: string; kind: 'generated' | 'user' | 'existing'; tagIds: string[]; count: number; readyCount?: number; assignableCount?: number; nativeNames?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[] }[];
   tagLibraryEntries?: { name: string; paperCount: number; tagId?: string; protected?: boolean; paperIds?: string[] }[];
   nativeDefinitionPreparation?: {
-    id: string; lastChangeId?: string; processingPolicy?: 'auto-clear'; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; clearChoiceCount?: number; canUseClearMeanings?: boolean; error?: string; spentUSD?: number; budgetUSD?: number;
+    id: string; lastChangeId?: string; processingPolicy?: 'auto-clear'; status: 'queued' | 'running' | 'paused' | 'ready' | 'applied' | 'finished'; completed: number; total: number; canApply: boolean; canContinue?: boolean; readyCount?: number; questionCount?: number; savedCount?: number; deferredCount?: number; leftUndefinedCount?: number; clearChoiceCount?: number; canUseClearMeanings?: boolean; error?: string; spentUSD?: number; budgetUSD?: number;
     rows: { id: string; reviewId?: string; tagId?: string; sourceName: string; name?: string; fullName?: string; description?: string; facet?: DisplayTag['facet']; aliases?: string[]; inclusions?: string[]; exclusions?: string[]; examples?: string[]; broaderIds?: string[]; relatedIds?: string[]; matchingMode?: 'manual' | 'suggest' | 'auto'; paperIds: string[]; status: 'pending' | 'ready' | 'question' | 'failed' | 'left-undefined'; question?: string; questionKind?: 'meaning' | 'information' | 'personal' | 'protection'; resolution?: 'clear'|'ambiguous'|'personal'|'needs-information'; selectionOrigin?: 'human'|'automatic'; personalTreatment?: 'personal'|'scientific'; canSetTreatment?: boolean; canConfirmClear?: boolean; canUseProposedMeaning?: boolean; savedMeaningConflicts?: { id: string; name: string; description: string }[]; canSuggestMeaning?: boolean; choices?: { id: string; label: string; description: string }[]; needsContinuation?: boolean; targetTagId?: string; chosenMeaning?: {name:string;description:string}; sourceIssues?: {paperId:string;status:'uncertain'|'different'|'unchecked';reason:string}[]; canRecheckSources?: boolean; bindingVerified?: boolean; applied?: boolean }[];
   };
   activityTasks?: { id: string; kind: 'rebuild' | 'assignment' | 'meanings' | 'maintenance'; state: 'queued' | 'running' | 'paused' | 'needs-choice' | 'ready-to-save' | 'completed'; label: string; ownerPage: 'cleanup' | 'assignment' | 'vocabulary' | 'activity'; workId?: string; queuedAttempt?:boolean; message?: string; readyCount?: number; questionCount?: number; savedCount?: number; leftUndefinedCount?: number; completed?: number; total?: number; spentUSD?: number; createdAt?: string }[];

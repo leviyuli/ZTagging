@@ -19,6 +19,8 @@ import {WorkspaceStore} from './storage.ts';
 import type {StoreOperation,RecordMetadata,RetentionResult,StoredRecord} from './storage-contract.ts';
 import {WorkingContext,metadataFor} from './context.ts';
 import {SimilarityIndex} from './similarity.ts';
+import {projectBuildResult,seedBuildResult} from './build-results.ts';
+import {ensureNativeReviewIndex} from './native-review.ts';
 
 type AI=ControllerEnvironment['ai'];
 type CommandRecord={command:WorkspaceCommand;status:'queued'|'running'|'completed'|'failed'|'unknown';taskId?:string;result?:unknown;error?:string;createdAt:number};
@@ -119,7 +121,10 @@ export class WorkspaceEngine {
     }
     await this.kernel.recoverWorkspace();
     if(await this.store.reference('workspace','analysisReset')){await this.hydrate('reset-paper-analysis',{});await this.kernel.invoke('reset-paper-analysis');await this.resetIndexedAnalysis();}
+    await this.ensureNativeTagIndex();
     if(!fresh)await this.warmDisplayHeaders();
+    await ensureNativeReviewIndex(this.store,{signal:this.deps.signal,yieldControl:this.yieldControl});
+    if(!fresh)await seedBuildResult(this.store,this.now);
     if(fresh)await this.project(new Set(['tags']));
     // A command that crossed its durable start marker is never blindly replayed.
     for(const status of ['running','queued']){
@@ -208,6 +213,11 @@ export class WorkspaceEngine {
   }
   private async hydrate(action:string,payload:Record<string,unknown>){
     if(action==='clean-expired-data'||action==='stop-queued-task')return;
+    if(action==='open-meaning-work'){
+      const id=String(payload.id??'');await this.context.field('nativeDefinitionPreparation');
+      if(this.context.state.nativeDefinitionPreparation?.work.id!==id){await this.archiveRecord('nativeDefinitionHistory',['work','id'],id);const archived=this.context.state.nativeDefinitionHistory?.findLast(review=>review.work.id===id);if(archived)await this.context.records('maintenanceTasks',{ids:[archived.taskId]});}
+      await this.context.records('reviewItems',{statuses:['open','deferred']});this.kernel.state=this.context.state;return;
+    }
     if(['save-settings','save-api-key','remove-api-key','discover-models','test-connection','sign-in','cancel-sign-in','sign-out','select-account','show-paper','save-search','export-vocabulary'].includes(action))return;
     for(const field of ['run','taxonomyProposal','tagPreparation','activeTagPreparation','taxonomyEvidence','taxonomyEvidenceScopes','taxonomyReview','reconciliation','reconciliationPreview','keepTagPlan','keepRemovalPreview','diyComparison','diyMergePreview','metadataPreview','paperExclusionPreview','pendingTopicExtension'])await this.context.field(field);
     await this.context.field('nativeDefinitionPreparation');
@@ -382,7 +392,14 @@ export class WorkspaceEngine {
     if(scientific.some(field=>changed.has(field))){
       const views=this.kernel.workerViews();const operations:StoreOperation[]=[];
       const header=(id:string,value:unknown)=>{if(value===undefined)operations.push({kind:'delete',collection:'viewHeaders',id});else operations.push({kind:'put',collection:'viewHeaders',id,value,metadata:{category:'active'}});};
-      const native=views.nativeDefinitionPreparation;if(native){const {rows,...small}=native;header('nativeDefinitionPreparation',small);for(const row of rows)operations.push({kind:'put',collection:'nativeMeaningDisplays',id:row.id,value:row,metadata:{category:'active',taskId:native.id,status:row.status}});}else header('nativeDefinitionPreparation',undefined);
+      const native=views.nativeDefinitionPreparation;if(native){
+        const {rows,...small}=native,admitted=new Set(this.context.state.nativeDefinitionPreparation?.work.entries.filter(entry=>entry.meaningAdmission).map(entry=>entry.id)),deferred=new Set(this.context.state.reviewItems?.filter(item=>item.workId===native.id&&item.state==='deferred').map(item=>item.questionId));
+        operations.push({kind:'put',collection:'viewHeaders',id:'nativeDefinitionPreparation',value:small,metadata:{category:'active',type:'native-decisions-v2'}});
+        for(const [order,row] of rows.entries()){
+          operations.push({kind:'put',collection:'nativeMeaningDisplays',id:row.id,value:row,metadata:{category:'active',taskId:native.id,status:row.status}});
+          if(!row.applied&&row.status!=='left-undefined'&&!admitted.has(row.id))operations.push({kind:'put',collection:'nativeMeaningQueue',id:row.id,value:{entryId:row.id,...(row.reviewId?{reviewId:row.reviewId}:{})},metadata:{category:'active',taskId:native.id,status:deferred.has(row.id)?'deferred':'open',order}});
+        }
+      }else header('nativeDefinitionPreparation',undefined);
       const preparation=views.tagPreparation;if(preparation){const {tags,questions,...small}=preparation;header('tagPreparation',small);for(const tag of tags)operations.push({kind:'put',collection:'preparedTags',id:tag.id,value:tag,metadata:metadataFor('preparedTags',tag)});for(const question of questions)operations.push({kind:'put',collection:'definitionQuestions',id:question.id,value:question,metadata:{category:'active',taskId:preparation.id}});}else header('tagPreparation',undefined);
       for(const review of views.assignmentReviews)operations.push({kind:'put',collection:'assignmentDisplays',id:review.id,value:review,metadata:{category:review.status==='finished'?'history':'active',status:review.status,completedAt:this.now()}});
       for(const task of views.activityTasks)operations.push({kind:'put',collection:'activityTasks',id:task.id,value:task,metadata:{category:task.state==='completed'?'history':'active',status:task.state,completedAt:this.now()}});
@@ -391,9 +408,10 @@ export class WorkspaceEngine {
       if(views.diyComparison){const {pairs,...small}=views.diyComparison;header('diyComparison',small);for(const row of pairs)operations.push({kind:'put',collection:'diyComparisonRows',id:row.id,value:row,metadata:{category:'active',taskId:small.id,title:row.diyName+' '+row.targetName,status:row.relation}});}else header('diyComparison',undefined);
       header('metadataPreview',views.metadataPreview);
       const exclusion=this.context.state.paperExclusionPreview;header('paperExclusionPreview',exclusion?{id:exclusion.id,exclude:exclusion.exclude,changes:exclusion.patches.map(patch=>({paperId:patch.paperId,title:this.context.state.papers[patch.paperId]?.title??'Paper',before:patch.before.map(tag=>tag.tag),after:patch.after.map(tag=>tag.tag)}))}:undefined);
-      for(const collection of ['nativeMeaningDisplays','preparedTags','definitionQuestions','existingTagRows','diyComparisonRows']){const current=new Set(operations.filter(operation=>operation.collection===collection&&operation.kind!=='delete').map(operation=>operation.id));let after:string|undefined;do{const page=await this.store.scan(collection,{after,limit:50});for(const row of page.rows)if(!current.has(row.id))operations.push({kind:'delete',collection,id:row.id});after=page.next;}while(after);}
+      for(const collection of ['nativeMeaningDisplays','nativeMeaningQueue','preparedTags','definitionQuestions','existingTagRows','diyComparisonRows']){const current=new Set(operations.filter(operation=>operation.collection===collection&&operation.kind!=='delete').map(operation=>operation.id));let after:string|undefined;do{const page=await this.store.scan(collection,{after,limit:50});for(const row of page.rows)if(!current.has(row.id))operations.push({kind:'delete',collection,id:row.id});after=page.next;}while(after);}
       const attentionIds=new Set(attentionRows.map(row=>row.id));for(const id of records.get('paperAttentionDismissals')??[])if(!attentionIds.has(id))operations.push({kind:'delete',collection:'paperAttentionRows',id});
       await this.persistProjections(operations);
+      await projectBuildResult(this.store,views.buildResult,views.buildResultTagIds,this.now);
     }
     if(changed.has('tags')||changed.has('nativeTags')||changed.has('papers')||changed.has('tagShelves')||changed.has('nativeBindingExclusions'))await this.index(changed,records);
     const tags=this.context.state.tags;
@@ -420,17 +438,18 @@ export class WorkspaceEngine {
       if(record)await this.store.putReference('papers',id,record.token,{...record.metadata,...(paper?{title:paper.title,searchText:[paper.title,paper.abstract,paper.summary,...paper.keywords].join('\n')}:{}),refs});
       const wanted=new Set(native.map(label=>canonicalTagKey(label.tag)));let after:string|undefined;
       do{const page=await this.store.scan('nativeNamePapers',{references:[[{collection:'papers',id}]],after,limit:50});for(const row of page.rows){const key=row.metadata.taskId??String(JSON.parse(row.id)[0]);affectedNames.add(key);if(!wanted.has(key))await this.store.delete('nativeNamePapers',row.id);}after=page.next;}while(after);
-      for(const label of native){const key=canonicalTagKey(label.tag),memberId=JSON.stringify([key,id]);affectedNames.add(key);const current=await this.store.reference('nativeNamePapers',memberId);if(!current||current.metadata.status!==(label.type===0?'manual':'automatic'))await this.store.put('nativeNamePapers',memberId,id,{category:'active',taskId:key,status:label.type===0?'manual':'automatic',refs:[{collection:'papers',id}]});}
+      const manualByName=new Map<string,boolean>();for(const label of native){const key=canonicalTagKey(label.tag);manualByName.set(key,!!manualByName.get(key)||label.type===0);}
+      for(const [key,manual] of manualByName){const memberId=JSON.stringify([key,id]);affectedNames.add(key);const current=await this.store.reference('nativeNamePapers',memberId);if(!current||current.metadata.status!==(manual?'manual':'automatic'))await this.store.put('nativeNamePapers',memberId,id,{category:'active',taskId:key,status:manual?'manual':'automatic',refs:[{collection:'papers',id}]});}
       await this.yieldControl();
     }
     if(changed.has('tags')){for(const name of names.keys())affectedNames.add(name);let after:string|undefined;do{const page=await this.store.scan('definitionNames',{after,limit:50});for(const row of page.rows){affectedNames.add(row.id);if(!names.has(row.id))await this.store.delete('definitionNames',row.id);}after=page.next;}while(after);for(const [key,definitions] of names)await this.store.put('definitionNames',key,{tagIds:definitions.map(tag=>tag.id)},{category:'active',title:key});}
     const shelves=this.context.state.tagShelves??[];
     for(const key of affectedNames){
-      const current=await this.store.get('nativeNames',key,{maxBytes:32*1024}) as {name?:string}|undefined,members=await this.store.scan('nativeNamePapers',{taskId:key,limit:1}),name=current?.name??Object.values(this.context.state.nativeTags).flat().find(label=>canonicalTagKey(label.tag)===key)?.tag??names.get(key)?.[0]?.name??key;
+      const current=await this.store.get('nativeNames',key,{maxBytes:32*1024}) as {name?:string}|undefined,members=await this.store.scan('nativeNamePapers',{taskId:key,limit:1}),manualCount=(await this.store.scan('nativeNamePapers',{taskId:key,status:'manual',limit:1})).total,name=current?.name??Object.values(this.context.state.nativeTags).flat().find(label=>canonicalTagKey(label.tag)===key)?.tag??names.get(key)?.[0]?.name??key;
       if(!members.total){await this.store.delete('nativeNames',key);await this.store.delete('libraryTags','native:'+key);continue;}
-      await this.store.put('nativeNames',key,{name,tagIds:(names.get(key)??[]).map(tag=>tag.id),paperCount:members.total},{category:'active',title:name,status:names.has(key)?'ready':'undefined',count:members.total});
+      await this.store.put('nativeNames',key,{name,tagIds:(names.get(key)??[]).map(tag=>tag.id),paperCount:members.total,manualCount},{category:'active',title:name,status:names.has(key)?'ready':'undefined',count:members.total});
       if(names.has(key)||key===canonicalTagKey('no_tag'))await this.store.delete('libraryTags','native:'+key);
-      else await this.store.put('libraryTags','native:'+key,{name,paperCount:members.total,protected:isPersonalNativeTagName(name)&&this.context.state.nativeTagTreatments?.[key]!=='scientific'},{category:'active',title:name,status:'undefined',count:members.total,refs:shelves.filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===key)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});
+      else await this.store.put('libraryTags','native:'+key,{name,paperCount:members.total,manualCount,protected:isPersonalNativeTagName(name)&&this.context.state.nativeTagTreatments?.[key]!=='scientific'},{category:'active',type:manualCount?'manual-native':'imported-native',title:name,status:'undefined',count:members.total,refs:shelves.filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===key)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});
     }
     const knownTagIds=new Set(tags.map(tag=>tag.id));
     if(changed.has('tags')){let after:string|undefined;do{const page=await this.store.scan('libraryTags',{after,limit:50});for(const row of page.rows)if(!row.id.startsWith('native:')&&!knownTagIds.has(row.id))await this.store.delete('libraryTags',row.id);after=page.next;}while(after);}
@@ -439,6 +458,51 @@ export class WorkspaceEngine {
     await this.context.rebase('papers',paperIds);await this.context.rebase('tagShelves',indexedShelves);
   }
   async nativeChunkAck(groupId:string,offset:number){if(!groupId||!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid native write acknowledgement.');await this.store.commit({commandId:`native-ack:${groupId}:${offset}`,operations:[{kind:'put',collection:'nativeChunks',id:groupId,value:{offset,acknowledgedAt:this.now()},metadata:{category:'ledger',status:'prepared'}}]});}
+  /** Repair the derived native inventory once; current tag fields are read in bounded pages. */
+  private async ensureNativeTagIndex(){
+    const policy=await this.store.get('workspace','nativeTagIndexPolicy',{maxBytes:2048}) as {version?:number;phase?:string;after?:string}|undefined;
+    if(policy?.version===2&&policy.phase==='complete')return;
+    const check=()=>{if(this.closed)throw new Error('Smart Tags closed during native tag indexing.');this.deps.signal?.throwIfAborted();};
+    const marker=async(phase:string,after?:string)=>{check();await this.store.put('workspace','nativeTagIndexPolicy',{version:2,phase,...(after?{after}:{})},{category:'ledger'});};
+    const paperFlags=new Map<string,{values:Map<string,boolean>;bytes:number}>();let cachedBytes=0;
+    const flags=async(paperId:string)=>{
+      const cached=paperFlags.get(paperId);if(cached){paperFlags.delete(paperId);paperFlags.set(paperId,cached);return cached.values;}
+      const source=await this.store.reference('nativeTags',paperId);if(!source)return;
+      const result=new Map<string,boolean>();let after:number|undefined;
+      do{const page=await this.store.codec.entries(source.token,{after,limit:50});for(const entry of page.entries){check();const name=await this.store.codec.lookup(entry.token,['tag']),type=await this.store.codec.lookup(entry.token,['type']);if(!name)continue;const value=await this.store.codec.read(name,{maxBytes:16*1024,signal:this.deps.signal});if(typeof value!=='string')continue;const key=canonicalTagKey(value),manual=type&&await this.store.codec.read(type,{maxBytes:128,signal:this.deps.signal})===0;result.set(key,!!result.get(key)||!!manual);}after=page.next;await this.yieldControl();}while(after!==undefined);
+      const bytes=[...result.keys()].reduce((sum,key)=>sum+key.length*2+64,0);if(bytes<=4*1024*1024){paperFlags.set(paperId,{values:result,bytes});cachedBytes+=bytes;while(paperFlags.size>50||cachedBytes>4*1024*1024){const first=paperFlags.keys().next().value!,old=paperFlags.get(first)!;cachedBytes-=old.bytes;paperFlags.delete(first);}}return result;
+    };
+    const definedNames=new Set(this.context.state.tags.filter(tag=>tag.status==='approved').flatMap(tag=>equivalentTagNames(tag).map(canonicalTagKey)));
+    let after=policy?.phase==='names'?policy.after:undefined;
+    do{
+      check();const page=await this.store.scan('nativeNames',{after,limit:50});
+      for(const row of page.rows){
+        check();
+        if(!await this.store.codec.lookup(row.token,['manualCount'])){
+          let cursor:string|undefined;do{const members=await this.store.scan('nativeNamePapers',{taskId:row.id,after:cursor,limit:50});for(const member of members.rows)if(member.metadata.status!=='manual'){
+            const paperId=await this.store.codec.read(member.token,{maxBytes:2048,signal:this.deps.signal});if(typeof paperId!=='string')continue;const source=await flags(paperId);if(source?.get(row.id)){check();await this.store.putReference(member.collection,member.id,member.token,{...member.metadata,status:'manual',refs:await this.recordLinks(member.collection,member.id)});}await this.yieldControl();
+          }cursor=members.next;}while(cursor);
+        }
+        const count=(await this.store.scan('nativeNamePapers',{taskId:row.id,limit:1})).total,manualCount=(await this.store.scan('nativeNamePapers',{taskId:row.id,status:'manual',limit:1})).total,name=await this.store.get('nativeNames',row.id,{path:['name'],maxBytes:16*1024,signal:this.deps.signal});
+        const library=await this.store.reference('libraryTags','native:'+row.id);check();
+        if(!count){await this.store.delete('nativeNames',row.id);if(library)await this.store.delete('libraryTags',library.id);continue;}
+        await this.updateNativeCountFields(row,count,manualCount);
+        if(definedNames.has(row.id)||row.id===canonicalTagKey('no_tag')){if(library)await this.store.delete('libraryTags',library.id);}
+        else if(library)await this.updateNativeCountFields(library,count,manualCount,manualCount?'manual-native':'imported-native');
+        else if(typeof name==='string'){check();await this.store.put('libraryTags','native:'+row.id,{name,paperCount:count,manualCount,protected:isPersonalNativeTagName(name)&&this.context.state.nativeTagTreatments?.[row.id]!=='scientific'},{category:'active',type:manualCount?'manual-native':'imported-native',title:name,status:'undefined',count,refs:(this.context.state.tagShelves??[]).filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===row.id)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});}
+        await this.yieldControl();
+      }
+      after=page.next;await marker('names',after??page.rows.at(-1)?.id);await this.yieldControl();
+    }while(after);
+    await marker('complete');
+  }
+  private async updateNativeCountFields(record:StoredRecord,paperCount:number,manualCount:number,type?:string){
+    const builder=this.store.codec.objectBuilder();let after:number|undefined;
+    do{const page=await this.store.codec.entries(record.token,{after,limit:50});for(const entry of page.entries)if(entry.key!=='paperCount'&&entry.key!=='manualCount')await builder.append(String(entry.key),entry.token);after=page.next;}while(after!==undefined);
+    await builder.append('paperCount',{value:paperCount});await builder.append('manualCount',{value:manualCount});
+    if(this.closed)throw new Error('Smart Tags closed during native tag indexing.');this.deps.signal?.throwIfAborted();
+    await this.store.putReference(record.collection,record.id,await builder.finish(),{...record.metadata,...(type?{type}:{}),count:paperCount,refs:await this.recordLinks(record.collection,record.id)});
+  }
   private async reconcileLibrary(present:Set<string>){
     let after:string|undefined;
     do{const page=await this.store.scan('papers',{after,limit:50});const missing=await this.confirmMissing(page.rows.filter(row=>!present.has(row.id)));if(missing.length)await this.removePapers(missing);after=page.next;await this.yieldControl();}while(after&&!this.closed);

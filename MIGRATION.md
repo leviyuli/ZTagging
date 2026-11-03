@@ -1,5 +1,13 @@
 # Migration notes
 
+## Version 1.1.1: reachable choices and visible build results
+
+Install the new XPI over your existing extension and restart Zotero. This update retains **storage schema 14**, saved definitions, scientific evidence, paid replies, Undo and the existing backup retention dates. Updating from 1.1.0 needs no full data migration.
+
+The first opening repairs small derived indexes for pending meanings and manual tag names. This makes **Activity → Open meanings** show the pending choices before saved results, and adds **My tags without meanings** to the library shelf selector. Index repair makes no AI request, admission or native paper-tag write.
+
+**Build tags** keeps its outcome, saved names and counts visible, with **View built tags** opening that run's saved tags. Recent older builds are reconstructed from bounded stored fields when possible; unavailable historical details are labelled without claiming success or failure. Missing information and successful reuse remain distinct outcomes.
+
 ## Version 1.1.0: background workspace and seven-day retention
 
 Install the new XPI over your existing extension, then restart Zotero. The first opening streams saved Smart Tags data into a separate `smart-tags/workspace.sqlite` database and shows migration progress. Zotero's library database is not used for plugin storage. Migration makes no AI request, saves no new meaning and changes no paper tags.

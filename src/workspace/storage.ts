@@ -183,6 +183,10 @@ export class WorkspaceStore {
     if(options.statuses?.length){where.push('status IN ('+options.statuses.map(()=>'?').join(',')+')');parameters.push(...options.statuses);}
     if(options.taskId){where.push('task_id=?');parameters.push(options.taskId);}
     if(options.type){where.push('type=?');parameters.push(options.type);}
+    if(options.referencedBy){
+      const owner=options.referencedBy;this.validateIdentity({collection:owner.collection,id:owner.taskId});
+      where.push('EXISTS(SELECT 1 FROM workspace_links incoming JOIN workspace_records owner ON owner.collection=incoming.owner_collection AND owner.id=incoming.owner_id WHERE incoming.target_collection=workspace_records.collection AND incoming.target_id=workspace_records.id AND incoming.owner_collection=? AND owner.task_id=? AND incoming.relation=?)');parameters.push(owner.collection,owner.taskId,owner.relation??'source');
+    }
     if(options.nativeItemId!==undefined){if(!Number.isSafeInteger(options.nativeItemId)||options.nativeItemId<=0)throw new Error('A native item identity must be a positive integer.');where.push("collection='papers' AND native_item_id=?");parameters.push(options.nativeItemId);}
     const clauses=options.referenceClauses??(options.references?[options.references]:[]);
     const reference=(ref:DocumentRef):string=>{

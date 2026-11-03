@@ -45,6 +45,7 @@ test('the concrete target publishes indexed records and drops duplicate state co
   assert.equal((await h.store.scan('papers',{search:'characterized'})).total,1);assert.equal((await h.store.scan('libraryTags',{search:'fuel cells'})).total,1);
   const names=await h.store.scan('nativeNames');assert.equal(names.total,2);assert.equal((await h.store.get('nativeNames',canonicalTagKey('FC')) as {paperCount:number}).paperCount,1);
   assert.equal((await h.store.scan('nativeNamePapers',{taskId:canonicalTagKey('FC')})).total,1);assert.equal((await h.store.scan('migrationBackups')).total,1);
+  assert.equal(await h.store.get('nativeNames',canonicalTagKey('Project'),{path:['manualCount']}),1);assert.equal((await h.store.reference('libraryTags','native:'+canonicalTagKey('Project')))!.metadata.type,'manual-native');assert.equal(await h.store.get('workspace','nativeTagIndexPolicy',{path:['phase']}),'complete');
   assert.equal((await h.store.get('workspace','active') as {generation:string}).generation,'target-generation');await h.store.close();
 });
 

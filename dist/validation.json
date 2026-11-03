@@ -1,7 +1,7 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.1.0",
-  "verifiedAt": "2026-11-02T13:38:37.011Z",
+  "version": "1.1.1",
+  "verifiedAt": "2026-11-03T03:30:32.633Z",
   "repository": "https://github.com/leviyuli/ZTagging",
   "schemaVersion": 14,
   "nativeDefinitionProtocolVersion": 2,
@@ -16,10 +16,10 @@
     "cpu": "13th Gen Intel(R) Core(TM) i5-13400F",
     "ramBytes": 42777710592
   },
-  "scope": "Responsive record-based Workspace, background workers, shared compressed SQLite storage, seven-day retention, durable queue/recovery and grouped Undo",
+  "scope": "Reachable pending meanings, manual undefined-tag shelf, and persistent exact build outcomes",
   "automatedTests": {
     "command": "npm test",
-    "passed": 1499,
+    "passed": 1528,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
@@ -34,11 +34,13 @@
     "write": false
   },
   "nativeCases": {
-    "archiveLight": {
+    "light": {
       "status": "passed",
-      "completedAt": "2026-11-02T13:35:34.398Z",
+      "completedAt": "2026-11-03T03:22:00.823Z",
       "theme": "light",
-      "graphics": "native-default",
+      "graphics": "software",
+      "passed": 35,
+      "failed": 0,
       "checks": [
         "isolatedProfile",
         "isolatedLibrary",
@@ -70,44 +72,48 @@
         "page-settings",
         "layout-settings",
         "noPluginPageSlice50ms",
+        "buildResultShowsExactSavedCount",
+        "builtTagsLinkHasExactRunMembership",
+        "manualUndefinedShelfIsReachable",
+        "activityOpensVisibleMeaningChoices",
         "idleDisableP95"
       ],
-      "passed": 31,
-      "failed": 0,
       "metrics": {
-        "startupMs": 389,
-        "archiveDatabaseBytes": 49614848,
+        "startupMs": 523,
+        "archiveDatabaseBytes": 46342144,
         "idleReclamationMs": 0,
         "warmQueries": {
-          "p95": 61,
-          "p99": 70,
-          "max": 70
+          "p95": 130,
+          "p99": 148,
+          "max": 148
         },
         "input": {
-          "p95": 12.245499999999993,
-          "p99": 33.808499999999995,
-          "max": 33.808499999999995
+          "p95": 28.22429999999997,
+          "p99": 33.00939999999997,
+          "max": 33.00939999999997
         },
         "pluginPageSlices": {
-          "samples": 78,
-          "p95": 3.6560000000008586,
-          "max": 16.42780000000039
+          "samples": 77,
+          "p95": 5.414700000000266,
+          "max": 31.958599999999933
         },
         "inputHandlers": {
-          "p95": 10.332899999999995,
-          "max": 10.863899999999973
+          "p95": 23.073100000000068,
+          "max": 24.472399999999993
         },
         "idleDisable": {
-          "p95": 28,
-          "max": 28
+          "p95": 38,
+          "max": 38
         }
       }
     },
-    "archiveDark": {
+    "dark": {
       "status": "passed",
-      "completedAt": "2026-11-02T13:26:04.444Z",
+      "completedAt": "2026-11-03T03:22:29.335Z",
       "theme": "dark",
       "graphics": "software",
+      "passed": 35,
+      "failed": 0,
       "checks": [
         "isolatedProfile",
         "isolatedLibrary",
@@ -139,161 +145,48 @@
         "page-settings",
         "layout-settings",
         "noPluginPageSlice50ms",
+        "buildResultShowsExactSavedCount",
+        "builtTagsLinkHasExactRunMembership",
+        "manualUndefinedShelfIsReachable",
+        "activityOpensVisibleMeaningChoices",
         "idleDisableP95"
       ],
-      "passed": 31,
-      "failed": 0,
       "metrics": {
-        "startupMs": 399,
-        "archiveDatabaseBytes": 49614848,
+        "startupMs": 544,
+        "archiveDatabaseBytes": 46342144,
         "idleReclamationMs": 0,
         "warmQueries": {
-          "p95": 61,
-          "p99": 74,
-          "max": 74
+          "p95": 145,
+          "p99": 151,
+          "max": 151
         },
         "input": {
-          "p95": 12.162000000000035,
-          "p99": 13.595400000000012,
-          "max": 13.595400000000012
+          "p95": 24.185400000000072,
+          "p99": 31.53909999999999,
+          "max": 31.53909999999999
         },
         "pluginPageSlices": {
-          "samples": 78,
-          "p95": 3.7201999999997497,
-          "max": 20.388500000000022
+          "samples": 76,
+          "p95": 4.6950000000006185,
+          "max": 33.431799999999384
         },
         "inputHandlers": {
-          "p95": 10.272700000000043,
-          "max": 11.84669999999997
+          "p95": 21.748300000000086,
+          "max": 30.937399999999997
         },
         "idleDisable": {
-          "p95": 23,
-          "max": 23
+          "p95": 47,
+          "max": 47
         }
       }
-    },
-    "syntheticDark": {
-      "status": "passed",
-      "completedAt": "2026-11-02T13:24:33.915Z",
-      "theme": "dark",
-      "graphics": "software",
-      "checks": [
-        "isolatedProfile",
-        "isolatedLibrary",
-        "smallWorkspaceInterface",
-        "backgroundInputLatency",
-        "automaticNewPaperTaggingOff",
-        "schema14Locator",
-        "bounded-build",
-        "bounded-vocabulary",
-        "bounded-assignment",
-        "bounded-library",
-        "bounded-activity",
-        "bounded-settings",
-        "tenThousandPaperCount",
-        "twoThousandDefinitions",
-        "decodedCacheBound",
-        "warmPageP95",
-        "inputLatency",
-        "searchControlStaysMounted",
-        "keyboardEscapeClearsSearch",
-        "page-build",
-        "layout-build",
-        "page-vocabulary",
-        "layout-vocabulary",
-        "page-assignment",
-        "layout-assignment",
-        "page-library",
-        "layout-library",
-        "page-activity",
-        "layout-activity",
-        "page-settings",
-        "layout-settings",
-        "noPluginPageSlice50ms",
-        "idleDisableP95"
-      ],
-      "passed": 33,
-      "failed": 0,
-      "metrics": {
-        "startupMs": 6561,
-        "backgroundInput": {
-          "samples": 299,
-          "p95": 1.9331999999994878,
-          "p99": 4.843200000000252,
-          "max": 6.877799999999752
-        },
-        "warmQueries": {
-          "p95": 75,
-          "p99": 90,
-          "max": 90
-        },
-        "input": {
-          "p95": 14.422000000000025,
-          "p99": 15.218000000000018,
-          "max": 15.218000000000018
-        },
-        "pluginPageSlices": {
-          "samples": 78,
-          "p95": 3.0020000000004075,
-          "max": 15.731999999999971
-        },
-        "inputHandlers": {
-          "p95": 10.197400000000016,
-          "max": 13.24750000000006
-        },
-        "idleDisable": {
-          "p95": 27,
-          "max": 27
-        }
-      }
-    },
-    "workflow": {
-      "status": "passed",
-      "completedAt": "2026-11-02T13:25:41.980Z",
-      "theme": "light",
-      "graphics": "software",
-      "checks": [
-        "isolatedProfile",
-        "isolatedLibrary",
-        "smallWorkspaceInterface",
-        "nativeWorkflowCreatesTwelveSources",
-        "nativeFixtureConnectionVerified",
-        "nativeFixtureDefinitionSaved",
-        "nativeClearAssignmentsAppliedWithoutReview",
-        "nativeUncertainPaperDoesNotBlockCompletion",
-        "nativeRequestsAreExactlyOnePerPaper",
-        "nativeManualTagsPreserved",
-        "nativeSingleUncertainChoiceVisible",
-        "nativeRecentUndoVisible",
-        "nativeRepeatReusesPaidReplies",
-        "nativeRepeatFinishesWithUncertainChoice",
-        "nativeRepeatPreservesManualTags",
-        "nativeRepeatDoesNotDuplicateChoices",
-        "nativeUndoSurvivesRestart",
-        "nativeUndoChangesActualZoteroTags",
-        "nativeUndoPreservesManualTags",
-        "nativeUndoPreventsImmediateReapplication",
-        "nativeRestartAndUndoReusePaidReplies",
-        "nativeFixtureNeverUsesRealNetwork",
-        "nativeUnknownOutcomeIsNotAutomaticallyResent",
-        "nativeRecoveryCanBeStoppedWithKeyboard",
-        "nativeRecoveryKeepsCompletedResults",
-        "nativeRecoveryAddsNoRetryCharge",
-        "nativeRecoveryNeverUsesRealNetwork"
-      ],
-      "passed": 27,
-      "failed": 0,
-      "metrics": {
-        "startupMs": 348
-      },
-      "undonePapers": 11,
-      "providerRequestsAreSynthetic": true
     },
     "package": {
       "status": "passed",
-      "completedAt": "2026-11-02T13:34:29.566Z",
+      "completedAt": "2026-11-03T03:30:04.746Z",
       "theme": "light",
       "graphics": "software",
+      "passed": 11,
+      "failed": 0,
       "checks": [
         "isolatedProfile",
         "isolatedLibrary",
@@ -307,67 +200,46 @@
         "packagedReenablePreservesWorkspace",
         "packagedRapidTogglePreservesWorkers"
       ],
-      "passed": 11,
-      "failed": 0,
       "metrics": {
-        "startupMs": 383
+        "startupMs": 557
       },
-      "version": "1.1.0",
-      "fullIdleDisableMs": 32,
+      "version": "1.1.1",
+      "idleDisableMs": 21,
       "rapidToggle": true
     }
-  },
-  "storage": {
-    "legacyBytes": 152976903,
-    "activeDatabaseBytes": 49614848,
-    "activeDatabaseMiB": 47.31640625,
-    "backupExcluded": true,
-    "freshMigrationMs": 206583,
-    "idleReclamationMs": 37374,
-    "reclamationInputMs": {
-      "p95": 0.3897,
-      "p99": 0.5659
-    },
-    "maximumChunkBytes": 65536,
-    "maximumPageRows": 50,
-    "maximumViewBytes": 262144,
-    "decodedCacheLimitBytes": 33554432,
-    "maximumBulkTransfers": 2,
-    "maximumNativeChunkPapers": 20,
-    "retentionDays": 7
   },
   "packageChecks": {
     "status": "passed",
     "installerFiles": 14,
-    "sourceFiles": 214,
-    "sourceEntriesMatchWorkingSource": true,
+    "sourceFiles": 220,
+    "exactSourceBytes": true,
     "productionBundlesMatchInstaller": true,
-    "updateManifestHashMatches": true,
+    "updateVersionAndHashMatch": true,
     "reproducibleSourceArchive": true,
-    "nativeTestInjectionExcluded": true,
     "privateAndGeneratedDataExcluded": true,
+    "nativeTestInjectionExcluded": true,
     "credentialPatternScan": "passed"
   },
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.1.0.xpi",
-      "bytes": 1108589,
-      "sha256": "f6b5e7edc2fb5850dbcff59562b238d594252574ac1e59880fa6e7407a642dcb"
+      "file": "smart-tags-1.1.1.xpi",
+      "bytes": 1129352,
+      "sha256": "704ea0eca99264953af8237e0f736416d959867fb1f6ca33ef067daac8d4e42c"
     },
     "source": {
-      "file": "smart-tags-1.1.0-source.zip",
-      "bytes": 1170841,
-      "sha256": "0000f7aaa6d0c1db2649c741738f76207531fe992b466b756891ba6115b33ec4"
+      "file": "smart-tags-1.1.1-source.zip",
+      "bytes": 1192802,
+      "sha256": "ae322ca2fc9aae6efecd9908263bb529392e21dbcab74cd7e48dcabcafc6dc1c"
     }
   },
   "workingNativeLibraryModified": false,
   "workingExtensionCacheModified": false,
   "liveProviderRequests": 0,
   "limits": [
-    "Results describe the documented test machine and fixtures, not an absolute latency guarantee.",
-    "Measured page callbacks, input-to-paint latency, native calls and operating-system/graphics waits have different scopes.",
-    "The private worker scientific kernel reuses AppController domain logic; product views never call its old whole-workspace snapshot.",
-    "Synthetic provider replies verify workflow and recovery, not live classification accuracy or provider availability.",
-    "Remote Zotero update discovery was not exercised; exact installer bytes, compatibility and the update feed hash were checked."
+    "Native UI checks use an isolated copied archive and synthetic build-result display fixture; they do not establish live AI accuracy.",
+    "UI theme runs tested the patch preview; the exact versioned release XPI separately passed installation and lifecycle checks.",
+    "The original full migration and 10,000-paper rollout measurements belong to v1.1.0 and were not repeated for this patch.",
+    "Measured timings describe the documented machine and fixtures, not an absolute latency guarantee.",
+    "Remote Zotero update discovery was not exercised; the public installer and update-feed hash are verified separately."
   ]
 }

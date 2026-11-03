@@ -29,7 +29,7 @@ export interface RecordMetadata {
 export interface StoredRecord extends DocumentRef {
   token:PayloadToken;version:number;metadata:RecordMetadata;bytes:number;
 }
-export interface ScanOptions {after?:string;offset?:number;limit?:number;search?:string;status?:string;statuses?:readonly string[];taskId?:string;type?:string;nativeItemId?:number;orderBy?:'id'|'title'|'order'|'completed';references?:DocumentRef[][];referenceClauses?:DocumentRef[][][];referenceMode?:'all'|'any'}
+export interface ScanOptions {after?:string;offset?:number;limit?:number;search?:string;status?:string;statuses?:readonly string[];taskId?:string;type?:string;nativeItemId?:number;orderBy?:'id'|'title'|'order'|'completed';references?:DocumentRef[][];referenceClauses?:DocumentRef[][][];referenceMode?:'all'|'any';referencedBy?:{collection:string;taskId:string;relation?:string}}
 export interface RecordPage {rows:StoredRecord[];next?:string;total:number}
 export type StoreOperation =
   | {kind:'put';collection:string;id:string;value:unknown;metadata?:RecordMetadata;expectedVersion?:number}
