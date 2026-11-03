@@ -31,16 +31,17 @@ test('saved concept searches refuse per-paper masks that Zotero cannot reload an
   await host.saveConceptSearch('Legacy FC',{mode:'all',selections:[{conceptId:'fc'}]},[{...fc,nativeBindingExclusions:undefined},eis]);assert.equal(saved[1].name,'Legacy FC');assert.equal(reads,2);
 });
 
-test('host limits scans to eligible personal-library parent items and preserves source tag roles', async t => {
+test('host limits scans to eligible personal-library parents and keeps native labels out of evidence', async t => {
   const values = [item(1), item(2, { libraryID: 2 }), item(3, { deleted: true }), item(4, { regular: false }), item(1)];
   globals(t, { Zotero: { Libraries: { userLibraryID: 1 }, getActiveZoteroPane: () => null, Items: { getAll: async () => values, getAsync: async (id: number) => values.find(v => v.id === id) } } });
   const host = new ZoteroHost();
   const papers = await host.list('library');
-  assert.equal(papers.length, 1); assert.deepEqual(papers[0].keywords, ['imported keyword']);
+  assert.equal(papers.length, 1); assert.deepEqual(papers[0].keywords, []);assert.deepEqual(await host.readTags(1),[{tag:'imported keyword',type:1},{tag:'manual choice',type:0}]);
   assert.equal(papers[0].abstract, 'Abstract & evidence');
   assert.equal(await host.read(2), null);
   await assert.rejects(() => host.readTags(2), /outside your personal library/);
 });
+
 
 test('pilot samples exactly fifty unique eligible papers and selected scope stays selected', async t => {
   const values = Array.from({ length: 140 }, (_, i) => item(i + 1));
@@ -93,7 +94,7 @@ test('input inspection distinguishes observed PDF states without downloading, re
   assert.equal((await host.inspectInputs(1)).pdf.status,'unknown');
   attachments.set(11,{id:11,attachmentContentType:'application/pdf',fileExists:async()=>true,attachmentText:'PRIVATE PDF EVIDENCE'});
   const result=await host.inspectInputs(1);
-  assert.equal(result.metadata.title,false);assert.equal(result.metadata.abstract,true);assert.equal(result.metadata.keywords,true);
+  assert.equal(result.metadata.title,false);assert.equal(result.metadata.abstract,true);assert.equal(result.metadata.keywords,false);
   assert.equal(result.pdf.status,'readable');assert.equal(result.pdf.characters,20);assert.equal(result.pdf.localCount,1);
   assert.equal(JSON.stringify(result).includes('PRIVATE'),false);assert.equal(reindexes,0);
   assert.equal(Number.isFinite(Date.parse(result.checkedAt)),true);

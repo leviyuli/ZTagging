@@ -14,8 +14,8 @@ export const PREPARATION_REQUEST_BYTE_LIMIT=100_000;
 export type SourceJudgement=MachineEvidenceDecision;
 export interface PreparationChoice {id:string;label:string;description:string;meaning?:Partial<Pick<TagDefinition,'name'|'fullName'|'description'|'facet'>>;exclude?:boolean;action?:'separate-reaction'}
 export interface PreparationQuestion {id:string;tagId?:string;title:string;description:string;paperIds:string[];sourceIds:string[];choices:PreparationChoice[];kind:'meaning'|'category'|'scope'|'protected-conflict';contextFingerprint:string}
-export interface TagPreparationState {id:string;proposalId:string;snapshotId:string;policyVersion:number;status:'checking'|'questions'|'ready'|'failed';judgements:Record<string,SourceJudgement>;questions:PreparationQuestion[];answers:Record<string,string>;diagnostics:string[];excluded:{tagId:string;name:string;reason:string;origin?:'researcher'|'ai'}[];provider?:string;model?:string;contextTruncated?:boolean;pendingSourceCount?:number;processingPolicy?:'auto-clear';admissions?:Record<string,{definitionFingerprint:string;changeId:string}>;shelfId?:string}
-export interface PreparationOptions {existingDefinitions?:readonly TagDefinition[];protectedTagIds?:readonly string[];facts?:readonly PaperFacts[];repairAttempts?:number;maxRepairs?:number;provider?:string;model?:string;targetCount?:number;processingPolicy?:'auto-clear'}
+export interface TagPreparationState {id:string;proposalId:string;snapshotId:string;policyVersion:number;status:'checking'|'questions'|'ready'|'failed';judgements:Record<string,SourceJudgement>;questions:PreparationQuestion[];answers:Record<string,string>;diagnostics:string[];excluded:{tagId:string;name:string;reason:string;origin?:'researcher'|'ai'}[];provider?:string;model?:string;contextTruncated?:boolean;pendingSourceCount?:number;processingPolicy?:'auto-clear';buildPolicyVersion?:1;skippedTagIds?:string[];admissions?:Record<string,{definitionFingerprint:string;changeId:string}>;shelfId?:string}
+export interface PreparationOptions {existingDefinitions?:readonly TagDefinition[];protectedTagIds?:readonly string[];facts?:readonly PaperFacts[];repairAttempts?:number;maxRepairs?:number;provider?:string;model?:string;targetCount?:number;processingPolicy?:'auto-clear';buildPolicyVersion?:1}
 export interface PreparationResult {proposal:TaxonomyProposal;state:TagPreparationState;repairRequest:boolean;diagnostics:string[]}
 
 const clone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
@@ -27,6 +27,7 @@ const decisionRelations=new Set(['equivalent','subtype','related','unrelated','n
 export function validTagPreparationState(value:unknown):value is TagPreparationState {
   const state=record(value);if(!state)return false;
   const admissions=record(state.admissions);
+  if(state.buildPolicyVersion!==undefined&&state.buildPolicyVersion!==1||state.skippedTagIds!==undefined&&(!Array.isArray(state.skippedTagIds)||!state.skippedTagIds.every(id=>typeof id==='string')))return false;
   return ['id','proposalId','snapshotId'].every(key=>typeof state[key]==='string')&&typeof state.policyVersion==='number'&&['checking','questions','ready','failed'].includes(String(state.status))&&!!record(state.judgements)&&!!record(state.answers)&&Array.isArray(state.questions)&&Array.isArray(state.diagnostics)&&Array.isArray(state.excluded)&&(state.processingPolicy===undefined||state.processingPolicy==='auto-clear')&&(state.shelfId===undefined||typeof state.shelfId==='string'&&!!state.shelfId)&&(state.admissions===undefined||!!admissions&&Object.entries(admissions).every(([id,value])=>{const admission=record(value);return !!id&&!!admission&&['definitionFingerprint','changeId'].every(key=>typeof admission[key]==='string'&&!!admission[key]);}));
 }
 function protectedIds(options:PreparationOptions,proposal:TaxonomyProposal):Set<string> {
@@ -149,6 +150,7 @@ export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,opt
   const policy=preparationPolicy(proposal),compatible=previous?.proposalId===proposal.id&&previous.snapshotId===snapshot?.id&&previous.policyVersion===policy;
   const state:TagPreparationState=compatible?clone(previous!):{id:allocateOpaqueId('preparation'),proposalId:proposal.id,snapshotId:snapshot?.id??'',policyVersion:policy,status:'checking',judgements:{},questions:[],answers:{},diagnostics:[],excluded:[]};
   if(options.processingPolicy)state.processingPolicy=options.processingPolicy;
+  if(options.buildPolicyVersion)state.buildPolicyVersion=options.buildPolicyVersion;
   state.provider=options.provider??state.provider;state.model=options.model??state.model;
   if(!snapshot||validateRegistrySnapshot(snapshot).length){state.status='failed';state.diagnostics.push('The selected evidence snapshot is unavailable or invalid. Rebuild using the retained paper facts.');return {proposal,state,repairRequest:false,diagnostics:state.diagnostics};}
   respectResearcherExclusions(proposal,state);
@@ -187,6 +189,16 @@ export function prepare(input:TaxonomyProposal,previous?:TagPreparationState,opt
   const result={proposal,state,repairRequest,diagnostics:state.diagnostics},scope=policy===2&&(repairRequest||pending.length)?repairScope(result,pending):undefined;state.contextTruncated=scope?.truncated??false;state.pendingSourceCount=pending.length;
   if(policy===2&&pending.length&&attempts>=maxRepairs){state.status='failed';if(scope?.truncated)state.diagnostics.push('Some source contexts remain unchecked because this run reached its bounded request limit. Retry automatic checks to continue with the retained judgements.');}
   if(missingCore&&!deliberatelyEmpty&&!repairRequest){state.status='failed';state.diagnostics.push('The selected papers do not yet support a reusable core vocabulary.');}
+  if(state.buildPolicyVersion===1&&!repairRequest){
+    const blocking=createProposalIssueEvaluator(proposal),retained=new Set(options.existingDefinitions?.map(tag=>tag.id)??[]),skipped=new Set(state.questions.flatMap(question=>question.tagId?[question.tagId]:[]));
+    for(const issue of proposal.validationIssues??[])if(issue.tagId&&blocking(issue)&&!retained.has(issue.tagId))skipped.add(issue.tagId);
+    for(const relation of proposal.unresolvedRelationships??[])if(relation.kind==='parent')skipped.add(relation.tagId);
+    for(const merge of proposal.unresolvedMerges??[]){skipped.add(merge.fromId);for(const tag of proposal.tags)if(tag.id===merge.toReference||[tag.name,tag.fullName,...tag.aliases].includes(merge.toReference))skipped.add(tag.id);}
+    let changed=true;while(changed){changed=false;for(const tag of proposal.tags)if(!retained.has(tag.id)&&!skipped.has(tag.id)&&tag.broaderIds.some(id=>skipped.has(id))){skipped.add(tag.id);changed=true;}}
+    state.skippedTagIds=[...skipped].filter(id=>!retained.has(id));state.questions=[];
+    const globalFailure=!!proposal.externalIssues?.length||!!proposal.validationIssues?.some(issue=>!issue.tagId&&blocking(issue));
+    state.status=globalFailure?'failed':'ready';state.pendingSourceCount=0;
+  }
   state.diagnostics=[...new Set(state.diagnostics)];return {proposal,state,repairRequest,diagnostics:state.diagnostics};
 }
 

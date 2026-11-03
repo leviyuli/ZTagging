@@ -2,10 +2,6 @@ import {initialState,validLegacyState,validState} from '../controller.ts';
 import type {AppState} from '../controller.ts';
 import {canonicalTagKey,fingerprint} from '../core.ts';
 import type {TagDefinition} from '../core.ts';
-import {equivalentTagNames} from '../concept-filter.ts';
-import {nativeBindingAllows} from '../native-binding.ts';
-import {isPersonalNativeTagName} from '../native-meaning-policy.ts';
-import {isNoTagDefinition} from '../tag-policy.ts';
 import {migrateTagShelves} from '../tag-shelves.ts';
 import {migrateWarningEpisodes} from '../warnings.ts';
 import {cleanupLegacyDraftDefinitions,inferEditedProposalTagIds,pruneProposalSupport} from '../legacy-cleanup.ts';
@@ -21,7 +17,7 @@ import {validateRunGraph} from './migration-run-validation.ts';
 import {conceptMeaningFingerprint} from '../taxonomy.ts';
 
 const encoder=new TextEncoder();
-const mapCollections=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions'.split(' '));
+const mapCollections=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions definitionOrigins'.split(' '));
 const arrayCollections=new Set('tags suggestions history cleanup pilotIds verifiedConnections models warnings deferredItemIDs taxonomyArchives preparationHistory nativeDefinitionHistory analysisResetHistory factHistory diyComparisonHistory maintenanceTasks reviewItems tagSelectionHistory legacyConsolidationHistory assignmentRuns uncoveredTopics tagShelves automaticSuppressions userEditedTagIds'.split(' '));
 const requiredMaps='papers nativeTags decisions ownership metadata analyses neighbors'.split(' ');
 const requiredArrays='tags suggestions history cleanup pilotIds verifiedConnections models warnings'.split(' ');
@@ -247,27 +243,13 @@ export class StorageMigrationTarget implements MigrationTarget {
     const status=await this.scalar(row.token,['status']);await this.putReference('history',row.id,row.token,{...row.metadata,category:'history',title,searchText:title,count,pinned:status==='prepared'||status==='conflict'});
   }}
   private async indexRelationships(){
-    const tags=await this.all<TagDefinition>('tags'),names=new Map<string,TagDefinition[]>(),shelves=await this.all<NonNullable<AppState['tagShelves']>[number]>('tagShelves');
-    for(const tag of tags)if(tag.status==='approved')for(const name of equivalentTagNames(tag)){const key=canonicalTagKey(name),matches=names.get(key)??[];matches.push(tag);names.set(key,matches);}
+    const tags=await this.all<TagDefinition>('tags');
     for(const tag of tags){const row=await this.store.reference(this.collection('tags'),tag.id);if(!row)continue;const refs=[...(tag.status==='approved'&&!tag.custom?tag.broaderIds.map(id=>({collection:'tags',id,relation:'broader'})):[])];const support=await this.store.reference(this.collection('taxonomySupport'),tag.id);if(support){refs.push({collection:'taxonomySupport',id:tag.id,relation:'source'});for(const [field,collection] of [['sourceIds','evidenceSources'],['registryIds','evidenceEntries']] as const)for await(const entry of this.entries(await this.codec.lookup(support.token,[field]))){const id=await this.codec.read(entry.token,{maxBytes:1024});if(typeof id==='string')refs.push({collection,id,relation:'source'});}}let after:string|undefined;for(;;){const page=await this.store.scan(this.collection('nativeMeaningAdmissions'),{taskId:tag.id,status:fingerprint(tag),after,limit:50});for(const admission of page.rows)refs.push({collection:'nativeMeaningAdmissions',id:admission.id,relation:'source'});if(!page.next)break;after=page.next;}await this.putReference('tags',tag.id,row.token,{...row.metadata,category:'active',title:tag.name,searchText:[tag.name,tag.fullName,...tag.aliases,tag.description].filter(Boolean).join('\n'),refs});}
-    const nativeNames=new Map<string,{name:string;tagIds:string[];paperCount:number;manualCount:number}>();
     for await(const row of this.records('papers')){
-      const native=await this.get('nativeTags',row.id) as {tag:string;type:number}[]|undefined,refs:{collection:string;id:string;relation:string}[]=[];
-      const inventoryGroups=new Map<string,{name:string;tagIds:Set<string>;manual:boolean}>();
-      for(const label of native??[]){
-        const key=canonicalTagKey(label.tag),matching=names.get(key)??[],tagIds:string[]=[];
-        for(const tag of matching){const mask=await this.store.get(this.collection('nativeBindingExclusions'),tag.id,{path:[row.id],maxBytes:128*1024}) as string[]|undefined;if(nativeBindingAllows(tag.id,row.id,label.tag,{[tag.id]:{[row.id]:mask??[]}})){refs.push({collection:'tags',id:tag.id,relation:'matches'});tagIds.push(tag.id);}}
-        const group=inventoryGroups.get(key)??{name:label.tag,tagIds:new Set<string>(),manual:false};for(const id of tagIds)group.tagIds.add(id);group.manual||=label.type===0;inventoryGroups.set(key,group);
-      }
-      for(const [key,group] of inventoryGroups){const inventory=nativeNames.get(key)??{name:group.name,tagIds:[],paperCount:0,manualCount:0};inventory.tagIds=[...new Set([...inventory.tagIds,...group.tagIds])];inventory.paperCount++;if(group.manual)inventory.manualCount++;nativeNames.set(key,inventory);await this.putReference('nativeNamePapers',JSON.stringify([key,row.id]),{value:row.id},{category:'active',taskId:key,status:group.manual?'manual':'automatic',refs:[{collection:'papers',id:row.id}]});}
-      const projection=await this.patch(row.token,['pdfText'],undefined),paper=await this.codec.read(projection,{maxBytes:2*1024*1024}) as {itemID:number;title:string;abstract:string;keywords:string[]};
-      await this.putReference('papers',row.id,row.token,{...row.metadata,category:'active',nativeItemId:paper.itemID,title:paper.title,searchText:[paper.title,paper.abstract,...paper.keywords].join('\n'),refs});
+      const text=async(key:string)=>{const token=await this.codec.lookup(row.token,[key]);return token?await this.codec.read(token,{maxBytes:64*1024*1024,signal:this.options.signal}) as string:'';};
+      const title=await text('title'),abstract=await text('abstract'),itemID=await this.scalar(row.token,['itemID']);
+      await this.putReference('papers',row.id,row.token,{...row.metadata,category:'active',nativeItemId:typeof itemID==='number'?itemID:undefined,title,searchText:title+'\n'+abstract,refs:[]});
     }
-    for(const [key,value] of nativeNames){await this.putReference('nativeNames',key,await this.codec.encode(value),{category:'active',title:value.name,searchText:value.name,status:value.tagIds.length?'ready':'undefined',count:value.paperCount});if(!names.has(key)&&key!==canonicalTagKey('no_tag'))await this.putReference('libraryTags','native:'+key,await this.codec.encode({name:value.name,paperCount:value.paperCount,manualCount:value.manualCount,protected:isPersonalNativeTagName(value.name)&&await this.get('nativeTagTreatments',key)!=='scientific'}),{category:'active',type:value.manualCount?'manual-native':'imported-native',title:value.name,searchText:value.name,status:'undefined',count:value.paperCount,refs:shelves.filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===key)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});}
-    await this.putReference('workspace','nativeTagIndexPolicy',await this.codec.encode({version:2,phase:'complete'}),{category:'ledger'});
-    for(const [key,definitions] of names)await this.putReference('definitionNames',key,await this.codec.encode({tagIds:[...new Set(definitions.map(tag=>tag.id))]}),{category:'active',title:key});
-    await this.flushReferences();
-    for(const tag of tags){if(isNoTagDefinition(tag))continue;const paperCount=(await this.store.scan(this.collection('papers'),{limit:1,references:[[{collection:this.collection('tags'),id:tag.id,relation:'matches'}]]})).total;await this.putReference('libraryTags',tag.id,await this.codec.encode({name:tag.name,tagId:tag.id,paperCount}),{category:'active',title:tag.name,searchText:[tag.name,tag.fullName,...tag.aliases,tag.description].filter(Boolean).join('\n'),status:tag.status==='approved'?'ready':'undefined',count:paperCount,refs:shelves.filter(shelf=>shelf.tagIds.includes(tag.id)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});}
     for await(const row of this.records('facts')){
       const refs:{collection:string;id:string;relation:string}[]=[];for await(const concept of this.entries(await this.codec.lookup(row.token,['concepts']))){const id=await this.scalar(concept.token,['factConceptId']);if(typeof id==='string')refs.push({collection:'evidenceSources',id,relation:'source'});}await this.putReference('facts',row.id,row.token,{...row.metadata,category:'cache',lastUsedAt:row.metadata.lastUsedAt??this.now(),refs});
     }

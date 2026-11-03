@@ -1,3 +1,4 @@
+import {scientificFixtureReply} from './workspace-scientific-fixture.js';
 /** TEST ONLY. Installed before the isolated command worker creates its provider. */
 export function installWorkspaceProviderFixture(config){
   if(!config?.reportPath)throw new Error('The isolated provider fixture needs a report path.');
@@ -29,10 +30,14 @@ export function installWorkspaceProviderFixture(config){
     if(position<0){if(prompt.trim()!=='Verify the Smart Tags connection.')return blocked();report.connection++;value={ok:true};}
     else{
       const data=JSON.parse(prompt.slice(position+marker.length));
+      const scientific=scientificFixtureReply(data);
+      if(scientific)value=scientific;
+      else {
       if(!data.paper||typeof data.paper.abstract!=='string'||!Array.isArray(data.approvedVocabulary))return blocked();
       const uncertain=/\buncertain\b/i.test(data.paper.title??'');
       unknownOutcome=/\bunknown outcome\b/i.test(data.paper.title??'');
       value={summary:'The supplied abstract reports membrane proton-transport experiments.',concepts:['proton transport'],needsPDF:false,newTagCandidates:[],suggestions:data.approvedVocabulary.map(tag=>({tagId:tag.id,reason:uncertain?'The abstract leaves the transport contribution uncertain.':'The supplied experiment directly measures proton transport.',confidence:uncertain?'medium':'high',match:'substantive',evidence:[{source:'abstract',text:data.paper.abstract}]}))};report.assignments++;
+      }
     }
     const requestId='workspace-fixture-'+(++report.total);report.requestIds.push(requestId);report.requestIds=report.requestIds.slice(-2048);await persist();
     if(unknownOutcome)throw new TypeError('The isolated provider fixture lost its connection after dispatch.');

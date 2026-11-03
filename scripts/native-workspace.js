@@ -4,7 +4,8 @@ import {verifyPackage} from './native-workspace-package.js';
 void(async()=>{
   const config=__WORKSPACE_NATIVE_CONFIG,startup=__WORKSPACE_NATIVE_STARTUP;
   const report={status:'running',startedAt:new Date().toISOString(),configuration:config,environment:{zotero:Services.appinfo.version,gecko:Services.appinfo.platformVersion,os:Services.appinfo.OS},checks:{},metrics:{},errors:[]};
-  const write=()=>IOUtils.writeUTF8(config.reportPath,JSON.stringify(report,null,2),{tmpPath:config.reportPath+'.tmp'});
+  let reportWrites=Promise.resolve();
+  const write=()=>{const body=JSON.stringify(report,null,2);reportWrites=reportWrites.catch(()=>{}).then(()=>IOUtils.writeUTF8(config.reportPath,body));return reportWrites;};
   const normalize=value=>String(value).replace(/\\/g,'/').toLowerCase();
   const check=(name,passed,detail)=>{report.checks[name]={passed:!!passed,...(detail===undefined?{}:{detail})};if(!passed)throw new Error(name);};
   const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -27,7 +28,14 @@ void(async()=>{
     if(config.kind==='workflow'){
       config.progress=async phase=>{report.phase=phase;await write();};
       const context=await runWorkflow(workspace,check,config);await SmartTags.shutdown();await SmartTags.startup(startup);await Zotero.SmartTags.workspace.ready;
-      report.workflow={...context,afterRestart:await verifyAfterRestart(Zotero.SmartTags.workspace,check,config,context)};await SmartTags.shutdown();report.status='passed';report.completedAt=new Date().toISOString();await write();return;
+      report.workflow={...context,afterRestart:await verifyAfterRestart(Zotero.SmartTags.workspace,check,config,context)};
+      const manager=await Zotero.SmartTags.openManager({page:'build'}),doc=manager.document;
+      for(const page of ['build','vocabulary','assignment','activity']){
+        await Zotero.SmartTags.openManager({page});await until(()=>doc.querySelector(`[data-ui-key="page:${page}"]`),'workflow page '+page);await sleep(150);
+        check('workflow-layout-'+page,doc.documentElement.scrollWidth<=manager.innerWidth+2);
+        const canvas=doc.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=manager.innerWidth;canvas.height=manager.innerHeight;canvas.getContext('2d').drawWindow(manager,0,0,canvas.width,canvas.height,manager.getComputedStyle(doc.body).backgroundColor);await IOUtils.write(PathUtils.join(config.root,'build','native-workspace-workflow-'+config.theme+'-'+page+'.png'),Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]),char=>char.charCodeAt(0)));
+      }
+      await SmartTags.shutdown();report.status='passed';report.completedAt=new Date().toISOString();await write();return;
     }
     const slices=[],originalWatch=workspace.watch.bind(workspace);workspace.watch=(query,receive,options)=>originalWatch(query,event=>{const start=main.performance.now();try{receive(event);}finally{slices.push(main.performance.now()-start);if(slices.length>1000)slices.shift();}},options);
     const settings=await query(workspace,'settings');check('automaticNewPaperTaggingOff',!settings.model.settings.autoAssign);

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-11-03
+
+[Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.2.0/smart-tags-1.2.0.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.2.0/smart-tags-1.2.0-source.zip)
+
+- Use AI-built tags only. Remove DIY/native meaning tools, manual tag creation and shelves; retain editing and disabling saved AI tags.
+- Retire DIY-derived and uncertain-origin definitions from active matching during upgrade. Preserve existing Zotero labels, paid replies, evidence, recovery and recent Undo.
+- Save supported clear concepts automatically and skip unresolved meanings. Show immediate queued progress, truthful completion and exact saved, reused and skipped results.
+- Replace Activity with Runs: one logical build or assignment, grouped retry attempts, direct results and separate recovery.
+- Fix migrated evidence loading, cold paused-run retry, interrupted-request status, atomic run retention and source-only cache invalidation. Native labels no longer become scientific evidence or inferred search matches.
+- Keep assignment subsets and plugin-local saved filters. Preserve manual protections, budget reservations, scientific checks and seven-day retention.
+
 ## 1.1.1 — 2026-11-03
 
 [Installer](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1.xpi) · [Source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.1.1/smart-tags-1.1.1-source.zip)

@@ -34,9 +34,9 @@ test('native selections page fifty identities, yield and reject stale or cancell
 
 test('large paper fields transfer bounded slices and retain the exact normalized fingerprint',async()=>{
   const raw='<p>'+('Scientific &amp; exact \ud800 text. '.repeat(5000))+'</p>',keywords=['a'.repeat(18000),'b'.repeat(17000)],f=fixture({abstract:raw,keywords}),wire=await f.host.read(1);
-  assert.ok(wire?.lease);assert.equal(wire.paper.abstract,'');assert.deepEqual(wire.paper.keywords,[]);assert.equal(wire.fields!.abstract,raw.length);assert.equal(wire.fields!.keywords,2);assert.ok(JSON.stringify(wire).length<17000);assert.equal(wire.paper.fingerprint,'');
+  assert.ok(wire?.lease);assert.equal(wire.paper.abstract,'');assert.deepEqual(wire.paper.keywords,[]);assert.equal(wire.fields!.abstract,raw.length);assert.equal(wire.fields!.keywords,undefined);assert.ok(JSON.stringify(wire).length<17000);assert.equal(wire.paper.fingerprint,'');
   await assert.rejects(f.host.paperField(wire.lease!,'abstract',0,8193),/bounded/);const restored=await consume(f.host,wire);
-  assert.equal(restored.title,'Title & result');assert.equal(restored.abstract,raw.replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim());assert.deepEqual(restored.keywords,keywords);assert.equal(restored.fingerprint,paperFingerprint(restored));
+  assert.equal(restored.title,'Title & result');assert.equal(restored.abstract,raw.replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim());assert.deepEqual(restored.keywords,[]);assert.equal(restored.fingerprint,paperFingerprint(restored));
   await assert.rejects(f.host.paperField(wire.lease!,'abstract',0),/expired/);assert.equal(f.attachmentTextReads,0);
 });
 
@@ -57,6 +57,7 @@ test('native writes enforce twenty-paper frames and acknowledge only successful 
   const failed=fixture();failed.host.host.apply=async()=>{throw new Error('Native transaction rolled back.');};await assert.rejects(failed.host.apply([patch(1)],'tags',async()=>{failed.acks.push('bad');}),/rolled back/);assert.deepEqual(failed.acks,[]);
   const blocked=fixture();blocked.host.stop();await assert.rejects(blocked.host.apply([patch(1)],'tags'),/stopping/);assert.deepEqual(blocked.writes,[]);
 });
+
 
 test('library indexing pages native identities and modification versions without reading paper bodies',async()=>{
   const f=fixture(),queries:{sql:string;params:unknown[]}[]=[],types={note:1,attachment:2,annotation:3};let bodyReads=0;

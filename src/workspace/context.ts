@@ -5,7 +5,7 @@ import type {DocumentRef,PayloadToken,RecordMetadata,StoreOperation,StoredRecord
 import {retainNativeTagDefinitionSnapshot} from '../native-tag-definition.ts';
 import type {NativeTagDefinitionWork} from '../native-tag-definition.ts';
 
-export const STATE_MAPS=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions'.split(' '));
+export const STATE_MAPS=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions definitionOrigins'.split(' '));
 export const STATE_ARRAYS=new Set('tags suggestions history cleanup pilotIds verifiedConnections models warnings deferredItemIDs taxonomyArchives preparationHistory nativeDefinitionHistory analysisResetHistory factHistory diyComparisonHistory maintenanceTasks reviewItems tagSelectionHistory legacyConsolidationHistory assignmentRuns uncoveredTopics tagShelves automaticSuppressions userEditedTagIds'.split(' '));
 const histories=new Set('history taxonomyArchives preparationHistory nativeDefinitionHistory analysisResetHistory factHistory diyComparisonHistory tagSelectionHistory legacyConsolidationHistory'.split(' '));
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'?value as Record<string,unknown>:{};
@@ -38,6 +38,9 @@ export function metadataFor(collection:string,value:unknown,now=Date.now(),order
   if(order!==undefined)Object.assign(metadata,{order});
   if(collection==='history')metadata.count=(Array.isArray(entry.patches)?entry.patches.length:0)+(Array.isArray(entry.metadataPatches)?entry.metadataPatches.length:0)+Object.keys(object(entry.afterDefinitions)).length+(entry.afterShelves?1:0);
   if(collection==='papers'&&typeof entry.itemID==='number')metadata.nativeItemId=entry.itemID;
+  if(collection==='tags')metadata.type=entry.status==='approved'&&entry.matchingMode!=='manual'&&entry.builtin!=='no_tag'?'enabled':'disabled';
+  if(collection==='definitionOrigins')metadata.category='ledger';
+  if(collection==='suggestions')metadata.refs=[...(typeof entry.paperId==='string'?[{collection:'papers',id:entry.paperId}]:[]),...(typeof entry.tagId==='string'?[{collection:'tags',id:entry.tagId}]:[])];
   if(collection==='facts'&&Array.isArray(entry.concepts))metadata.refs=entry.concepts.flatMap(concept=>typeof object(concept).factConceptId==='string'?[{collection:'evidenceSources',id:String(object(concept).factConceptId),relation:'source'}]:[]);
   if(collection==='taxonomySupport')metadata.refs=[...(Array.isArray(entry.paperIds)?entry.paperIds.flatMap(id=>typeof id==='string'?[{collection:'papers',id},{collection:'facts',id}]:[]):[]),...(Array.isArray(entry.sourceIds)?entry.sourceIds.flatMap(id=>typeof id==='string'?[{collection:'evidenceSources',id,relation:'source'}]:[]):[]),...(Array.isArray(entry.registryIds)?entry.registryIds.flatMap(id=>typeof id==='string'?[{collection:'evidenceEntries',id,relation:'source'}]:[]):[])];
   if(collection==='reviewItems')metadata.refs=[...(typeof entry.paperId==='string'?[{collection:'papers',id:entry.paperId},{collection:'facts',id:entry.paperId},{collection:'analyses',id:entry.paperId}]:[]),...(typeof entry.tagId==='string'?[{collection:'tags',id:entry.tagId}]:[]),...(entry.kind==='assignment'&&typeof entry.taskId==='string'?[{collection:'assignmentRuns',id:entry.taskId}]:[]),...(typeof entry.suggestionId==='string'?[{collection:'suggestions',id:entry.suggestionId}]:[]),...(entry.ownerPage==='vocabulary'&&typeof entry.questionId==='string'?[{collection:'nativeMeaningEntries',id:entry.questionId}]:[])];
@@ -129,6 +132,11 @@ export class WorkingContext {
   }
   private async hydrateEmbedded(field:string,value:unknown){
     const objectValue=object(value),work=object(objectValue.work);
+    if(field==='evidenceCatalog'&&(!value||typeof value!=='object'||Array.isArray(value)))throw new Error('The saved evidence catalog is invalid. Its original records were preserved.');
+    if(field==='evidenceCatalog')for(const key of ['sources','entries','registryAliases']){
+      if(objectValue[key]===undefined)objectValue[key]={};
+      else if(!objectValue[key]||typeof objectValue[key]!=='object'||Array.isArray(objectValue[key]))throw new Error('The saved evidence catalog is invalid. Its original records were preserved.');
+    }
     if((field==='nativeDefinitionPreparation'||field==='nativeDefinitionHistory')&&typeof work.id==='string'){
       if(!Array.isArray(work.entries))work.entries=await this.embedded('nativeMeaningEntries',work.id);
       if(!Array.isArray(work.tasks))work.tasks=await this.embedded('nativeMeaningTasks',work.id);

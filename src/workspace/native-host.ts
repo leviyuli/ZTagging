@@ -96,7 +96,6 @@ export class WorkspaceHost {
   async read(itemID:number):Promise<NativePaperTransport|null>{
     this.check();const item=await this.zotero.Items.getAsync(itemID);this.check();if(!this.personal(item))return null;
     const source:PaperRecord={id:`${item.libraryID}:${item.key}`,itemID:item.id,libraryID:item.libraryID,key:item.key,title:String(item.getField('title')||''),abstract:String(item.getField('abstractNote')||''),keywords:[],summary:'',concepts:[],fingerprint:''};
-    for(const tag of item.getTags()){if(tag.type===1)source.keywords.push(tag.tag);await this.yieldToUI();}
     const paper={...source,keywords:source.keywords},fields:NonNullable<NativePaperTransport['fields']>={};let remaining=FIELD_CHARS;
     for(const field of ['title','abstract'] as const){if(source[field].length>remaining){fields[field]=source[field].length;paper[field]='';}else remaining-=source[field].length;}
     let characters=0;for(const keyword of source.keywords){characters+=keyword.length;await this.yieldToUI();if(characters>remaining)break;}
@@ -134,7 +133,7 @@ export class WorkspaceHost {
       }catch(error){if(this.stopping)throw error;readError=true;}await this.yieldToUI();
     }
     const status=!attachmentCount?'missing':readError?'readError':localCount?'textUnavailable':unknown?'unknown':'nonlocal';
-    return {paperId:`${item.libraryID}:${item.key}`,itemID,checkedAt:new Date().toISOString(),metadata:{title:!!item.getField('title'),abstract:!!item.getField('abstractNote'),keywords:item.getTags().some((tag:{type:number})=>tag.type===1)},pdf:{status,attachmentCount,localCount,characters:0,rechecked},cachePaths};
+    return {paperId:`${item.libraryID}:${item.key}`,itemID,checkedAt:new Date().toISOString(),metadata:{title:!!item.getField('title'),abstract:!!item.getField('abstractNote'),keywords:false},pdf:{status,attachmentCount,localCount,characters:0,rechecked},cachePaths};
   }
   private validateFrame(patches:readonly {itemID:number}[]){this.check();if(patches.length>20)throw new Error('Native writes require at most twenty papers per durable chunk.');if(new Set(patches.map(patch=>patch.itemID)).size!==patches.length)throw new Error('A native write chunk cannot change the same paper twice.');}
   async apply(patches:TagPatch[],label:string,ack:(offset:number)=>Promise<void>=async()=>{}):Promise<void>{

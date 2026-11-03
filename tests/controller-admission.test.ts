@@ -29,11 +29,79 @@ function completedBuild() {
   state.run={id:'completed-auto-build',kind:'rebuild',scope:'selected',automatic:false,processingPolicy:'auto-clear',status:'idle',jobs:facts.map(fact=>({id:`job-${fact.paperId}`,paperId:fact.paperId,status:'completed'})),vocabCursor:facts.length,vocabFinished:true,message:'Completed scientific checks.',spentUSD:0.4,settings:structuredClone(state.settings),vocabularyVersion:0,selection:work};
   assert.equal(validState(state),true);return state;
 }
-function harness(state:AppState,rejectAdmission=false) {
+function harness(state:AppState,rejectAdmission=false,policy=false) {
   const snapshots:AppState[]=[];let modelCalls=0,nativeWrites=0;
   const env:ControllerEnvironment={persist:async next=>{if(rejectAdmission&&Object.keys(next.tagPreparation?.admissions??{}).length)throw new Error('Admission state write failed');snapshots.push(structuredClone(next));},host:{list:async()=>structuredClone(Object.values(state.papers)),read:async id=>structuredClone(Object.values(state.papers).find(paper=>paper.itemID===id)??null),readTags:async id=>structuredClone(state.nativeTags[Object.values(state.papers).find(paper=>paper.itemID===id)!.id]),pdfText:async()=>'',apply:async()=>{nativeWrites++;},show:async()=>{},saveSearch:async()=>{}},ai:{hasApiKey:async()=>true,getSession:async()=>({connected:false,sharing:false,accountId:null,email:null,accounts:[]}),completeJson:async()=>{modelCalls++;throw new Error('Completed admission must not dispatch');},testConnection:async()=>{throw new Error('No connection request');},listModels:async()=>[],setApiKey:async()=>{},removeApiKey:async()=>{},signIn:async()=>{throw new Error('No sign in');},cancelSignIn:()=>{},signOut:async()=>({revoked:true}),selectAccount:async()=>{}}};
-  return {app:new AppController(state,env),snapshots,modelCalls:()=>modelCalls,nativeWrites:()=>nativeWrites};
+  if(policy){env.workflowPolicyVersion=1;env.retiredDefinitionIds=new Set(['retired-definition']);}
+  return {app:new AppController(state,env),env,snapshots,modelCalls:()=>modelCalls,nativeWrites:()=>nativeWrites};
 }
+
+test('new build policy skips ambiguous meanings without blocking validated additions or requesting review',async()=>{
+  const state=completedBuild();state.run!.buildPolicyVersion=1;state.run!.sourcePolicyVersion=2;
+  const ambiguous=state.taxonomyProposal!.tags.find(tag=>tag.name==='electron transport')!,h=harness(state,false,true);
+  await h.app.initialize();
+  const saved=state.tags.find(tag=>tag.name==='proton transport')!;assert.ok(saved);
+  assert.ok(!state.tags.some(tag=>tag.id===ambiguous.id));assert.equal(state.tagPreparation!.status,'ready');assert.deepEqual(state.tagPreparation!.questions,[]);
+  assert.ok(state.tagPreparation!.skippedTagIds!.includes(ambiguous.id));assert.equal((state.reviewItems??[]).filter(item=>item.state!=='resolved'&&item.kind==='definition').length,0);
+  assert.equal(h.modelCalls(),0);assert.equal(h.nativeWrites(),0);assert.equal(state.run!.spentUSD,0.4);
+  const origin=state.definitionOrigins![saved.id];assert.equal(origin.kind,'ai-build');assert.equal(origin.workId,state.taxonomyProposal!.id);assert.equal(origin.creationFingerprint,fingerprint(saved));
+  assert.ok(h.snapshots.some(snapshot=>snapshot.tags.some(tag=>tag.id===saved.id)&&snapshot.definitionOrigins?.[saved.id]&&snapshot.tagPreparation?.admissions?.[saved.id]));
+  const paid=state.run!.spentUSD,history=state.history.length;await h.app.invoke('resume');await h.app.waitForIdle();assert.equal(h.modelCalls(),0);assert.equal(state.run!.spentUSD,paid);assert.equal(state.history.length,history);
+  const original=structuredClone(origin);await h.app.invoke('save-tag',{tag:{...saved,name:'proton conduction',description:'A corrected scope for proton conduction.'}});
+  assert.deepEqual(state.definitionOrigins![saved.id],original);assert.equal(validState(state),true);
+});
+
+test('build completion is checkpointed only after supported definitions and the final result are durable',async()=>{
+  for(const failure of ['none','admission','completion'] as const){
+    const state=completedBuild();state.tags=[];state.run!.status='paused';state.run!.buildPolicyVersion=1;state.run!.sourcePolicyVersion=2;
+    state.run!.selectionInputFingerprint=fingerprint({protocolVersion:2,facts:Object.values(state.facts).sort((a,b)=>a.paperId.localeCompare(b.paperId)),existing:[],limit:state.settings.coreConceptLimit??60,baseVersion:state.vocabularyVersion});
+    const h=harness(state,failure==='admission',true),persist=h.env.persist;let failed=false;
+    h.env.persist=async next=>{if(failure==='completion'&&!failed&&next.run?.status==='idle'){failed=true;throw new Error('Final completion checkpoint failed');}await persist(next);h.app.state=next;};
+    await h.app.invoke('resume');await h.app.waitForIdle();
+    const idle=h.snapshots.filter(snapshot=>snapshot.run?.status==='idle');
+    if(failure==='none'){assert.equal(state.run!.status,'idle',state.run!.message);assert.equal(idle.length,1);assert.equal(idle[0].tags.length,1);assert.equal(Object.keys(idle[0].tagPreparation!.admissions!).length,1);assert.match(idle[0].run!.message,/1 tag saved/);}
+    else{assert.equal(state.run!.status,'paused',state.run!.message);assert.equal(idle.length,0);assert.match(state.run!.message,/state write failed|completion checkpoint failed/i);}
+    assert.equal(h.modelCalls(),0);assert.equal(h.nativeWrites(),0);
+  }
+});
+
+test('retired workflow commands and manual creation cannot restart through the kernel',async()=>{
+  const state=completedBuild(),h=harness(state,false,true);
+  for(const action of ['prepare-tag-meanings','use-proposed-tag-meaning','create-detail','import-vocabulary','compare-diy-tags','refresh-existing-tags','merge-tag-shelves'])await assert.rejects(h.app.invoke(action,{}),/Use Build tags/);
+  await assert.rejects(h.app.invoke('save-tag',{tag:{id:'not-a-saved-tag',name:'manual',description:'Manual tag'}}),/Use Build tags/);
+  assert.equal(h.modelCalls(),0);assert.equal(h.nativeWrites(),0);
+});
+
+test('full replacement skips ambiguous candidates but waits for explicit change review before saving',async()=>{
+  const state=completedBuild(),old={...state.tags[0],id:'old-ai-definition',status:'approved' as const,custom:false};
+  state.tags=[old];state.taxonomyReady=true;state.run!.buildMode='replace';state.run!.buildPolicyVersion=1;state.run!.sourcePolicyVersion=2;delete state.run!.processingPolicy;
+  const h=harness(state,false,true);await h.app.initialize();assert.deepEqual(state.tags,[old]);
+  const before=h.app.workerViews();assert.equal(before.buildResult!.requiresChangeReview,true);assert.equal(before.buildResult!.savedCount,0);assert.equal(before.buildResult!.skippedCount,1);assert.equal(before.tagPreparation!.tags.length,1);
+  await h.app.invoke('apply-tag-list',{id:state.tagPreparation!.id});
+  assert.deepEqual(state.tags.map(tag=>tag.name),['proton transport']);assert.equal(h.modelCalls(),0);assert.equal(h.nativeWrites(),0);
+  const after=h.app.workerViews();assert.equal(after.buildResult!.savedCount,1);assert.equal(after.buildResult!.skippedCount,1);assert.equal(after.buildResult!.requiresChangeReview,undefined);
+});
+
+test('Undo preflight blocks restoration of retired definitions before any native write',async()=>{
+  const state=completedBuild(),paper=Object.values(state.papers)[0],retired={...state.tags[0],id:'retired-definition',name:'Earlier personal meaning'};
+  state.history.unshift({id:'mixed-retired-change',date:new Date().toISOString(),label:'Earlier work',status:'applied',patches:[{paperId:paper.id,itemID:paper.itemID,before:[],after:state.nativeTags[paper.id]}],beforeDefinitions:{[retired.id]:retired},afterDefinitions:{[retired.id]:null},beforeOwnership:{},afterOwnership:{},suggestionIds:[]});
+  const h=harness(state,false,true);await assert.rejects(h.app.invoke('undo',{id:'mixed-retired-change'}),/retired tag definition/);assert.equal(h.nativeWrites(),0);assert.equal(state.history[0].status,'applied');
+});
+
+test('stale retired suggestions cannot become remembered rejections or native writes',async()=>{
+  const state=completedBuild(),paper=Object.values(state.papers)[0],h=harness(state,false,true);
+  state.suggestions.push({id:'withdrawn-earlier-match',paperId:paper.id,tagId:state.tags[0].id,reason:'Earlier source policy.',confidence:'high',match:'substantive',status:'rejected',autoEligible:true,evidence:[{source:'abstract',text:paper.abstract}],inputFingerprint:paper.fingerprint,vocabularyVersion:state.vocabularyVersion,retiredByPolicy:1});
+  for(const action of ['accept-suggestion','reject-suggestion'])await assert.rejects(h.app.invoke(action,{id:'withdrawn-earlier-match'}),/retired tag workflow/);
+  assert.deepEqual(state.decisions,{});assert.equal(h.nativeWrites(),0);assert.equal(h.modelCalls(),0);
+});
+
+test('scanning does not resurrect cached label-derived keywords or their summaries',async()=>{
+  const state=completedBuild(),paper=Object.values(state.papers)[0],h=harness(state,false,true),native=structuredClone(paper);
+  paper.keywords=['important'];paper.summary='A summary from the old label context.';paper.concepts=['important'];paper.fingerprint=paperFingerprint(paper);
+  // The host adapter now supplies scientific metadata without native tag keywords.
+  h.env.host.list=async()=>[structuredClone(native)];await h.app.invoke('scan',{scope:'selected'});
+  assert.deepEqual(state.papers[paper.id].keywords,[]);assert.equal(state.papers[paper.id].summary,'');assert.deepEqual(state.papers[paper.id].concepts,[]);assert.equal(h.modelCalls(),0);
+});
 
 test('restart locally admits clear completed definitions while preserving unanswered questions, source identities and task identity',async()=>{
   const state=completedBuild(),run=state.run,selection=state.run!.selection,snapshot=fingerprint(state.taxonomyProposal!.evidenceSnapshot),questions=fingerprint(state.tagPreparation!.questions),h=harness(state);

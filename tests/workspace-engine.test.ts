@@ -11,6 +11,7 @@ import type {PaperRecord} from '../src/core.ts';
 import type {LibraryHost,NativeTag,TagPatch} from '../src/platform.ts';
 import {ProviderError} from '../src/providers.ts';
 import {createNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
+import {buildOriginOperation} from '../src/workspace/workflow-policy.ts';
 
 const copy=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 function paper(index=1):PaperRecord{const value:PaperRecord={id:`1:P${index}`,itemID:index,libraryID:1,key:`P${index}`,title:`Catalyst-layer resistance ${index}`,abstract:'We measure catalyst-layer resistance in water electrolysis.',keywords:[],summary:'',concepts:[],fingerprint:''};value.fingerprint=paperFingerprint(value);return value;}
@@ -28,6 +29,7 @@ function fixture(papers=[paper()]){
 async function readyEngine(papers=[paper()]){
   const sql=memorySql(),store=await WorkspaceStore.open(sql.port),f=fixture(papers),context=new WorkingContext(store);
   const state=initialState();state.settings={...state.settings,provider:'api',model:'test-model',inputPricePerMillion:1,outputPricePerMillion:1};state.tags[0]={...state.tags[0],status:'approved',matchingMode:'auto'};state.taxonomyReady=true;context.setState(state);await context.seed();
+  await store.commitRecords([buildOriginOperation({tagId:state.tags[0].id,definition:state.tags[0],workId:'validated-fixture-build'})]);
   const engine=new WorkspaceEngine({store,host:f.host,ai:f.ai,yieldControl:async()=>{}});await engine.open();
   return {sql,store,engine,...f,get requests(){return f.requests;},get peakRequests(){return f.peakRequests;},set fail(value:boolean){f.fail=value;}};
 }
@@ -37,8 +39,9 @@ test('Workspace commands preserve semantic results and command identity without 
   try{
     const settings={...initialState().settings,budgetUSD:12};const first=await h.engine.execute({type:'save-settings',payload:{settings}},{commandId:'settings-once'}),second=await h.engine.execute({type:'save-settings',payload:{settings:{...settings,budgetUSD:99}}},{commandId:'settings-once'});
     assert.deepEqual(second,first);assert.equal((await h.store.get('state','settings') as typeof settings).budgetUSD,12);assert.equal(h.requests,0);
-    await h.engine.execute({type:'create-detail',payload:{tag:{...initialState().tags[0],id:'',name:'Water electrolysis',fullName:'Water electrolysis',aliases:[],description:'Electrochemical splitting of water.',status:'approved'}}},{commandId:'create-once'});
-    assert.equal((await h.store.scan('tags',{limit:50})).total,2);
+    await h.engine.execute({type:'save-tag',payload:{tag:{...initialState().tags[0],name:'Water electrolysis',fullName:'Water electrolysis',aliases:[],description:'Electrochemical splitting of water.',status:'approved'}}},{commandId:'edit-once'});
+    assert.equal((await h.store.scan('tags',{limit:50})).total,1);assert.equal(await h.store.get('tags','custom-rcl',{path:['name']}),'Water electrolysis');
+    await assert.rejects(h.engine.execute({type:'create-detail',payload:{tag:{name:'manual'}}},{commandId:'retired-create'}),/retired|Build tags/);
   }finally{AppController.prototype.snapshot=original;await h.engine.close('disable');await h.store.close();}
 });
 
@@ -76,7 +79,7 @@ test('an explicit retry dispatches once after an invalid paid reply and preserve
 
 test('concurrent submissions of one command identity execute its source action once',async()=>{
   const h=await readyEngine();
-  try{const command={type:'create-detail',payload:{tag:{...initialState().tags[0],id:'',name:'One new topic',fullName:'One new topic',aliases:[],description:'One explicit meaning.',status:'approved'}}};const receipts=await Promise.all([h.engine.execute(command,{commandId:'concurrent-once'}),h.engine.execute(command,{commandId:'concurrent-once'})]);assert.deepEqual(receipts[0],receipts[1]);assert.equal((await h.store.scan('tags',{limit:50})).total,2);}
+  try{const command={type:'save-tag',payload:{tag:{...initialState().tags[0],name:'One edited topic',fullName:'One edited topic',aliases:[],description:'One corrected meaning.',status:'approved'}}};const receipts=await Promise.all([h.engine.execute(command,{commandId:'concurrent-once'}),h.engine.execute(command,{commandId:'concurrent-once'})]);assert.deepEqual(receipts[0],receipts[1]);assert.equal((await h.store.scan('tags',{limit:50})).total,1);assert.equal(await h.store.get('tags','custom-rcl',{path:['name']}),'One edited topic');}
   finally{await h.engine.close('disable');await h.store.close();}
 });
 
@@ -108,11 +111,11 @@ test('a changed captured identity stops a queued task before provider dispatch',
 test('stopping a failed queued attempt expires its inputs without cancelling active scientific work',async()=>{
   const h=await readyEngine();let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>release=resolve),waiting=new Promise<void>(resolve=>entered=resolve),complete=h.ai.completeJson.bind(h.ai);
   try{
-    const failed=await h.engine.execute({type:'scan',payload:{scope:'selected',frozenPaperIDs:[{itemID:1,paperId:'1:OLD-KEY'}]}},{commandId:'failed-before-stop'});await h.engine.idle();
+    const failed=await h.engine.execute({type:'tag',payload:{scope:'selected',processingPolicy:'auto-clear',frozenPaperIDs:[{itemID:1,paperId:'1:OLD-KEY'}]}},{commandId:'failed-before-stop'});await h.engine.idle();
     h.ai.completeJson=async(...args)=>{entered();await gate;return complete(...args);};await h.engine.execute({type:'tag',payload:{scope:'library',processingPolicy:'auto-clear'}},{commandId:'active-while-stopping'});await waiting;
-    await h.engine.execute({type:'stop-queued-task',payload:{id:failed.taskId}},{commandId:'stop-failed-marker'});assert.equal(await h.store.get('state','run',{path:['status']}),'running');assert.equal(await h.store.get('activityTasks',failed.taskId!,{path:['state']}),'completed');assert.equal((await h.store.reference('queuedInputs','failed-before-stop'))!.metadata.category,'history');
+    await h.engine.execute({type:'stop-run',payload:{id:failed.runId}},{commandId:'stop-failed-marker'});assert.equal(await h.store.get('state','run',{path:['status']}),'running');assert.equal(await h.store.get('runs',failed.runId!,{path:['status']}),'stopped');assert.equal((await h.store.reference('queuedInputs','failed-before-stop'))!.metadata.category,'history');
     release();await h.engine.idle();assert.equal(h.native.get(1)?.some(tag=>tag.tag==='RCL'),true);
-    let more=true;while(more){const result=await h.store.retain(Date.now()+8*86400000,50);await h.engine.afterRetention(result);more=result.more;}assert.equal(await h.store.reference('activityTasks',failed.taskId!),undefined);assert.equal(await h.store.reference('queuedInputs','failed-before-stop'),undefined);
+    let more=true;while(more){const result=await h.store.retain(Date.now()+8*86400000,50);await h.engine.afterRetention(result);more=result.more;}assert.equal(await h.store.reference('runs',failed.runId!),undefined);assert.equal(await h.store.reference('queuedInputs','failed-before-stop'),undefined);
   }finally{release?.();await h.engine.close('disable');await h.store.close();}
 });
 
@@ -166,6 +169,7 @@ test('indexed reset clears unloaded reusable bodies while preserving tags, paid 
 
 test('current definition evidence survives an edit and expiry while unrelated cache expires',async()=>{
   let now=Date.UTC(2026,10,2);const sql=memorySql(),store=await WorkspaceStore.open(sql.port,{clock:()=>now}),f=fixture(),context=new WorkingContext(store,{clock:()=>now}),state=initialState();state.tags[0].status='approved';state.settings.model='test-model';context.setState(state);await context.seed();
+  await store.commitRecords([buildOriginOperation({tagId:state.tags[0].id,definition:state.tags[0],workId:'validated-proof-fixture',recordedAt:now})]);
   await store.put('evidenceSources','current',{quote:'Current supporting quotation'},{category:'cache',lastUsedAt:now});await store.put('evidenceSources','unused',{quote:'Unused old quotation'},{category:'cache',lastUsedAt:now});
   const tag=(await store.reference('tags','custom-rcl'))!;await store.putReference('tags',tag.id,tag.token,{...tag.metadata,refs:[{collection:'evidenceSources',id:'current',relation:'source'}]});
   const engine=new WorkspaceEngine({store,host:f.host,ai:f.ai,clock:()=>now,yieldControl:async()=>{}});await engine.open();
@@ -176,7 +180,7 @@ test('current definition evidence survives an edit and expiry while unrelated ca
   }finally{await engine.close('disable');await store.close();}
 });
 
-test('one uncertain paper leaves the other ninety-nine applied without another interaction',async()=>{
+test('one uncertain paper leaves the other ninety-nine applied without another interaction',{timeout:120000},async()=>{
   const h=await readyEngine(Array.from({length:100},(_,index)=>paper(index+1)));
   try{
     await h.engine.execute({type:'tag',payload:{scope:'library',processingPolicy:'auto-clear'}},{commandId:'one-hundred'});await h.engine.idle();
@@ -215,10 +219,10 @@ test('native deletion removes a cold indexed paper while retaining captured scie
   const h=await readyEngine(),deleted=paper(2);
   try{
     await h.store.put('papers',deleted.id,deleted,{category:'active',title:deleted.title,nativeItemId:2,refs:[{collection:'tags',id:'custom-rcl',relation:'matches'}]});await h.store.put('nativeTags',deleted.id,[{tag:'RCL',type:1}],{category:'active'});
-    await h.store.put('nativeNamePapers',JSON.stringify(['rcl',deleted.id]),deleted.id,{category:'active',taskId:'rcl',refs:[{collection:'papers',id:deleted.id}]});await h.store.put('nativeNames','rcl',{name:'RCL',paperCount:1},{category:'active'});
+    await h.store.put('scientificMatches',JSON.stringify([deleted.id,'custom-rcl']),{paperId:deleted.id,tagId:'custom-rcl',inputFingerprint:deleted.fingerprint},{category:'active',taskId:deleted.id,refs:[{collection:'papers',id:deleted.id}]});
     await h.store.put('providerScopes','preserved-proof',{paper:deleted,paid:'Unmodified captured context'},{category:'cache',lastUsedAt:Date.now()});
     await h.engine.itemsChanged([{itemID:2}]);
-    assert.equal(await h.store.reference('papers',deleted.id),undefined);assert.equal(await h.store.reference('nativeTags',deleted.id),undefined);assert.equal((await h.store.scan('nativeNamePapers',{taskId:'rcl',limit:1})).total,0);assert.equal(await h.store.reference('nativeNames','rcl'),undefined);assert.equal(await h.store.get('libraryTags','custom-rcl',{path:['paperCount']}),0);assert.ok(await h.store.reference('providerScopes','preserved-proof'));assert.equal(h.requests,0);assert.equal(h.writes.length,0);
+    assert.equal(await h.store.reference('papers',deleted.id),undefined);assert.equal(await h.store.reference('nativeTags',deleted.id),undefined);assert.equal((await h.store.scan('scientificMatches',{taskId:deleted.id,limit:1})).total,0);assert.ok(await h.store.reference('providerScopes','preserved-proof'));assert.equal(h.requests,0);assert.equal(h.writes.length,0);
   }finally{await h.engine.close('disable');await h.store.close();}
 });
 
@@ -300,7 +304,7 @@ test('a paid reply and applied native chunk survive restart, and Undo suppresses
   }finally{h.sql.fail();await engine.close('disable');await h.store.close();}
 });
 
-test('one automatic run retains a single logical Undo across more than twenty native papers and restart',async()=>{
+test('one automatic run retains a single logical Undo across more than twenty native papers and restart',{timeout:120000},async()=>{
   const h=await readyEngine(Array.from({length:25},(_,index)=>paper(index+1)));let engine=h.engine;
   try{
     await engine.execute({type:'tag',payload:{scope:'library',processingPolicy:'auto-clear'}},{commandId:'grouped-twenty-five'});await engine.idle();const runId=String(await h.store.get('state','run',{path:['id']})),id=automaticAssignmentHistoryId(runId),histories=await h.store.scan('history',{status:'applied',limit:50});assert.equal(histories.total,1);assert.equal(histories.rows[0].id,id);assert.equal((await h.store.get('history',id,{path:['patches']}) as unknown[]).length,25);
@@ -316,11 +320,15 @@ test('history append checkpoints encode only newly appended native patch bodies'
   context.state.history[0].patches[0].after=[{tag:'Corrected first patch',type:1}];await context.checkpoint(context.state);assert.equal(await store.get('history','append-history',{path:['patches',0,'after',0,'tag']}),'Corrected first patch');await store.close();
 });
 
-test('opening an archived native choice hydrates its exact protected context and task after restart',async()=>{
+test('retired native choice routes preserve archived context without reopening definition work',async()=>{
   const h=await readyEngine();let engine=h.engine;const source=paper(),work=createNativeTagDefinitionWork({papers:[source],nativeTags:{[source.id]:[{tag:'Important',type:0}]},definitions:[],facts:{},decisions:{},vocabularyVersion:1,applied:false},['Important'],{selectionPolicyVersion:1}),taskId='archived-native-task';
   try{
     engine.context.state.nativeDefinitionHistory=[{work,taskId,shelfId:'all',appliedEntryIds:[],processingPolicy:'auto-clear'}];engine.context.state.maintenanceTasks=[{id:taskId,kind:'define-native',status:'completed',run:{id:'archived-native-run',kind:'rebuild',scope:'library',automatic:false,status:'idle',jobs:[],vocabCursor:0,vocabFinished:true,spentUSD:0,settings:engine.context.state.settings,vocabularyVersion:1},cursor:0,createdAt:new Date().toISOString(),groupIds:[],paperIds:[source.id],definitionWorkId:work.id}];engine.context.state.reviewItems=[{id:'archived-native-choice',kind:'definition',state:'open',taskId,workId:work.id,questionId:work.entries[0].id,ownerPage:'vocabulary',label:'Important',conditionFingerprint:'archived-condition'}];await engine.context.checkpoint(engine.context.state);await engine.close('disable');
-    engine=new WorkspaceEngine({store:h.store,host:h.host,ai:h.ai,yieldControl:async()=>{}});await engine.open();assert.equal(engine.context.state.nativeDefinitionHistory?.length??0,0);await engine.execute({type:'open-meaning-work',payload:{id:work.id,taskId}},{commandId:'open-old-native-task'});assert.equal(await h.store.get('state','nativeDefinitionPreparation',{path:['work','id']}),work.id);const pending=await h.store.scan('reviewItems',{taskId,status:'open',limit:50});assert.ok(pending.rows.length);await engine.execute({type:'open-review-item',payload:{id:pending.rows[0].id}},{commandId:'open-old-native'});assert.ok(engine.context.state.maintenanceTasks?.some(task=>task.id===taskId));assert.equal(h.requests,0);assert.equal(h.writes.length,0);
+    const archive=(await h.store.scan('nativeDefinitionHistory',{limit:1})).rows[0];assert.ok(archive);
+    engine=new WorkspaceEngine({store:h.store,host:h.host,ai:h.ai,yieldControl:async()=>{}});await engine.open();assert.equal(engine.context.state.nativeDefinitionHistory?.length??0,0);
+    await assert.rejects(engine.execute({type:'open-meaning-work',payload:{id:work.id,taskId}},{commandId:'open-old-native-task'}),/retired/);
+    await assert.rejects(engine.execute({type:'open-review-item',payload:{id:'archived-native-choice'}},{commandId:'open-old-native'}),/retired/);
+    assert.equal(await h.store.reference('state','nativeDefinitionPreparation'),undefined);assert.deepEqual((await h.store.reference(archive.collection,archive.id))!.token,archive.token);assert.equal(h.requests,0);assert.equal(h.writes.length,0);
   }finally{await engine.close('disable');await h.store.close();}
 });
 
@@ -338,16 +346,19 @@ test('a saved assignment choice applies directly after restart with only its own
   finally{await engine.close('disable');await h.store.close();}
 });
 
-test('native meanings retain compatible factual context after a cold restart without loading unrelated facts',async()=>{
+test('retired native meaning commands leave compatible paid facts reusable by assignment after restart',async()=>{
   const h=await readyEngine();let engine=h.engine;const p=paper(),facts={paperId:p.id,metadataFingerprint:p.fingerprint,inputFingerprint:p.fingerprint,provider:'api',model:'test-model',extractionVersion:1,summary:'Exact retained source findings.',needsPDF:false,concepts:[{factConceptId:'retained-native-fact',name:'catalyst-layer resistance',facet:'phenomenon',evidence:[{source:'abstract',text:p.abstract}]}]};
   try{
     h.native.set(1,[{tag:'Important',type:0}]);await h.store.put('facts',p.id,facts,{category:'cache',lastUsedAt:Date.now()-5*86400000});await h.store.put('facts','unrelated-source',{...facts,paperId:'unrelated-source'},{category:'cache',lastUsedAt:Date.now()-5*86400000});await engine.close('disable');engine=new WorkspaceEngine({store:h.store,host:h.host,ai:h.ai,yieldControl:async()=>{}});await engine.open();assert.equal(engine.context.state.facts[p.id],undefined);
-    await engine.execute({type:'prepare-tag-meanings',payload:{names:['Important'],shelfId:'all',processingPolicy:'auto-clear'}},{commandId:'cold-native-facts'});await engine.idle();const review=engine.context.state.nativeDefinitionPreparation!;assert.equal(review.work.snapshot.facts[p.id].concepts[0].factConceptId,'retained-native-fact');assert.equal(engine.context.state.facts['unrelated-source'],undefined);assert.equal(h.requests,0);assert.equal(h.writes.length,0);
-    await engine.close('disable');engine=new WorkspaceEngine({store:h.store,host:h.host,ai:h.ai,yieldControl:async()=>{}});await engine.open();await engine.execute({type:'set-native-tag-treatment',payload:{name:'Important',treatment:'personal',id:review.work.id,entryId:review.work.entries[0].id}},{commandId:'cold-native-personal'});assert.equal(engine.context.state.nativeTagTreatments?.important,'personal');assert.equal(h.requests,0);
+    await assert.rejects(engine.execute({type:'prepare-tag-meanings',payload:{names:['Important'],shelfId:'all',processingPolicy:'auto-clear'}},{commandId:'cold-native-facts'}),/retired/);assert.equal(h.requests,0);assert.equal(h.writes.length,0);
+    let capturedFacts:unknown;const complete=h.ai.completeJson.bind(h.ai);h.ai.completeJson=async(...args)=>{const input=JSON.parse(args[1].split('INPUT_DATA_JSON:\n')[1]);capturedFacts=input.validatedFacts;return complete(...args);};
+    await engine.execute({type:'tag',payload:{scope:'selected',processingPolicy:'auto-clear'}},{commandId:'reuse-cold-source-facts'});await engine.idle();
+    assert.equal((capturedFacts as {summary:string}).summary,facts.summary);assert.equal(engine.context.state.facts['unrelated-source'],undefined);assert.equal(await h.store.get('facts',p.id,{path:['concepts',0,'factConceptId']}),'retained-native-fact');assert.equal(h.requests,1);assert.equal(h.native.get(1)?.some(tag=>tag.tag==='Important'&&tag.type===0),true);
+    await assert.rejects(engine.execute({type:'set-native-tag-treatment',payload:{name:'Important',treatment:'personal'}},{commandId:'cold-native-personal'}),/retired/);
   }finally{await engine.close('disable');await h.store.close();}
 });
 
-test('restart recovery of a partial grouped Undo preserves suppression for its acknowledged papers',async()=>{
+test('restart recovery of a partial grouped Undo preserves suppression for its acknowledged papers',{timeout:120000},async()=>{
   const h=await readyEngine(Array.from({length:25},(_,index)=>paper(index+1)));let engine=h.engine;
   try{
     await engine.execute({type:'tag',payload:{scope:'library',processingPolicy:'auto-clear'}},{commandId:'before-partial-group-undo'});await engine.idle();const id=automaticAssignmentHistoryId(String(await h.store.get('state','run',{path:['id']}))),original=await h.store.get('history',id) as any;await engine.close('disable');

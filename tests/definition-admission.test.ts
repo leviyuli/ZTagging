@@ -75,6 +75,15 @@ test('a pending exact-source check holds only its owning candidate',()=>{
   assert.deepEqual(compiled.tagIds,[ready.id]);assert.deepEqual(compiled.deferredIds,[pending.id]);
 });
 
+test('automatically skipped meanings still hold required children after their review questions are removed',()=>{
+  const result=fixture(['transport response','proton transport','electron transport']),[parent,child,independent]=result.proposal.tags;
+  child.broaderIds=[parent.id];result.state.buildPolicyVersion=1;result.state.skippedTagIds=[parent.id];result.state.questions=[];
+  const compiled=compileReadyPreparedDefinitions(result.proposal,result.state,[]);
+  assert.deepEqual(compiled.tagIds,[independent.id]);assert.deepEqual(new Set(compiled.deferredIds),new Set([parent.id,child.id]));
+  assert.equal(validTagPreparationState(result.state),true);
+  for(const mutate of [(state:any)=>state.buildPolicyVersion=2,(state:any)=>state.skippedTagIds=[0]]){const changed=structuredClone(result.state);mutate(changed);assert.equal(validTagPreparationState(changed),false);}
+});
+
 test('optional auto-clear checkpoint fields validate without changing legacy preparation defaults',()=>{
   const result=fixture();assert.equal(result.state.processingPolicy,'auto-clear');
   const historical=structuredClone(result.state);delete historical.processingPolicy;assert.equal(validTagPreparationState(historical),true);assert.deepEqual(compileReadyPreparedDefinitions(result.proposal,historical,[]).definitions,[]);

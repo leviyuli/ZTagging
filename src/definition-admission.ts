@@ -26,7 +26,7 @@ export function compileReadyPreparedDefinitions(input:TaxonomyProposal,preparati
   if(preparation.processingPolicy!=='auto-clear'||input.protocolVersion!==2||!input.evidenceSnapshot||preparation.proposalId!==input.id||preparation.snapshotId!==input.evidenceSnapshot.id||preparation.policyVersion!==(input.mappingPolicyVersion===3?3:2)||validateRegistrySnapshot(input.evidenceSnapshot).length)return empty();
   const proposal=refreshProposalEvidence(clone(input)),isBlocking=createProposalIssueEvaluator(proposal);
   if(proposal.externalIssues?.length||proposal.validationIssues?.some(issue=>!issue.tagId&&isBlocking(issue)))return empty();
-  const blocked=new Set(options.pendingTagIds??[]);
+  const blocked=new Set([...(options.pendingTagIds??[]),...(preparation.skippedTagIds??[])]);
   for(const question of preparation.questions)if(question.tagId&&!preparation.answers[question.id])blocked.add(question.tagId);
   for(const excluded of preparation.excluded)if(excluded.origin==='researcher')blocked.add(excluded.tagId);
   for(const issue of proposal.validationIssues??[])if(issue.tagId&&isBlocking(issue))blocked.add(issue.tagId);

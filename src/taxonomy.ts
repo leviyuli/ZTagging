@@ -12,6 +12,7 @@ export interface FactConcept { factConceptId?:string;name:string;facet?:Facet;ev
 export interface PaperFacts {
   paperId:string;metadataFingerprint:string;inputFingerprint:string;provider:string;model:string;
   extractionVersion:1;summary:string;concepts:FactConcept[];needsPDF:boolean;
+  sourcePolicyVersion?:2;
 }
 export interface TaxonomySupport {paperIds:string[];evidence?:({paperId:string}&Evidence)[];registryIds?:string[];sourceIds?:string[]}
 export interface ProposalValidationIssue {id:string;code:'unknown-registry-id'|'stale-registry-id'|'invalid-relationship'|'scientific-contradiction'|'uncertain-meaning'|'unsupported-concept'|'malformed-support'|'unvalidated-source';tagId?:string;registryId?:string;sourceId?:string;field?:'supportRegistryIds';message:string;severity:'error'|'confirmation';paperIds?:string[];sourceNames?:string[]}

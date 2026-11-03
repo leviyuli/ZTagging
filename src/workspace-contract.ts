@@ -2,7 +2,7 @@ import type {ManagerPage,ManagerSnapshot} from './ui-contract.ts';
 
 export interface WorkspaceCommand {type:string;payload?:unknown}
 export interface WorkspaceCommandOptions {commandId:string;signal?:AbortSignal}
-export interface CommandReceipt {commandId:string;revision:number;taskId?:string;result?:unknown}
+export interface CommandReceipt {commandId:string;revision:number;taskId?:string;runId?:string;result?:unknown}
 export interface ViewQuery {
   page:ManagerPage;
   params?:Record<string,unknown>;

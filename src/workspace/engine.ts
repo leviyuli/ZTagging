@@ -4,36 +4,35 @@ import {ProviderError} from '../providers.ts';
 import type {CompletionResult,ProviderClient,ProviderSettings} from '../providers.ts';
 import type {LibraryHost,NativeTag,TagPatch} from '../platform.ts';
 import {sameTags} from '../platform.ts';
-import {canonicalTagKey,paperFingerprint,fingerprint} from '../core.ts';
+import {paperFingerprint,fingerprint,validateEvidence} from '../core.ts';
 import type {PaperRecord,TagDefinition} from '../core.ts';
-import {equivalentTagNames} from '../concept-filter.ts';
-import {nativeBindingAllows} from '../native-binding.ts';
 import {isPersonalNativeTagName} from '../native-meaning-policy.ts';
 import {normalizeNativePaper} from './native-host.ts';
 import type {NativePaperTransport,NativeInputSources} from './native-host.ts';
 import {sameMetadata} from '../paper-recovery.ts';
-import type {NativeTagDefinitionWork,NativeTagDefinitionJudgment} from '../native-tag-definition.ts';
-import type {ReconciliationInput} from '../tag-reconciliation.ts';
 import type {WorkspaceCommand,CommandReceipt} from '../workspace-contract.ts';
 import {WorkspaceStore} from './storage.ts';
 import type {StoreOperation,RecordMetadata,RetentionResult,StoredRecord} from './storage-contract.ts';
 import {WorkingContext,metadataFor} from './context.ts';
 import {SimilarityIndex} from './similarity.ts';
 import {projectBuildResult,seedBuildResult} from './build-results.ts';
-import {ensureNativeReviewIndex} from './native-review.ts';
+import {initializeWorkflowPolicy,isRetiredDefinition,isRetiredWorkflowCommand} from './workflow-policy.ts';
+import {newRunOperations,projectRun,startsRun,updateRun,runUpdateOperations} from './runs.ts';
+import type {RunRecord} from './runs.ts';
 
 type AI=ControllerEnvironment['ai'];
-type CommandRecord={command:WorkspaceCommand;status:'queued'|'running'|'completed'|'failed'|'unknown';taskId?:string;result?:unknown;error?:string;createdAt:number};
+type CommandRecord={command:WorkspaceCommand;status:'queued'|'running'|'completed'|'failed'|'unknown';taskId?:string;runId?:string;result?:unknown;error?:string;createdAt:number};
 type FrozenPaperIdentity={itemID:number;paperId:string};
 type QueuedInput={command:WorkspaceCommand;createdAt:number};
-const queuedCommands=new Set('prepare-tags tag rebuild prepare-tag-meanings retry-tag-meanings retry-tag-preparation retry-selection resume scan refresh-existing-tags analyze-existing-tags create-diy-from-existing retry-papers compare-diy-tags regenerate-taxonomy continue-tag-meanings use-faster-build clean-expired-data reset-paper-analysis retry-unknown-request stop-unknown-request'.split(' '));
-const paperScopedCommands=new Set('prepare-tags tag rebuild scan prepare-tag-meanings'.split(' '));
+const queuedCommands=new Set('prepare-tags tag rebuild extend-assignment-topics retry-tag-preparation retry-selection resume scan retry-papers regenerate-taxonomy use-faster-build clean-expired-data reset-paper-analysis'.split(' '));
+const paperScopedCommands=new Set('prepare-tags tag rebuild scan'.split(' '));
 const queueKeys:Record<string,readonly string[]>={
-  'prepare-tags':['scope','mode','processingPolicy','targetCount','additionalTargetCount'],tag:['scope','tagShelfId','processingPolicy'],rebuild:['scope','mode','processingPolicy','tagShelfId'],scan:['scope'],
-  'prepare-tag-meanings':['names','shelfId','processingPolicy'],'retry-tag-meanings':['id'],'retry-tag-preparation':['id'],'retry-papers':['ids'],'compare-diy-tags':['tagIds'],'analyze-existing-tags':['groupIds'],'create-diy-from-existing':['groupIds','choices'],'regenerate-taxonomy':['id'],'continue-tag-meanings':['id'],'retry-unknown-request':['id'],'stop-unknown-request':['id'],
+  'prepare-tags':['scope','mode','processingPolicy','targetCount','additionalTargetCount'],tag:['scope','tagIds','processingPolicy'],rebuild:['scope','mode','processingPolicy'],scan:['scope'],
+  'retry-tag-preparation':['id'],'retry-papers':['ids'],'regenerate-taxonomy':['id'],'retry-unknown-request':['id'],'stop-unknown-request':['id'],
+  'extend-assignment-topics':['runId','paperIds','additionalTargetCount','processingPolicy'],
 };
 const coreFields='settings vocabularyVersion pilotReviewed pilotVersion pilotExpected taxonomyReady workflow approvedTaxonomyInput pendingChange'.split(' ');
-const coreRecords='tags tagShelves verifiedConnections models nativeTagTreatments nativeBindingExclusions automaticSuppressions taxonomyRedirects userEditedTagIds deferredItemIDs'.split(' ');
+const coreRecords='tags definitionOrigins verifiedConnections models nativeBindingExclusions automaticSuppressions taxonomyRedirects userEditedTagIds deferredItemIDs'.split(' ');
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'?value as Record<string,unknown>:{};
 const errorText=(error:unknown)=>error instanceof Error?error.message:String(error);
 const yieldTask=()=>new Promise<void>(resolve=>setTimeout(resolve,0));
@@ -80,7 +79,9 @@ export interface EngineDependencies {
 
 /** Private scientific kernel: only command working records are hydrated. */
 export class WorkspaceEngine {
-  readonly context:WorkingContext;
+  context:WorkingContext;
+  private logicalBinding?:{id:string;previousSourceId?:string;resume?:boolean};
+  private retiredIds=new Set<string>();
   private kernel!:AppController;
   private now:()=>number;
   private yieldControl:()=>Promise<void>;
@@ -93,8 +94,6 @@ export class WorkspaceEngine {
   private closed=false;
   private nativeGroup='';
   private displaySignatures=new Map<string,string>();
-  private nameIndex?:Map<string,TagDefinition[]>;
-  private removedTagCounts=new Set<string>();
   private recoveredQueue=new Map<string,CommandRecord>();
   private restoringQueue?:Promise<void>;
   private frozenPaperScope?:{scope:string;identities:readonly FrozenPaperIdentity[]};
@@ -104,10 +103,12 @@ export class WorkspaceEngine {
   constructor(deps:EngineDependencies){this.deps=deps;this.store=deps.store;this.similarity=new SimilarityIndex(deps.store);this.context=new WorkingContext(deps.store,{clock:deps.clock,signal:deps.signal});this.now=deps.clock??Date.now;this.yieldControl=deps.yieldControl??yieldTask;}
   async open({fresh=false}:{fresh?:boolean}={}):Promise<void>{
     if(fresh)await this.context.seed();
+    const transition=await initializeWorkflowPolicy(this.store,{clock:this.now,yieldControl:this.yieldControl,signal:this.deps.signal});
+    let retiredAfter:string|undefined;do{const page=await this.store.scan('retiredDefinitions',{after:retiredAfter,limit:50});for(const row of page.rows)this.retiredIds.add(row.id);retiredAfter=page.next;}while(retiredAfter);
     for(const field of coreFields)await this.context.field(field);
     for(const collection of coreRecords)await this.context.records(collection);
     const host=this.scopedHost(this.deps.host),ai=this.guardedAI(this.deps.ai);
-    this.kernel=new AppController(this.context.state,{host,ai,partialReviewContext:true,persist:state=>this.checkpoint(state),importFile:this.deps.importFile,exportFile:this.deps.exportFile,credentialStatus:this.deps.credentialStatus,beforePaper:id=>this.context.paper(id),afterPaper:async id=>{const paper=this.context.state.papers[id];if(paper)await this.similarity.update([paper]);this.context.releasePaper(id,{keepMetadata:true,keepFacts:this.context.state.run?.kind==='rebuild'});await this.yieldControl();},beforeNativeDefinitionInput:(input,names)=>this.nativeFacts(input,names),beforeNativeMeaning:(work,entryIds)=>this.cachedJudgments(work,entryIds),beforeAutomaticAssignment:runId=>this.context.records('history',{ids:[automaticAssignmentHistoryId(runId)]}),updateNeighbors:papers=>this.similarity.update(papers),cacheReused:(collection,id)=>this.store.touch(collection,id)});
+    this.kernel=new AppController(this.context.state,{host,ai,partialReviewContext:true,persist:state=>this.checkpoint(state),importFile:this.deps.importFile,exportFile:this.deps.exportFile,credentialStatus:this.deps.credentialStatus,beforePaper:id=>this.context.paper(id),afterPaper:async id=>{const paper=this.context.state.papers[id];if(paper)await this.similarity.update([paper]);this.context.releasePaper(id,{keepMetadata:true,keepFacts:this.context.state.run?.kind==='rebuild'});await this.yieldControl();},workflowPolicyVersion:1,retiredDefinitionIds:this.retiredIds,guardDefinitionChanges:async ids=>{for(const id of ids)if(await isRetiredDefinition(this.store,id))throw new Error('This change would restore a retired definition. Build tags from papers instead.');},beforeAutomaticAssignment:runId=>this.context.records('history',{ids:[automaticAssignmentHistoryId(runId)]}),updateNeighbors:papers=>this.similarity.update(papers),cacheReused:(collection,id)=>this.store.touch(collection,id)});
     Object.defineProperty(this.kernel,'state',{configurable:true,enumerable:true,get:()=>this.context.state,set:(state:AppState)=>{this.context.setState(state);}});
     const interrupted=await this.store.get('state','run',{path:['status'],maxBytes:256});
     if(interrupted==='running')await this.context.field('run');
@@ -120,12 +121,14 @@ export class WorkspaceEngine {
       const original=change.undoOfId?this.context.state.history.find(history=>history.id===change.undoOfId):undefined;await this.context.records('suggestions',{ids:[...new Set([...change.suggestionIds,...original?.suggestionIds??[]])]});
     }
     await this.kernel.recoverWorkspace();
+    if(transition.blocked){
+      const recovered=await initializeWorkflowPolicy(this.store,{clock:this.now,yieldControl:this.yieldControl,signal:this.deps.signal});
+      if(!recovered.blocked){this.context=new WorkingContext(this.store,{clock:this.now,signal:this.deps.signal});this.retiredIds.clear();await this.open();return;}
+    }
     if(await this.store.reference('workspace','analysisReset')){await this.hydrate('reset-paper-analysis',{});await this.kernel.invoke('reset-paper-analysis');await this.resetIndexedAnalysis();}
-    await this.ensureNativeTagIndex();
     if(!fresh)await this.warmDisplayHeaders();
-    await ensureNativeReviewIndex(this.store,{signal:this.deps.signal,yieldControl:this.yieldControl});
     if(!fresh)await seedBuildResult(this.store,this.now);
-    if(fresh)await this.project(new Set(['tags']));
+    if(fresh||transition.changed)await this.project(new Set(['tags']));
     // A command that crossed its durable start marker is never blindly replayed.
     for(const status of ['running','queued']){
       let after:string|undefined;
@@ -134,29 +137,78 @@ export class WorkspaceEngine {
   }
   execute(command:WorkspaceCommand,options:{commandId:string}):Promise<CommandReceipt>{
     const active=this.submitting.get(options.commandId);if(active)return active;
-    const receipt=this.enqueue(command,options);this.submitting.set(options.commandId,receipt);void receipt.finally(()=>this.submitting.delete(options.commandId)).catch(()=>{});return receipt;
+    const receipt=command.type==='retry-run'?this.retryRun(String(object(command.payload).id??''),options):this.enqueue(command,options);this.submitting.set(options.commandId,receipt);void receipt.finally(()=>this.submitting.delete(options.commandId)).catch(()=>{});return receipt;
   }
-  private async enqueue(command:WorkspaceCommand,{commandId}:{commandId:string}):Promise<CommandReceipt>{
+  private async retryRun(id:string,options:{commandId:string}):Promise<CommandReceipt>{
+    const prior=await this.store.get('commandLedger',options.commandId,{maxBytes:32*1024}) as CommandRecord|undefined;
+    if(prior)return this.enqueue(prior.command,options,id);
+    const run=await this.store.get('runs',id,{maxBytes:32*1024}) as RunRecord|undefined;
+    if(!run||!run.canRetry||!['paused','failed'].includes(run.status))throw new Error('This run is not waiting for a retry.');
+    const original=await this.store.get('runInputs',id,{maxBytes:2*1024*1024}) as WorkspaceCommand|undefined;
+    if(!original)throw new Error('The original selection has expired. Start a new run.');
+    const currentId=await this.store.get('state','run',{path:['id'],maxBytes:4096}),currentStatus=await this.store.get('state','run',{path:['status'],maxBytes:64});
+    const command=run.sourceRunId===currentId&&currentStatus==='paused'?{type:'resume'}:original;
+    return this.enqueue(command,options,id);
+  }
+  private async stopRun(id:string){
+    const run=await this.store.get('runs',id,{maxBytes:32*1024}) as RunRecord|undefined;
+    if(!run||!run.canStop&&run.status!=='failed')throw new Error('This run has already stopped.');
+    for(const status of ['queued','running']){let after:string|undefined;do{const page=await this.store.scan('commandLedger',{status,after,limit:50});for(const row of page.rows){const command=await this.store.codec.read(row.token,{maxBytes:32*1024}) as CommandRecord;if(command.runId===id)this.cancelled.add(row.id);}after=page.next;}while(after);}
+    if(run.sourceRunId&&run.sourceRunId===this.context.state.run?.id)await this.kernel.invoke('cancel');
+    const pending=await this.store.scan('pendingRunIntents',{taskId:id,limit:50});
+    if(pending.total){await this.context.field('paperExclusionPreview');await this.context.field('pendingTopicExtension');await this.kernel.invoke('cancel-paper-exclusion');for(const row of pending.rows)await this.store.delete('pendingRunIntents',row.id);}
+    await updateRun(this.store,id,{status:'stopped',phase:'stopped',message:'Stopped. Saved results are kept.',canRetry:false,canStop:false},this.now());
+    return {runId:id};
+  }
+  private async pauseRun(id:string){
+    const run=await this.store.get('runs',id,{maxBytes:32*1024}) as RunRecord|undefined;
+    if(!run||!['running','queued'].includes(run.status))throw new Error('This run is no longer running.');
+    if(run.sourceRunId&&run.sourceRunId===this.context.state.run?.id)await this.kernel.invoke('pause');
+    else{for(const status of ['queued','running']){let after:string|undefined;do{const page=await this.store.scan('commandLedger',{status,after,limit:50});for(const row of page.rows){const value=await this.store.codec.read(row.token,{maxBytes:32*1024}) as CommandRecord;if(value.runId===id)this.cancelled.add(row.id);}after=page.next;}while(after);}}
+    await updateRun(this.store,id,{status:'paused',message:'Paused. Resume when you are ready.',canRetry:true,canStop:true},this.now());return {runId:id};
+  }
+  private async saveVerifiedSearch(payload:Record<string,unknown>){
+    const filter=object(payload.filter),selections=Array.isArray(filter.selections)?filter.selections.map(object):[],name=String(payload.name??'').trim().slice(0,160);
+    if(!name||!selections.length||selections.length>50||!['all','any'].includes(String(filter.mode)))throw new Error('Name the filter and choose scientific tags.');
+    const checked:{conceptId:string;contextId?:string}[]=[];
+    for(const selection of selections){
+      if(typeof selection.conceptId!=='string'||selection.contextId!==undefined&&typeof selection.contextId!=='string')throw new Error('Choose a current saved tag.');
+      for(const id of [selection.conceptId,selection.contextId].filter((id):id is string=>!!id))if(!await this.store.reference('tags',id))throw new Error('One selected tag is no longer active. Refresh the search.');
+      checked.push({conceptId:selection.conceptId,...(selection.contextId?{contextId:selection.contextId}:{})});
+    }
+    const id=fingerprint(name.toLocaleLowerCase());
+    if(!await this.store.reference('savedFilters',id)&&(await this.store.scan('savedFilters',{limit:1})).total>=50)throw new Error('Delete an unused saved filter before adding another.');
+    await this.store.put('savedFilters',id,{id,name,filter:{mode:filter.mode,selections:checked}},{category:'active',title:name});return {id};
+  }
+  private async enqueue(command:WorkspaceCommand,{commandId}:{commandId:string},retryRunId?:string):Promise<CommandReceipt>{
     if(this.closed)throw new Error('Smart Tags is closed.');
+    if(isRetiredWorkflowCommand(command.type))throw new Error('DIY and native-tag meaning tools have been retired. Build tags from papers instead.');
     if(!commandId||commandId.length>180||!command.type)throw new Error('A workspace command needs a bounded identity and action.');
     await this.resumeQueued();
     const active=this.running.get(commandId);if(active)return active;
     const prior=await this.store.get('commandLedger',commandId,{maxBytes:32*1024}) as CommandRecord|undefined;
     if(prior){
-      if(prior.status==='completed'||prior.status==='queued')return {commandId,revision:(await this.store.reference('commandLedger',commandId))!.version,...(prior.taskId?{taskId:prior.taskId}:{}),...(prior.result!==undefined?{result:prior.result}:{})};
-      throw new Error(prior.error||'This command already started. Check Activity before trying again.');
+      if(prior.status==='completed'||prior.status==='queued')return {commandId,revision:(await this.store.reference('commandLedger',commandId))!.version,...(prior.taskId?{taskId:prior.taskId}:{}),...(prior.runId?{runId:prior.runId}:{}),...(prior.result!==undefined?{result:prior.result}:{})};
+      throw new Error(prior.error||'This command already started. Check Runs before trying again.');
     }
     const taskId=queuedCommands.has(command.type)?`task-${crypto.randomUUID()}`:undefined;
     if(taskId)command=queuedInput(command);
-    const record:CommandRecord={command:{type:command.type},status:'queued',createdAt:this.now(),...(taskId?{taskId}:{})};
+    const previewId=['apply-paper-exclusion','cancel-paper-exclusion'].includes(command.type)?String(object(command.payload).previewId??await this.store.get('state','paperExclusionPreview',{path:['id'],maxBytes:4096})??''):'';
+    const pending=previewId?await this.store.get('pendingRunIntents',previewId,{maxBytes:4096}) as {id:string}|undefined:undefined;
+    const runId=retryRunId??pending?.id??(startsRun(command.type)?`run-${crypto.randomUUID()}`:undefined);
+    const record:CommandRecord={command:{type:command.type},status:'queued',createdAt:this.now(),...(taskId?{taskId}:{}),...(runId?{runId}:{})};
     const operations:StoreOperation[]=[{kind:'put',collection:'commandLedger',id:commandId,value:record,metadata:{category:'ledger',status:'queued',taskId,updatedAt:this.now(),...(taskId?{refs:[{collection:'queuedInputs',id:commandId}]}:{})}}];
-    if(taskId){operations.push({kind:'put',collection:'queuedInputs',id:commandId,value:{command,createdAt:this.now()} satisfies QueuedInput,metadata:{category:'active',status:'queued',taskId,pinned:true}});operations.push({kind:'put',collection:'activityTasks',id:taskId,value:{id:taskId,kind:command.type.includes('meaning')?'meanings':command.type==='tag'?'assignment':'maintenance',state:'queued',label:command.type==='tag'?'Assign tags':command.type.includes('meaning')?'Prepare tag meanings':'Queued work',ownerPage:command.type==='tag'?'assignment':command.type.includes('meaning')?'vocabulary':'activity'},metadata:{category:'active',status:'queued',refs:[{collection:'queuedInputs',id:commandId}]}});}
+    if(taskId)operations.push({kind:'put',collection:'queuedInputs',id:commandId,value:{command,createdAt:this.now()} satisfies QueuedInput,metadata:{category:'active',status:'queued',taskId,pinned:true}});
+    if(runId&&!retryRunId&&!pending)operations.push(...newRunOperations(runId,command,this.now()));
+    if(retryRunId){const previous=await this.store.get('runs',retryRunId,{maxBytes:32*1024}) as RunRecord;operations.push(...await runUpdateOperations(this.store,retryRunId,{status:'queued',phase:'queued',attemptCount:(previous.attemptCount??1)+1,canRetry:false,canStop:true,error:undefined,message:'Waiting to continue.'},this.now()));}
+    if(runId){const kind=retryRunId||pending?await this.store.get('runs',runId,{path:['kind'],maxBytes:64}):command.type==='tag'?'assignment':'build';operations.push({kind:'put',collection:'state',id:kind==='assignment'?'latestAssignmentLogicalRunId':'latestBuildLogicalRunId',value:runId,metadata:{category:'active'}});}
     await this.store.commit({commandId:commandId+':queue',operations});await this.deps.changed?.((await this.store.stats()).revision);
     const perform=()=>this.perform(commandId,record,command);
-    const operation=command.type==='pause'||command.type==='cancel'||command.type==='cancel-sign-in'?perform():this.tail.catch(()=>{}).then(perform);
-    if(command.type!=='pause'&&command.type!=='cancel'&&command.type!=='cancel-sign-in')this.tail=operation;
+    const urgent=command.type==='pause'||command.type==='pause-run'||command.type==='cancel'||command.type==='stop-run'||command.type==='cancel-sign-in';
+    const operation=urgent?perform():this.tail.catch(()=>{}).then(perform);
+    if(!urgent)this.tail=operation;
     this.running.set(commandId,operation);void operation.finally(()=>this.running.delete(commandId)).catch(()=>{});
-    if(taskId){void operation.catch(()=>{});return {commandId,revision:(await this.store.stats()).revision,taskId};}
+    if(taskId){void operation.catch(()=>{});return {commandId,revision:(await this.store.stats()).revision,taskId,...(runId?{runId}:{})};}
     return operation;
   }
   /** Pre-start intents resume only after the runtime has made the workspace ready. */
@@ -171,7 +223,7 @@ export class WorkspaceEngine {
       this.recoveredQueue.delete(commandId);await this.yieldControl();
     }})().finally(()=>{this.restoringQueue=undefined;});return this.restoringQueue;
   }
-  private async failedQueueMarker(record:CommandRecord,message:string){if(record.taskId)await this.store.put('activityTasks',record.taskId,{id:record.taskId,kind:record.command.type.includes('meaning')?'meanings':'maintenance',state:'paused',queuedAttempt:true,label:'Work needs attention',ownerPage:record.command.type==='tag'?'assignment':record.command.type.includes('meaning')?'vocabulary':'activity',message},{category:'active',status:'paused',taskId:record.taskId});}
+  private async failedQueueMarker(record:CommandRecord,message:string){if(record.runId){if(/cancelled/.test(message)&&await this.store.get('runs',record.runId,{path:['status'],maxBytes:64})==='paused')return;await updateRun(this.store,record.runId,{status:'failed',message:'This run could not finish. Retry to continue with its saved work.',error:message,canRetry:true,canStop:false},this.now());}}
   private async completedInput(commandId:string,status:string):Promise<StoreOperation[]>{const row=await this.store.reference('queuedInputs',commandId);return row?[{kind:'reference',collection:'queuedInputs',id:commandId,token:row.token,metadata:{category:'history',status,completedAt:this.now(),taskId:row.metadata.taskId}}]:[];}
   private async stopQueuedTask(id:string){
     const task=await this.store.get('activityTasks',id,{maxBytes:32*1024}) as {state?:string;workId?:string;[key:string]:unknown}|undefined;
@@ -182,12 +234,17 @@ export class WorkspaceEngine {
   }
   private async perform(commandId:string,record:CommandRecord,command:WorkspaceCommand):Promise<CommandReceipt>{
     if(this.closed)throw new Error('This command was cancelled before it started.');
-    if(this.cancelled.has(commandId)){await this.store.commitRecords([{kind:'put',collection:'commandLedger',id:commandId,value:{...record,status:'failed',error:'This command was cancelled before it started.'},metadata:{category:'ledger',status:'failed'}},...await this.completedInput(commandId,'cancelled'),...(record.taskId?[{kind:'delete' as const,collection:'activityTasks',id:record.taskId}]:[])]);await this.deps.changed?.((await this.store.stats()).revision);throw new Error('This command was cancelled before it started.');}
+    if(this.cancelled.has(commandId)){
+      const runOperations=record.runId&&await this.store.get('runs',record.runId,{path:['status'],maxBytes:64})!=='paused'?await runUpdateOperations(this.store,record.runId,{status:'stopped',message:'Cancelled before processing. Saved results are kept.',canRetry:false,canStop:false},this.now()):[];
+      await this.store.commitRecords([{kind:'put',collection:'commandLedger',id:commandId,value:{...record,status:'failed',error:'This command was cancelled before it started.'},metadata:{category:'ledger',status:'failed'}},...await this.completedInput(commandId,'cancelled'),...runOperations]);
+      await this.deps.changed?.((await this.store.stats()).revision);throw new Error('This command was cancelled before it started.');
+    }
     await this.store.put('commandLedger',commandId,{...record,status:'running'},{category:'ledger',status:'running',taskId:record.taskId,updatedAt:this.now()});
     const frozen=object(command.payload).frozenPaperIDs;
     const previousScope=this.frozenPaperScope;
     if(frozen!==undefined)this.frozenPaperScope={scope:String(object(command.payload).scope??(command.type==='tag'||command.type==='rebuild'?'pilot':'library')),identities:frozenIdentities(frozen)};
     try{
+      if(record.runId)await updateRun(this.store,record.runId,{status:'running',phase:'preparing',message:'Preparing the selected papers.',canRetry:false,canStop:true,error:undefined},this.now());
       if(command.type==='pause'||command.type==='cancel')for(const controller of this.maintenanceSignals.values())controller.abort(new Error('Cleanup cancelled.'));
       if(command.type==='reset-paper-analysis')await this.store.put('workspace','analysisReset',{commandId,startedAt:this.now()},{category:'ledger',status:'running',pinned:true});
       await this.hydrate(command.type,object(command.payload));
@@ -198,39 +255,45 @@ export class WorkspaceEngine {
         const plan=this.context.state.keepTagPlan;if(!plan||plan.id!==object(payload).planId)throw new Error('The saved Keep choices changed. Read the library tags again.');
         const names=new Set(plan.keptNames);for(const change of object(payload).changes as unknown[]){const row=object(change);if(typeof row.name!=='string'||typeof row.kept!=='boolean')throw new Error('A Keep change needs its name and choice.');if(row.kept)names.add(row.name);else names.delete(row.name);}payload={planId:plan.id,names:[...names]};
       }
-      const result=command.type==='clean-expired-data'?await this.cleanExpired(commandId):command.type==='stop-queued-task'?await this.stopQueuedTask(String(object(command.payload).id??'')):command.type==='retry-unknown-request'||command.type==='stop-unknown-request'?await this.resolveUnknown(command.type,String(object(command.payload).id??'')):await this.kernel.invoke(command.type,payload);
+      this.logicalBinding=record.runId?{id:record.runId,previousSourceId:this.context.state.run?.id,resume:command.type==='resume'}:undefined;
+      const result=command.type==='delete-saved-filter'?await this.store.delete('savedFilters',String(object(payload).id??'')):command.type==='save-search'?await this.saveVerifiedSearch(object(payload)):command.type==='pause-run'?await this.pauseRun(String(object(command.payload).id??'')):command.type==='stop-run'?await this.stopRun(String(object(command.payload).id??'')):command.type==='clean-expired-data'?await this.cleanExpired(commandId):command.type==='stop-queued-task'?await this.stopQueuedTask(String(object(command.payload).id??'')):command.type==='retry-unknown-request'||command.type==='stop-unknown-request'?await this.resolveUnknown(command.type,String(object(command.payload).id??'')):await this.kernel.invoke(command.type,payload);
       if(command.type==='reset-paper-analysis')await this.resetIndexedAnalysis();
       await this.checkpoint(this.kernel.state);
+      if(record.runId){
+        const run=await this.store.get('runs',record.runId,{maxBytes:32*1024}) as RunRecord|undefined,preview=this.context.state.paperExclusionPreview;
+        if(!run?.sourceRunId&&preview){await this.store.put('pendingRunIntents',preview.id,{id:record.runId},{category:'active',taskId:record.runId});await updateRun(this.store,record.runId,{status:'paused',message:'Choose whether to include these excluded papers before building tags.',canRetry:false,canStop:true},this.now());}
+        else if(command.type==='cancel-paper-exclusion')await updateRun(this.store,record.runId,{status:'stopped',message:'Cancelled. Excluded papers were kept out of tagging.',canRetry:false,canStop:false},this.now());
+        if(run?.sourceRunId||command.type==='cancel-paper-exclusion'){const page=await this.store.scan('pendingRunIntents',{taskId:record.runId,limit:50});for(const row of page.rows)await this.store.delete('pendingRunIntents',row.id);}
+      }
       const receipt=await this.store.commit({commandId:commandId+':complete',operations:[{kind:'put',collection:'commandLedger',id:commandId,value:{...record,status:'completed',result},metadata:{category:'ledger',status:'completed',taskId:record.taskId,updatedAt:this.now()}},...(record.taskId?[{kind:'delete' as const,collection:'activityTasks',id:record.taskId}]:[]),...await this.completedInput(commandId,'completed')],receipt:result});
       await this.deps.changed?.(receipt.revision);
-      return {commandId,revision:receipt.revision,...(record.taskId?{taskId:record.taskId}:{}),...(result!==undefined?{result}:{})};
+      return {commandId,revision:receipt.revision,...(record.taskId?{taskId:record.taskId}:{}),...(record.runId?{runId:record.runId}:{}),...(result!==undefined?{result}:{})};
     }catch(error){
       await this.store.put('commandLedger',commandId,{...record,status:'failed',error:errorText(error)},{category:'ledger',status:'failed',taskId:record.taskId,updatedAt:this.now()});
       await this.failedQueueMarker(record,errorText(error));
       await this.store.commitRecords(await this.completedInput(commandId,'failed'));
       await this.deps.changed?.((await this.store.stats()).revision);throw error;
-    }finally{this.frozenPaperScope=previousScope;}
+    }finally{this.frozenPaperScope=previousScope;this.logicalBinding=undefined;}
   }
   private async hydrate(action:string,payload:Record<string,unknown>){
-    if(action==='clean-expired-data'||action==='stop-queued-task')return;
+    if(action==='clean-expired-data'||action==='stop-queued-task'||action==='stop-run'||action==='pause-run')return;
     if(action==='open-meaning-work'){
       const id=String(payload.id??'');await this.context.field('nativeDefinitionPreparation');
       if(this.context.state.nativeDefinitionPreparation?.work.id!==id){await this.archiveRecord('nativeDefinitionHistory',['work','id'],id);const archived=this.context.state.nativeDefinitionHistory?.findLast(review=>review.work.id===id);if(archived)await this.context.records('maintenanceTasks',{ids:[archived.taskId]});}
       await this.context.records('reviewItems',{statuses:['open','deferred']});this.kernel.state=this.context.state;return;
     }
-    if(['save-settings','save-api-key','remove-api-key','discover-models','test-connection','sign-in','cancel-sign-in','sign-out','select-account','show-paper','save-search','export-vocabulary'].includes(action))return;
-    for(const field of ['run','taxonomyProposal','tagPreparation','activeTagPreparation','taxonomyEvidence','taxonomyEvidenceScopes','taxonomyReview','reconciliation','reconciliationPreview','keepTagPlan','keepRemovalPreview','diyComparison','diyMergePreview','metadataPreview','paperExclusionPreview','pendingTopicExtension'])await this.context.field(field);
-    await this.context.field('nativeDefinitionPreparation');
+    if(['save-settings','save-api-key','remove-api-key','discover-models','test-connection','sign-in','cancel-sign-in','sign-out','select-account','show-paper','save-search','delete-saved-filter','export-vocabulary'].includes(action))return;
+    for(const field of ['run','taxonomyProposal','tagPreparation','activeTagPreparation','taxonomyEvidence','taxonomyEvidenceScopes','taxonomyReview','metadataPreview','paperExclusionPreview','pendingTopicExtension'])await this.context.field(field);
     await this.context.records('reviewItems',{statuses:['open','deferred']});await this.context.records('maintenanceTasks',{statuses:['queued','running','paused']});await this.context.records('assignmentRuns',{statuses:['analysis','review']});
     const assignmentId=typeof payload.runId==='string'?payload.runId:this.context.state.run?.kind==='tag'?this.context.state.run.id:undefined;if(assignmentId)await this.context.records('assignmentRuns',{ids:[assignmentId]});
     for(const field of ['uncoveredTopics','warnings','decisions','ownership','taxonomySupport'])await this.context.records(field);
     if(/meaning|native|review-item/.test(action)||['reset-paper-analysis','resume','retry-unknown-request','stop-unknown-request'].includes(action))await this.context.field('nativeDefinitionPreparation');
-    if(/prepare|taxonomy|selection|rebuild|resume/.test(action)){
+    if(/prepare|taxonomy|selection|rebuild|resume/.test(action)||action==='extend-assignment-topics'){
       await this.context.catalog();
       const ids=new Set([...(this.context.state.taxonomyProposal?.paperIds??[]),...(this.context.state.run?.kind==='rebuild'?this.context.state.run.jobs.map(job=>job.paperId):[])]);
       for(const id of ids)await this.context.paper(id);
     }
-    const ids=[...(Array.isArray(payload.ids)?payload.ids.filter((id):id is string=>typeof id==='string'):[]),...(typeof payload.id==='string'?[payload.id]:[])];
+    const ids=[...(Array.isArray(payload.ids)?payload.ids.filter((id):id is string=>typeof id==='string'):[]),...(Array.isArray(payload.paperIds)?payload.paperIds.filter((id):id is string=>typeof id==='string'):[]),...(typeof payload.id==='string'?[payload.id]:[])];
     if(/suggestion|assignment|finish|review-item|undo/.test(action)){
       await this.context.records('suggestions',typeof payload.runId==='string'?{taskId:payload.runId}:{});
       for(const suggestion of this.context.state.suggestions)if(!ids.length||ids.includes(suggestion.id))await this.context.paper(suggestion.paperId);
@@ -260,24 +323,21 @@ export class WorkspaceEngine {
     await lookup(true);if(!found)await lookup(false);if(found)await this.context.records(collection,{ids:[found.id]});
   }
   private async warmDisplayHeaders(){
-    const native=await this.store.reference('state','nativeDefinitionPreparation'),preparation=await this.store.reference('state','tagPreparation');
-    const needsNative=native&&!await this.store.reference('viewHeaders','nativeDefinitionPreparation'),needsPreparation=preparation&&!await this.store.reference('viewHeaders','tagPreparation');
-    if(!needsNative&&!needsPreparation)return;
-    await this.context.records('reviewItems');await this.context.records('decisions');
-    const changed=new Set<string>();
-    if(needsNative){await this.context.field('nativeDefinitionPreparation');const review=this.context.state.nativeDefinitionPreparation;if(review){await this.context.records('maintenanceTasks',{ids:[review.taskId]});await this.context.records('history',{taskId:review.work.id,limit:1});}changed.add('nativeDefinitionPreparation');}
-    if(needsPreparation){await this.context.field('tagPreparation');await this.context.field('taxonomyProposal');changed.add('tagPreparation');}
-    this.kernel.state=this.context.state;await this.project(changed);
+    const preparation=await this.store.reference('state','tagPreparation');
+    if(!preparation||await this.store.reference('viewHeaders','tagPreparation'))return;
+    await this.context.field('tagPreparation');await this.context.field('taxonomyProposal');
+    this.kernel.state=this.context.state;await this.project(new Set(['tagPreparation']));
   }
   private async resolveUnknown(action:string,id:string){
     if(!id||id.length>1000)throw new Error('Choose the interrupted request in Recovery.');
     const record=await this.store.get('providerDispatches',id,{maxBytes:32*1024}) as {status?:string;taskId?:string;[key:string]:unknown}|undefined;
     if(!record||!['unknown','dispatched','stopped'].includes(record.status??''))throw new Error('This request no longer needs recovery.');
-    await this.store.put('providerDispatches',id,{...record,status:action==='retry-unknown-request'?'retry-authorized':'stopped',resolvedAt:this.now()},{category:'ledger',status:action==='retry-unknown-request'?'retry-authorized':'stopped',taskId:record.taskId});
+    await this.store.put('providerDispatches',id,{...record,status:action==='retry-unknown-request'?'retry-authorized':'stopped',resolvedAt:this.now()},{category:'ledger',status:action==='retry-unknown-request'?'retry-authorized':'stopped',taskId:record.taskId,refs:await this.recordLinks('providerDispatches',id)});
     if(action==='retry-unknown-request'){
-      if(this.context.state.run?.status==='paused'||this.context.state.maintenanceTasks?.some(task=>task.status==='paused'))await this.kernel.invoke('resume');
-      return {authorized:true};
+      if(record.status!=='stopped'&&record.taskId&&record.taskId===this.context.state.run?.id&&this.context.state.run.status==='paused'){await this.kernel.invoke('resume');return {authorized:true,startNewRun:false};}
+      return {authorized:true,startNewRun:true};
     }
+    if(record.taskId){const link=await this.store.get('runLinks',record.taskId,{maxBytes:4096}) as {id:string}|undefined;if(link)await updateRun(this.store,link.id,{status:'stopped',message:'Stopped after an interrupted AI request. Saved results and its budget reservation are kept.',canStop:false,canRetry:false},this.now());}
     if(!record.taskId||record.taskId===this.context.state.run?.id||this.context.state.maintenanceTasks?.some(task=>task.run.id===record.taskId&&task.status!=='completed'))await this.kernel.invoke('cancel');
     return {stopped:true};
   }
@@ -325,17 +385,6 @@ export class WorkspaceEngine {
     await this.context.rebase('papers');await this.store.delete('workspace','analysisReset');
   }
   private async recordLinks(collection:string,id:string){const refs:NonNullable<RecordMetadata['refs']>=[];let offset:number|undefined;do{const page=await this.store.links(collection,id,{offset,limit:50});refs.push(...page.rows);offset=page.next;}while(offset!==undefined);return refs;}
-  private async cachedJudgments(work:NativeTagDefinitionWork,entryIds?:readonly string[]){
-    const cached:NonNullable<NativeTagDefinitionWork['cachedJudgments']>=[];
-    for(const entryId of entryIds??work.entries.map(entry=>entry.id)){
-      let after:string|undefined;
-      do{const page=await this.store.scan('nativeJudgments',{taskId:entryId,after,limit:50});for(const record of page.rows){const value=await this.store.codec.read(record.token,{maxBytes:256*1024}) as {workId:string;entryId:string;paperId:string;judgment:NativeTagDefinitionJudgment};if(value.workId===work.id&&value.judgment?.relation!=='uncertain')cached.push({entryId:value.entryId,paperId:value.paperId,judgment:value.judgment,cacheId:record.id});}after=page.next;await this.yieldControl();}while(after);
-    }
-    work.cachedJudgments=cached;
-  }
-  private async nativeFacts(input:ReconciliationInput,names:readonly string[]){
-    const wanted=new Set(names);for(const paper of input.papers)if(input.nativeTags[paper.id]?.some(tag=>wanted.has(tag.tag))){await this.context.records('facts',{ids:[paper.id]});const facts=this.context.state.facts[paper.id];if(facts)input.facts[paper.id]=facts;await this.yieldControl();}
-  }
   private scopedHost(host:LibraryHost):LibraryHost {
     const read=async(itemID:number)=>{const paper=await host.read(itemID);if(paper)await this.context.paper(paper.id);return paper;};
     return {...host,list:async(scope)=>{let papers:PaperRecord[];const frozen=this.frozenPaperScope;
@@ -384,7 +433,13 @@ export class WorkspaceEngine {
       this.context.setState(state);if(!this.context.changedFields().size)return;
       for(const id of this.context.state.nativeDefinitionPreparation?.work.reusedJudgmentIds??[])await this.store.touch('nativeJudgments',id);
       const records=await this.context.checkpoint(state);
-      if(records.size){await this.project(new Set(records.keys()),records);await this.deps.changed?.((await this.store.stats()).revision);}
+      if(records.size){
+        const source=state.run,binding=this.logicalBinding,logicalId=binding&&(binding.resume||source?.id!==binding.previousSourceId)?binding.id:undefined;
+        if(source&&logicalId&&!await this.store.reference('runLinks',source.id))await this.store.put('runLinks',source.id,{id:logicalId},{category:'ledger'});
+        await this.project(new Set(records.keys()),records);
+        await projectRun(this.store,state,logicalId,this.now());
+        await this.deps.changed?.((await this.store.stats()).revision);
+      }
     });this.checkpointTail=operation;return operation;
   }
   private async project(changed:Set<string>,records=new Map<string,Set<string>|null>()){
@@ -412,10 +467,11 @@ export class WorkspaceEngine {
       const attentionIds=new Set(attentionRows.map(row=>row.id));for(const id of records.get('paperAttentionDismissals')??[])if(!attentionIds.has(id))operations.push({kind:'delete',collection:'paperAttentionRows',id});
       await this.persistProjections(operations);
       await projectBuildResult(this.store,views.buildResult,views.buildResultTagIds,this.now);
+      if(views.buildResult){const link=await this.store.get('runLinks',views.buildResult.runId,{maxBytes:4096}) as {id:string}|undefined;if(link)await updateRun(this.store,link.id,{requiresChangeReview:views.buildResult.requiresChangeReview,newCount:views.buildResult.savedCount,reusedCount:views.buildResult.reusedCount,skippedCount:views.buildResult.skippedCount,unavailableCount:views.buildResult.unavailableCount,tagNames:views.buildResult.tagNames,choiceCount:0},this.now());}
     }
-    if(changed.has('tags')||changed.has('nativeTags')||changed.has('papers')||changed.has('tagShelves')||changed.has('nativeBindingExclusions'))await this.index(changed,records);
+    if(changed.has('tags')||changed.has('nativeTags')||changed.has('papers')||changed.has('suggestions'))await this.index(changed,records);
     const tags=this.context.state.tags;
-    await this.persistProjections([{kind:'put',collection:'state',id:'libraryCounts',value:{papers:(await this.store.scan('papers',{limit:1})).total,tags:(await this.store.scan('libraryTags',{limit:1})).total,definedTags:tags.filter(tag=>tag.status==='approved'&&!tag.builtin).length,assignableTags:tags.filter(tag=>tag.status==='approved'&&tag.matchingMode!=='manual'&&!tag.builtin&&!isPersonalNativeTagName(tag.name)).length,openChoices:(await this.store.scan('reviewItems',{limit:1,status:'open'})).total,history:(await this.store.scan('history',{limit:1})).total},metadata:{category:'active'}}]);
+    await this.persistProjections([{kind:'put',collection:'state',id:'libraryCounts',value:{papers:(await this.store.scan('papers',{limit:1})).total,tags:tags.filter(tag=>!tag.builtin).length,definedTags:tags.filter(tag=>tag.status==='approved'&&!tag.builtin).length,assignableTags:tags.filter(tag=>tag.status==='approved'&&tag.matchingMode!=='manual'&&!tag.builtin&&!isPersonalNativeTagName(tag.name)).length,openChoices:(await this.store.scan('reviewItems',{limit:1,status:'open'})).total,history:(await this.store.scan('history',{limit:1})).total},metadata:{category:'active'}}]);
   }
   private async persistProjections(operations:StoreOperation[]){
     const selected:StoreOperation[]=[],signatures=new Map<string,string>();
@@ -423,86 +479,26 @@ export class WorkspaceEngine {
     if(selected.length){await this.store.commitRecords(selected);for(const [key,signature] of signatures)this.displaySignatures.set(key,signature);}
   }
   private async index(changed:Set<string>,records:Map<string,Set<string>|null>){
-    const tags=this.context.state.tags,names=changed.has('tags')||!this.nameIndex?new Map<string,TagDefinition[]>():this.nameIndex;
-    if(names!==this.nameIndex){for(const tag of tags.filter(tag=>tag.status==='approved'))for(const name of equivalentTagNames(tag)){const key=canonicalTagKey(name),matches=names.get(key)??[];matches.push(tag);names.set(key,matches);}this.nameIndex=names;}
-    const paperIds=new Set<string>(),affectedNames=new Set<string>(),affectedTags=new Set(this.removedTagCounts);this.removedTagCounts.clear();
+    const tags=new Map(this.context.state.tags.map(tag=>[tag.id,tag])),paperIds=new Set<string>();
+    const definitionFingerprint=(tag:TagDefinition)=>fingerprint({id:tag.id,name:tag.name,fullName:tag.fullName,description:tag.description,facet:tag.facet,aliases:tag.aliases,inclusions:tag.inclusions,exclusions:tag.exclusions,examples:tag.examples,broaderIds:tag.broaderIds,relatedIds:tag.relatedIds,matchingMode:tag.matchingMode,status:tag.status});
     for(const field of ['papers','nativeTags'])if(changed.has(field))for(const id of records.get(field)??Object.keys(this.context.state.papers))paperIds.add(id);
-    if(changed.has('tags')||changed.has('nativeBindingExclusions')){let after:string|undefined;do{const page=await this.store.scan('papers',{after,limit:50});for(const row of page.rows)paperIds.add(row.id);after=page.next;await this.yieldControl();}while(after);}
+    if(changed.has('suggestions'))for(const suggestion of this.context.state.suggestions){
+      if(records.get('suggestions')&&!records.get('suggestions')!.has(suggestion.id))continue;
+      const tag=tags.get(suggestion.tagId),paper=this.context.state.papers[suggestion.paperId],id=JSON.stringify([suggestion.paperId,suggestion.tagId]);paperIds.add(suggestion.paperId);
+      if(tag&&paper&&suggestion.operation!=='remove'&&(suggestion.applied||suggestion.status==='accepted')&&suggestion.inputFingerprint===paper.fingerprint&&suggestion.definitionFingerprint===definitionFingerprint(tag)&&suggestion.evidence.length&&validateEvidence(paper,suggestion.evidence).length===suggestion.evidence.length){
+        await this.store.put('scientificMatches',id,{paperId:paper.id,tagId:tag.id,inputFingerprint:paper.fingerprint,definitionFingerprint:suggestion.definitionFingerprint},{category:'active',taskId:paper.id,refs:[{collection:'tags',id:tag.id}]});
+      }else if(suggestion.status==='rejected'||suggestion.operation==='remove'&&suggestion.applied)await this.store.delete('scientificMatches',id);
+    }
+    if(changed.has('tags')){let after:string|undefined;do{const page=await this.store.scan('scientificMatches',{after,limit:50});for(const row of page.rows)if(row.metadata.taskId)paperIds.add(row.metadata.taskId);after=page.next;await this.yieldControl();}while(after);}
     for(const id of paperIds){
-      const record=await this.store.reference('papers',id),paper=this.context.state.papers[id];
-      if(!record)await this.similarity.remove([id]);
-      for(const ref of record?await this.recordLinks('papers',id):[])if(ref.collection==='tags')affectedTags.add(ref.id);
-      const native=record?this.context.state.nativeTags[id]??await this.store.get('nativeTags',id,{maxBytes:256*1024}) as NativeTag[]??[]:[],refs:NonNullable<RecordMetadata['refs']>=[];
-      for(const label of native)for(const tag of names.get(canonicalTagKey(label.tag))??[])if(nativeBindingAllows(tag.id,id,label.tag,this.context.state.nativeBindingExclusions))refs.push({collection:'tags',id:tag.id,relation:'matches'});
-      for(const ref of refs)if(ref.collection==='tags')affectedTags.add(ref.id);
-      if(record)await this.store.putReference('papers',id,record.token,{...record.metadata,...(paper?{title:paper.title,searchText:[paper.title,paper.abstract,paper.summary,...paper.keywords].join('\n')}:{}),refs});
-      const wanted=new Set(native.map(label=>canonicalTagKey(label.tag)));let after:string|undefined;
-      do{const page=await this.store.scan('nativeNamePapers',{references:[[{collection:'papers',id}]],after,limit:50});for(const row of page.rows){const key=row.metadata.taskId??String(JSON.parse(row.id)[0]);affectedNames.add(key);if(!wanted.has(key))await this.store.delete('nativeNamePapers',row.id);}after=page.next;}while(after);
-      const manualByName=new Map<string,boolean>();for(const label of native){const key=canonicalTagKey(label.tag);manualByName.set(key,!!manualByName.get(key)||label.type===0);}
-      for(const [key,manual] of manualByName){const memberId=JSON.stringify([key,id]);affectedNames.add(key);const current=await this.store.reference('nativeNamePapers',memberId);if(!current||current.metadata.status!==(manual?'manual':'automatic'))await this.store.put('nativeNamePapers',memberId,id,{category:'active',taskId:key,status:manual?'manual':'automatic',refs:[{collection:'papers',id}]});}
-      await this.yieldControl();
+      const record=await this.store.reference('papers',id);if(!record){await this.similarity.remove([id]);continue;}
+      const inputFingerprint=await this.store.get('papers',id,{path:['fingerprint'],maxBytes:4096}),refs:NonNullable<RecordMetadata['refs']>=[];
+      let after:string|undefined;do{const page=await this.store.scan('scientificMatches',{taskId:id,after,limit:50});for(const row of page.rows){const match=await this.store.codec.read(row.token,{maxBytes:16*1024}) as {tagId:string;inputFingerprint:string;definitionFingerprint:string},tag=tags.get(match.tagId);if(tag&&match.inputFingerprint===inputFingerprint&&match.definitionFingerprint===definitionFingerprint(tag))refs.push({collection:'tags',id:tag.id,relation:'matches'});else await this.store.delete('scientificMatches',row.id);}after=page.next;}while(after);
+      if(fingerprint(await this.recordLinks('papers',id))!==fingerprint(refs))await this.store.putReference('papers',id,record.token,{...record.metadata,refs});await this.yieldControl();
     }
-    if(changed.has('tags')){for(const name of names.keys())affectedNames.add(name);let after:string|undefined;do{const page=await this.store.scan('definitionNames',{after,limit:50});for(const row of page.rows){affectedNames.add(row.id);if(!names.has(row.id))await this.store.delete('definitionNames',row.id);}after=page.next;}while(after);for(const [key,definitions] of names)await this.store.put('definitionNames',key,{tagIds:definitions.map(tag=>tag.id)},{category:'active',title:key});}
-    const shelves=this.context.state.tagShelves??[];
-    for(const key of affectedNames){
-      const current=await this.store.get('nativeNames',key,{maxBytes:32*1024}) as {name?:string}|undefined,members=await this.store.scan('nativeNamePapers',{taskId:key,limit:1}),manualCount=(await this.store.scan('nativeNamePapers',{taskId:key,status:'manual',limit:1})).total,name=current?.name??Object.values(this.context.state.nativeTags).flat().find(label=>canonicalTagKey(label.tag)===key)?.tag??names.get(key)?.[0]?.name??key;
-      if(!members.total){await this.store.delete('nativeNames',key);await this.store.delete('libraryTags','native:'+key);continue;}
-      await this.store.put('nativeNames',key,{name,tagIds:(names.get(key)??[]).map(tag=>tag.id),paperCount:members.total,manualCount},{category:'active',title:name,status:names.has(key)?'ready':'undefined',count:members.total});
-      if(names.has(key)||key===canonicalTagKey('no_tag'))await this.store.delete('libraryTags','native:'+key);
-      else await this.store.put('libraryTags','native:'+key,{name,paperCount:members.total,manualCount,protected:isPersonalNativeTagName(name)&&this.context.state.nativeTagTreatments?.[key]!=='scientific'},{category:'active',type:manualCount?'manual-native':'imported-native',title:name,status:'undefined',count:members.total,refs:shelves.filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===key)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});
-    }
-    const knownTagIds=new Set(tags.map(tag=>tag.id));
-    if(changed.has('tags')){let after:string|undefined;do{const page=await this.store.scan('libraryTags',{after,limit:50});for(const row of page.rows)if(!row.id.startsWith('native:')&&!knownTagIds.has(row.id))await this.store.delete('libraryTags',row.id);after=page.next;}while(after);}
-    for(const tag of tags)if(!tag.builtin&&(changed.has('tags')||changed.has('tagShelves')||affectedTags.has(tag.id))){const count=(await this.store.scan('papers',{references:[[{collection:'tags',id:tag.id,relation:'matches'}]],limit:1})).total;await this.store.put('libraryTags',tag.id,{name:tag.name,tagId:tag.id,paperCount:count},{category:'active',title:tag.name,searchText:[tag.name,tag.fullName,...tag.aliases,tag.description].join('\n'),status:tag.status==='approved'?'ready':'undefined',count,refs:shelves.filter(shelf=>shelf.tagIds.includes(tag.id)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});}
-    const indexedShelves=new Set<string>();if(changed.has('tags')||changed.has('tagShelves'))for(const shelf of shelves){await this.store.put('tagShelves',shelf.id,{...shelf,count:shelf.tagIds.length,readyCount:tags.filter(tag=>shelf.tagIds.includes(tag.id)&&tag.status==='approved').length,assignableCount:tags.filter(tag=>shelf.tagIds.includes(tag.id)&&tag.status==='approved'&&!isPersonalNativeTagName(tag.name)).length},{category:'active',title:shelf.name,count:shelf.tagIds.length});indexedShelves.add(shelf.id);}
-    await this.context.rebase('papers',paperIds);await this.context.rebase('tagShelves',indexedShelves);
+    await this.context.rebase('papers',paperIds);
   }
   async nativeChunkAck(groupId:string,offset:number){if(!groupId||!Number.isSafeInteger(offset)||offset<0)throw new Error('Invalid native write acknowledgement.');await this.store.commit({commandId:`native-ack:${groupId}:${offset}`,operations:[{kind:'put',collection:'nativeChunks',id:groupId,value:{offset,acknowledgedAt:this.now()},metadata:{category:'ledger',status:'prepared'}}]});}
-  /** Repair the derived native inventory once; current tag fields are read in bounded pages. */
-  private async ensureNativeTagIndex(){
-    const policy=await this.store.get('workspace','nativeTagIndexPolicy',{maxBytes:2048}) as {version?:number;phase?:string;after?:string}|undefined;
-    if(policy?.version===2&&policy.phase==='complete')return;
-    const check=()=>{if(this.closed)throw new Error('Smart Tags closed during native tag indexing.');this.deps.signal?.throwIfAborted();};
-    const marker=async(phase:string,after?:string)=>{check();await this.store.put('workspace','nativeTagIndexPolicy',{version:2,phase,...(after?{after}:{})},{category:'ledger'});};
-    const paperFlags=new Map<string,{values:Map<string,boolean>;bytes:number}>();let cachedBytes=0;
-    const flags=async(paperId:string)=>{
-      const cached=paperFlags.get(paperId);if(cached){paperFlags.delete(paperId);paperFlags.set(paperId,cached);return cached.values;}
-      const source=await this.store.reference('nativeTags',paperId);if(!source)return;
-      const result=new Map<string,boolean>();let after:number|undefined;
-      do{const page=await this.store.codec.entries(source.token,{after,limit:50});for(const entry of page.entries){check();const name=await this.store.codec.lookup(entry.token,['tag']),type=await this.store.codec.lookup(entry.token,['type']);if(!name)continue;const value=await this.store.codec.read(name,{maxBytes:16*1024,signal:this.deps.signal});if(typeof value!=='string')continue;const key=canonicalTagKey(value),manual=type&&await this.store.codec.read(type,{maxBytes:128,signal:this.deps.signal})===0;result.set(key,!!result.get(key)||!!manual);}after=page.next;await this.yieldControl();}while(after!==undefined);
-      const bytes=[...result.keys()].reduce((sum,key)=>sum+key.length*2+64,0);if(bytes<=4*1024*1024){paperFlags.set(paperId,{values:result,bytes});cachedBytes+=bytes;while(paperFlags.size>50||cachedBytes>4*1024*1024){const first=paperFlags.keys().next().value!,old=paperFlags.get(first)!;cachedBytes-=old.bytes;paperFlags.delete(first);}}return result;
-    };
-    const definedNames=new Set(this.context.state.tags.filter(tag=>tag.status==='approved').flatMap(tag=>equivalentTagNames(tag).map(canonicalTagKey)));
-    let after=policy?.phase==='names'?policy.after:undefined;
-    do{
-      check();const page=await this.store.scan('nativeNames',{after,limit:50});
-      for(const row of page.rows){
-        check();
-        if(!await this.store.codec.lookup(row.token,['manualCount'])){
-          let cursor:string|undefined;do{const members=await this.store.scan('nativeNamePapers',{taskId:row.id,after:cursor,limit:50});for(const member of members.rows)if(member.metadata.status!=='manual'){
-            const paperId=await this.store.codec.read(member.token,{maxBytes:2048,signal:this.deps.signal});if(typeof paperId!=='string')continue;const source=await flags(paperId);if(source?.get(row.id)){check();await this.store.putReference(member.collection,member.id,member.token,{...member.metadata,status:'manual',refs:await this.recordLinks(member.collection,member.id)});}await this.yieldControl();
-          }cursor=members.next;}while(cursor);
-        }
-        const count=(await this.store.scan('nativeNamePapers',{taskId:row.id,limit:1})).total,manualCount=(await this.store.scan('nativeNamePapers',{taskId:row.id,status:'manual',limit:1})).total,name=await this.store.get('nativeNames',row.id,{path:['name'],maxBytes:16*1024,signal:this.deps.signal});
-        const library=await this.store.reference('libraryTags','native:'+row.id);check();
-        if(!count){await this.store.delete('nativeNames',row.id);if(library)await this.store.delete('libraryTags',library.id);continue;}
-        await this.updateNativeCountFields(row,count,manualCount);
-        if(definedNames.has(row.id)||row.id===canonicalTagKey('no_tag')){if(library)await this.store.delete('libraryTags',library.id);}
-        else if(library)await this.updateNativeCountFields(library,count,manualCount,manualCount?'manual-native':'imported-native');
-        else if(typeof name==='string'){check();await this.store.put('libraryTags','native:'+row.id,{name,paperCount:count,manualCount,protected:isPersonalNativeTagName(name)&&this.context.state.nativeTagTreatments?.[row.id]!=='scientific'},{category:'active',type:manualCount?'manual-native':'imported-native',title:name,status:'undefined',count,refs:(this.context.state.tagShelves??[]).filter(shelf=>shelf.id==='tag-shelf-my-tags'||shelf.nativeTagNames?.some(name=>canonicalTagKey(name)===row.id)).map(shelf=>({collection:'tagShelves',id:shelf.id,relation:'member'}))});}
-        await this.yieldControl();
-      }
-      after=page.next;await marker('names',after??page.rows.at(-1)?.id);await this.yieldControl();
-    }while(after);
-    await marker('complete');
-  }
-  private async updateNativeCountFields(record:StoredRecord,paperCount:number,manualCount:number,type?:string){
-    const builder=this.store.codec.objectBuilder();let after:number|undefined;
-    do{const page=await this.store.codec.entries(record.token,{after,limit:50});for(const entry of page.entries)if(entry.key!=='paperCount'&&entry.key!=='manualCount')await builder.append(String(entry.key),entry.token);after=page.next;}while(after!==undefined);
-    await builder.append('paperCount',{value:paperCount});await builder.append('manualCount',{value:manualCount});
-    if(this.closed)throw new Error('Smart Tags closed during native tag indexing.');this.deps.signal?.throwIfAborted();
-    await this.store.putReference(record.collection,record.id,await builder.finish(),{...record.metadata,...(type?{type}:{}),count:paperCount,refs:await this.recordLinks(record.collection,record.id)});
-  }
   private async reconcileLibrary(present:Set<string>){
     let after:string|undefined;
     do{const page=await this.store.scan('papers',{after,limit:50});const missing=await this.confirmMissing(page.rows.filter(row=>!present.has(row.id)));if(missing.length)await this.removePapers(missing);after=page.next;await this.yieldControl();}while(after&&!this.closed);
@@ -516,15 +512,15 @@ export class WorkspaceEngine {
         if(this.closed)break;const current=await this.deps.host.read(identity.itemID);
         if(!current){const old=await this.store.reference('papers',identity.paperId);if(old)await this.removePapers([old]);continue;}
         if(current.id!==identity.paperId)throw new Error('A native item identity changed while indexing.');
-        const previous=this.context.state.papers[current.id];
-        const keywords=previous?.keywords??await this.store.get('papers',current.id,{path:['keywords'],maxBytes:8*1024*1024}) as string[]|undefined;
-        current.keywords=[...new Set([...(keywords??[]),...current.keywords])];
-        current.summary=previous?.summary??await this.store.get('papers',current.id,{path:['summary'],maxBytes:256*1024}) as string|undefined??'';
-        current.concepts=previous?.concepts??await this.store.get('papers',current.id,{path:['concepts'],maxBytes:256*1024}) as string[]|undefined??[];
-        current.fingerprint=paperFingerprint(current);this.context.state.papers[current.id]=current;this.context.state.nativeTags[current.id]=await this.deps.host.readTags(identity.itemID);versions.set(current.id,identity.version);if(await this.store.get('paperAttentionRows',current.id,{path:['phase'],maxBytes:256})==='source')await this.store.delete('paperAttentionRows',current.id);await this.yieldControl();
+        const stored=await this.store.reference('papers',current.id),previous=this.context.state.papers[current.id];
+        const title=previous?.title??await this.store.get('papers',current.id,{path:['title'],maxBytes:8*1024*1024}),abstract=previous?.abstract??await this.store.get('papers',current.id,{path:['abstract'],maxBytes:8*1024*1024}),keywords=previous?.keywords??await this.store.get('papers',current.id,{path:['keywords'],maxBytes:8*1024*1024});
+        const sameSource=!!stored&&typeof title==='string'&&typeof abstract==='string'&&Array.isArray(keywords)&&paperFingerprint({title,abstract,keywords})===paperFingerprint({...current,pdfText:undefined});
+        if(!sameSource){current.summary='';current.concepts=[];current.fingerprint=paperFingerprint(current);this.context.state.papers[current.id]=current;}
+        this.context.state.nativeTags[current.id]=await this.deps.host.readTags(identity.itemID);versions.set(current.id,identity.version);
+        if(await this.store.get('paperAttentionRows',current.id,{path:['phase'],maxBytes:256})==='source')await this.store.delete('paperAttentionRows',current.id);await this.yieldControl();
       }
       await this.checkpoint(this.context.state);
-      for(const [id,version] of versions){const record=await this.store.reference('papers',id);if(record)await this.store.putReference('papers',id,record.token,{...record.metadata,nativeItemId:this.context.state.papers[id]?.itemID,nativeVersion:version,refs:await this.recordLinks('papers',id)});}
+      for(const [id,version] of versions){const record=await this.store.reference('papers',id);if(record)await this.store.putReference('papers',id,record.token,{...record.metadata,nativeItemId:identities.find(identity=>identity.paperId===id)?.itemID??record.metadata.nativeItemId,nativeVersion:version,refs:await this.recordLinks('papers',id)});}
       await this.context.rebase('papers',versions.keys());for(const id of versions.keys())this.context.releasePaper(id);await this.deps.changed?.((await this.store.stats()).revision);
     });this.tail=operation;return operation;
   }
@@ -551,7 +547,8 @@ export class WorkspaceEngine {
     const work=state.nativeDefinitionPreparation?.work;
     if(live&&work)for(const task of work.tasks)if(task.status!=='completed'&&task.pairs.some(pair=>ids.has(pair.paperId))){task.status='failed';task.error=message;work.status='failed';if(!work.diagnostics.includes(message))work.diagnostics.push(message);}
     const operations:StoreOperation[]=[];
-    for(const row of records){for(const ref of await this.recordLinks('papers',row.id))if(ref.collection==='tags')this.removedTagCounts.add(ref.id);
+    for(const row of records){
+      let matchAfter:string|undefined;do{const page=await this.store.scan('scientificMatches',{taskId:row.id,after:matchAfter,limit:50});for(const match of page.rows)await this.store.delete('scientificMatches',match.id);matchAfter=page.next;}while(matchAfter);
       for(const collection of ['papers','nativeTags','neighbors','paperInputs'])operations.push({kind:'delete',collection,id:row.id});
       if(live)operations.push({kind:'put',collection:'paperAttentionRows',id:row.id,value:{id:row.id,title:row.metadata.title??'Unavailable source paper',status:'failed',message,phase:'source',canDismiss:false,canLookupMetadata:false,canRecheck:false,canRetry:false,canSkip:false},metadata:{category:'active',title:row.metadata.title,status:'failed'}});
     }
@@ -563,7 +560,10 @@ export class WorkspaceEngine {
     for(const change of changes){const paper=await this.deps.host.read(change.itemID);if(paper){await this.context.paper(paper.id);present.push(change);}else{let after:string|undefined;do{const page=await this.store.scan('papers',{nativeItemId:change.itemID,after,limit:50});await this.removePapers(page.rows);after=page.next;}while(after&&!this.closed);}await this.yieldControl();}
     if(present.length)await this.kernel.onItemsChanged(present);
   }}
-  cancel(commandId:string){this.cancelled.add(commandId);const maintenance=this.maintenanceSignals.get(commandId);if(maintenance){maintenance.abort(new Error('Cleanup cancelled.'));return;}if(this.running.has(commandId))void this.kernel.invoke('pause').catch(()=>{});}
+  cancel(commandId:string){
+    this.cancelled.add(commandId);const maintenance=this.maintenanceSignals.get(commandId);if(maintenance){maintenance.abort(new Error('Cleanup cancelled.'));return;}
+    void(async()=>{const command=await this.store.get('commandLedger',commandId,{maxBytes:32*1024}) as CommandRecord|undefined;if(!command?.runId)return;const run=await this.store.get('runs',command.runId,{maxBytes:32*1024}) as RunRecord|undefined;if(!run)return;if(run.sourceRunId&&run.sourceRunId===this.context.state.run?.id){await this.kernel.invoke('pause');await updateRun(this.store,run.id,{status:'paused',canRetry:true,canStop:true,message:'Paused. Saved work is kept.'},this.now());}else await updateRun(this.store,run.id,{status:'stopped',canRetry:false,canStop:false,message:'Cancelled before processing.'},this.now());})().catch(()=>{});
+  }
   async idle(){await this.tail.catch(()=>{});await this.kernel.waitForIdle();await this.checkpointTail.catch(()=>{});}
   async close(_reason:'disable'|'shutdown'){
     if(this.closed)return;this.closed=true;for(const controller of this.maintenanceSignals.values())controller.abort(new Error('Smart Tags closed.'));if(this.kernel){await this.kernel.shutdown();await this.idle();}await this.checkpointTail.catch(()=>{});

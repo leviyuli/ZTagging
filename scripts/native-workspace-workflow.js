@@ -1,5 +1,5 @@
 /** TEST ONLY. The calling bootstrap verifies the isolated Zotero profile marker. */
-const NAME='Workspace proton transport',MANUAL='Workspace manual project';
+const NAME='workspace proton transport',MANUAL='Workspace manual project';
 const sleep=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 async function until(predicate,label,timeout=120_000){const started=Date.now();while(Date.now()-started<timeout){const value=await predicate();if(value)return value;await sleep(40);}throw new Error('Workspace native workflow timed out: '+label);}
 function query(workspace,page,params={}){
@@ -17,7 +17,7 @@ async function withSelection(values,action){
 async function assignment(workspace,values){
   const previous=(await query(workspace,'assignment')).assignmentReview?.id;
   return withSelection(values,async()=>{
-    await execute(workspace,'tag',{scope:'selected',processingPolicy:'auto-clear',tagShelfId:'all'});
+    await execute(workspace,'tag',{scope:'selected',processingPolicy:'auto-clear'});
     return until(async()=>{const model=await query(workspace,'assignment'),review=model.assignmentReview;return review&&review.id!==previous&&review.analysisComplete&&model.queue.status==='idle'&&model.queue.completed===values.length?model:false;},'all selected sources complete');
   });
 }
@@ -41,8 +41,10 @@ export async function run(workspace,check,config){
   await execute(workspace,'save-api-key',{provider:'api',key:'workspace-native-isolated-fixture-key'});
   await execute(workspace,'discover-models');await execute(workspace,'test-connection');
   const connected=await query(workspace,'connection');check('nativeFixtureConnectionVerified',connected.connection.apiKeyStored&&connected.connection.verified&&connected.models.includes('workspace-native-fixture'));
-  const existing=(await query(workspace,'vocabulary',{vocabQuery:NAME})).tags.find(tag=>tag.name===NAME);
-  await execute(workspace,'save-tag',{tag:{id:existing?.id??'',name:NAME,fullName:NAME,description:'Proton transport measured in membrane experiments.',facet:'phenomenon',aliases:[],inclusions:[],exclusions:[],examples:[],broaderIds:[],relatedIds:[],custom:false,status:'approved',matchingMode:'auto'}});
+  const build=await withSelection(values.slice(0,3),()=>execute(workspace,'prepare-tags',{scope:'selected',mode:'extend',processingPolicy:'auto-clear'}));
+  check('nativeBuildHasImmediateIdentity',!!build.runId);
+  const built=await until(async()=>{const model=await query(workspace,'build',{runId:build.runId});if(model.run?.status==='failed'||model.run?.status==='paused')throw new Error('Native build failed: '+JSON.stringify(model.run));return model.run?.status==='completed'?model:false;},'AI build completion');
+  check('nativeBuildCompletesWithoutMeaningReview',(built.buildResult?.savedCount+(built.buildResult?.reusedCount??0))>0&&built.buildResult?.questionCount===0,{run:built.run,result:built.buildResult});
   const definition=(await query(workspace,'vocabulary',{vocabQuery:NAME})).tags.find(tag=>tag.name===NAME);check('nativeFixtureDefinitionSaved',definition?.status==='approved'&&definition.matchingMode==='auto'&&!definition.custom);context.tagId=definition.id;
   await config.progress?.('native-workflow-assignment');
   const before=await report(config),first=await assignment(workspace,values),after=await report(config);
@@ -64,6 +66,7 @@ export async function run(workspace,check,config){
 }
 
 export async function verifyAfterRestart(workspace,check,config,context){
+  await config.progress?.('native-workflow-after-restart');
   const values=await items(context),history=(await query(workspace,'activity',{activityHistoryOpen:true})).history;
   check('nativeUndoSurvivesRestart',history.some(item=>item.id===context.undoId&&item.canUndo));
   const before=nativeState(values),counts=await report(config);await execute(workspace,'undo',{id:context.undoId});
@@ -73,10 +76,11 @@ export async function verifyAfterRestart(workspace,check,config,context){
   check('nativeUndoPreventsImmediateReapplication',removed.every(id=>!final.find(item=>item.id===id).tags.some(tag=>tag.tag===NAME))&&repeated.queue.status==='idle');
   check('nativeRestartAndUndoReusePaidReplies',after.assignments===counts.assignments,{before:counts.assignments,after:after.assignments});check('nativeFixtureNeverUsesRealNetwork',after.blocked===0);
   const unknown=new Zotero.Item('journalArticle');unknown.libraryID=Zotero.Libraries.userLibraryID;unknown.setField('title','Workspace native unknown outcome');unknown.setField('abstractNote','Experiments directly measure proton transport through a membrane.');unknown.addTag(MANUAL,0);await unknown.saveTx();
-  await withSelection([unknown],()=>execute(workspace,'tag',{scope:'selected',processingPolicy:'auto-clear',tagShelfId:'all'}));
+  await withSelection([unknown],()=>execute(workspace,'tag',{scope:'selected',processingPolicy:'auto-clear'}));
   await until(async()=>{const model=await query(workspace,'activity');return model.recoveryRequests?.some(request=>request.status==='unknown');},'unknown request recovery');
   const failed=await report(config);await execute(workspace,'resume');await sleep(300);check('nativeUnknownOutcomeIsNotAutomaticallyResent',(await report(config)).assignments===failed.assignments);
   const activity=await query(workspace,'activity'),recovery=activity.recoveryRequests.find(request=>request.status==='unknown'),manager=await Zotero.SmartTags.openManager({page:'activity'});
+  await config.progress?.('native-workflow-recovery-keyboard');
   const stop=await until(()=>[...manager.document.querySelectorAll('#activity-recovery button')].find(button=>button.textContent==='Stop this attempt'),'native recovery Stop control');stop.scrollIntoView({block:'nearest'});manager.focus();stop.focus();
   const keyboard=Cc['@mozilla.org/text-input-processor;1'].createInstance(Ci.nsITextInputProcessor);if(!keyboard.beginInputTransactionForTests(manager))throw new Error('Cannot start isolated recovery keyboard input.');
   const enter=()=>new manager.KeyboardEvent('',{key:'Enter',code:'Enter',keyCode:13});keyboard.keydown(enter(),keyboard.KEY_NON_PRINTABLE_KEY);keyboard.keyup(enter(),keyboard.KEY_NON_PRINTABLE_KEY);

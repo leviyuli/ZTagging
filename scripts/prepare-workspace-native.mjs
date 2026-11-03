@@ -3,7 +3,7 @@ import {cp,mkdir,readFile,writeFile,access,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {build} from 'esbuild';
 import {initialState} from '../src/controller.ts';
-import {paperFingerprint} from '../src/core.ts';
+import {paperFingerprint,fingerprint} from '../src/core.ts';
 
 const root=path.resolve(process.cwd()),theme=process.argv.includes('--dark')?'dark':'light';
 const kind=process.argv.includes('--workflow')?'workflow':process.argv.includes('--archive-fresh')?'archive-fresh':process.argv.includes('--archive')?'archive':process.argv.includes('--small')?'small':'synthetic';
@@ -18,7 +18,12 @@ if(await exists(profile)){
 // this isolated profile's extension cache, preserving it for test diagnostics.
 for(const name of ['extensions.json','addonStartup.json.lz4']){const file=path.join(profile,name);if(await exists(file))await rename(file,path.join(profile,name+'.before-test-'+Date.now()));}
 await mkdir(data,{recursive:true});await mkdir(path.join(profile,'extensions'),{recursive:true});
-const stateDirectory=path.join(profile,'smart-tags');await mkdir(stateDirectory,{recursive:true});
+const stateDirectory=path.join(profile,'smart-tags');
+if(process.argv.includes('--reset-state')&&await exists(stateDirectory)){
+  if(!stateDirectory.startsWith(root+path.sep)||path.dirname(stateDirectory)!==profile)throw new Error('Refusing an unexpected isolated state path.');
+  await rename(stateDirectory,stateDirectory+'.before-ai-'+Date.now());
+}
+await mkdir(stateDirectory,{recursive:true});
 const statePath=path.join(stateDirectory,'state.json');
 if(!await exists(statePath)){
   if(kind.startsWith('archive'))await cp(path.join(root,'build/private-native-save/state.json'),statePath,{errorOnExist:true,force:false});
@@ -26,6 +31,7 @@ if(!await exists(statePath)){
     const state=initialState();state.tags=[];state.taxonomyReady=true;
     const tagCount=kind==='workflow'?0:kind==='small'?20:2_000,paperCount=kind==='workflow'?0:kind==='small'?100:10_000;
     for(let index=0;index<tagCount;index++)state.tags.push({id:'topic-'+index,name:'Topic '+String(index).padStart(4,'0'),fullName:'Scientific topic '+index,description:'A distinct retrieval concept for synthetic responsiveness checks.',facet:'system',aliases:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',broaderIds:[],relatedIds:[],matchingMode:'auto'});
+    state.definitionOrigins=Object.fromEntries(state.tags.map(tag=>[tag.id,{version:1,kind:'ai-build',tagId:tag.id,creationFingerprint:fingerprint(tag),workId:'synthetic-build-fixture',recordedAt:Date.now()}]));
     for(let index=0;index<paperCount;index++){
       const key='WS'+String(index).padStart(6,'0'),id='1:'+key;
       const paper={id,key,itemID:900_000+index,libraryID:1,title:'Workspace synthetic paper '+String(index).padStart(5,'0'),abstract:'Electrochemical measurements establish a reproducible scientific result. '.repeat(12),keywords:['synthetic'],fingerprint:''};paper.fingerprint=paperFingerprint(paper);

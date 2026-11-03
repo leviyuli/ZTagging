@@ -22,13 +22,23 @@ A query names a page, its filters and a cursor. The initial loading event preced
 
 `close` stops scheduling and view subscriptions. Idle close does not load history, serialize the workspace or run maintenance. Active close drains necessary durable checkpoints and the current native-write chunk. The private scientific kernel currently reuses domain logic from `AppController` inside the worker with command-specific working records. The public UI does not call the old whole-workspace snapshot or persistence interface.
 
+## AI-only workflow and logical runs
+
+The active definition list contains only tags with durable AI Build creation provenance. A correction to that definition keeps its origin; a name, display shelf, `custom:false`, or old current-tag membership cannot establish origin. The compatibility transition retires native-derived, manual and uncertain definitions, obsolete native/DIY tasks and definition questions. Its archived bodies receive seven-day history retention, while required evidence, paid recovery and recent Undo references stay protected. Compact retirement records prevent reactivation through an old task or reversal. The transition uses storage only and waits for native-write recovery before proceeding.
+
+Source-input policy 2 excludes native Zotero labels from scientific input. Type-1/automatic labels are not proof of publisher-keyword provenance. Previous keyword-derived papers, facts, analyses and input checks retain immutable historical versions for paid recovery and evidence, but are not reused as current scientific inputs. Current paper fingerprints, search indexes and similarity inputs use the cleaned source. Native tag reads remain necessary for duplicate detection, exclusions, ownership, external-edit guards, journals and Undo; they never create definitions or constitute supporting evidence.
+
+A logical run is durable before scientific preparation begins. Its ID follows queued work, paper processing, completion and explicit Retry attempts. Build/Assign pages show this same run immediately and retain their mounted controls through progress updates. Runs exposes one record per action, with diagnostic details collapsed. A successful build reports new, reused, skipped ambiguous concepts and unavailable papers; missing information and technical failure are not ambiguous concepts. Automatic builds do not produce definition questions. Full replacement retains its explicit review.
+
+Assignment defaults to all enabled active definitions and can capture an explicit selected subset. Each result records its current paper/source and definition identities. Find filters index validated matches, including outcomes satisfied by an existing native label, without claiming ownership of that label. Raw name equality alone is not a scientific match. Saved filters are workspace-owned ConceptFilter records; they preserve exact AI relationships and do not call Zotero's native saved-search adapter.
+
 ## Workers and native adapters
 
 A processing worker owns scientific work, parsing, hashes, compression, storage records, journals and retention. A separate reader worker serves page projections so background scientific computation does not monopolize page queries. Both use Mozilla's `BasePromiseWorker` protocol. Provider and Zotero access are injected; credentials remain in the existing protected credential store.
 
 [`NativeSqlPort`](../src/workspace/native-sql.ts) uses Mozilla's [asynchronous SQLite module](https://searchfox.org/firefox-main/source/toolkit/modules/Sqlite.sys.mjs). Its native reader connection is opened read-only after migration activates. Main-thread JavaScript handles bounded rows and yields after four milliseconds of plugin computation. Native Zotero calls and operating-system waits are measured separately. SQL bindings, quoted identifiers, comments and top-level CTE projections have deterministic contract tests.
 
-The host enumerates item identities in pages of 50 and hydrates individual records. Large titles, abstracts and keyword lists use short-lived, bounded field leases; normalization and scientific fingerprints run in the worker. PDF access transfers cache-file paths and reads text in worker chunks. Native input inspection never retrieves `attachmentText` as one main-thread string. At most two paper leases and two bulk SQL transfers may be active. Each worker admits one SQL transfer before copying a payload; the shared native adapter also has two credits. This bounds buffers waiting for dispatch as well as active operations. Transaction commit/rollback control messages bypass those credits. The decoded payload cache budget is 32 MiB across the processing and reader workers: 24 MiB for processing and 8 MiB for queries.
+The host enumerates item identities in pages of 50 and hydrates individual records. Large source-metadata fields use short-lived, bounded field leases; normalization and scientific fingerprints run in the worker. PDF access transfers cache-file paths and reads text in worker chunks. Native input inspection never retrieves `attachmentText` as one main-thread string. At most two paper leases and two bulk SQL transfers may be active. Each worker admits one SQL transfer before copying a payload; the shared native adapter also has two credits. This bounds buffers waiting for dispatch as well as active operations. Transaction commit/rollback control messages bypass those credits. The decoded payload cache budget is 32 MiB across the processing and reader workers: 24 MiB for processing and 8 MiB for queries.
 
 Background library catch-up uses native item identities and version hints. A partial SQLite index locates a deleted native item without hydrating paper bodies. Removing it from current search/index rows preserves immutable evidence and history. The workspace reports indexing progress while a fresh library is still being read.
 
@@ -48,7 +58,7 @@ Budget reservations are persisted before dispatch. Replies are stored before the
 
 Native tag and metadata changes have a durable journal before writing. Each native frame contains at most 20 papers, revalidated immediately before application. Completed chunks receive durable acknowledgements and retain one logical Undo group. Recovery compares the recorded before/after values and preserves external edits. Undo keeps automatic-reapplication suppression after the old reversal details expire.
 
-Automatic definitions and assignments retain their captured policies, source/meaning identities, manual protections and scientific checks. Narrow-shelf results do not establish whole-library exclusion. Deferred choices remain distinct from remembered rejection and do not expire simply because their task finished processing.
+Automatic definitions and assignments retain their captured policies, source/meaning identities, manual protections and scientific checks. Selected-subset results do not establish whole-library exclusion. Deferred assignment choices remain distinct from remembered rejection and do not expire simply because their task finished processing.
 
 ## Seven-day retention
 
@@ -57,6 +67,7 @@ Automatic definitions and assignments retain their captured policies, source/mea
 | Current definitions and supporting evidence | Protected while referenced by current definitions. |
 | Open/deferred choices, interrupted tasks and recovery | Protected until their required context is resolved. |
 | Completed task bodies and Undo details | Eligible seven days after completion. |
+| Retired workflow/definition bodies and old source-policy context | Eligible seven days after transition unless a protected reference still needs them. |
 | Unused AI cache results | Eligible seven days after their last actual reuse. Viewing a page does not refresh this date. |
 | Unknown legacy timestamps | Receive a seven-day grace period from migration. |
 | Ownership, remembered decisions, admission markers and automatic suppression | Keep compact records after old diagnostic/Undo bodies expire. |
@@ -72,7 +83,7 @@ The worker streams legacy schemas 1–13 using bounded file buffers and JSON tok
 
 An exact-byte backup uses `state.json.pre-v14.json`; differing existing bytes receive a collision-safe numbered name. The original authoritative generation remains available until staged validation and backup verification succeed. Atomic locator activation selects schema 14. If interrupted, startup resumes or discards the staged generation without accepting a partially imported workspace. Older extensions must refuse to overwrite the newer locator.
 
-Backup deletion applies only to the registered migration backup after its age, verified-restart and recovery checks pass. An arbitrary similarly named file is not a cleanup target. Current definitions and unresolved work remain protected after migration retention is applied.
+Backup deletion applies only to the registered migration backup after its age, verified-restart and recovery checks pass. An arbitrary similarly named file is not a cleanup target. Current AI-built definitions and unresolved assignment/recovery work remain protected after migration retention is applied. The separate workflow-policy transition above retires unsupported legacy definition workflows after native-write reconciliation; it does not rewrite the exact legacy backup.
 
 ## Size counters
 

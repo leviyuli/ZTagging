@@ -5,7 +5,7 @@ import type {MigrationCodec,MigrationContext,MigrationIO,MigrationOptions,Migrat
 import type {JsonScalar,PayloadToken,RecordMetadata} from './storage-contract.ts';
 
 const CHUNK=65_536,LOCATOR_LIMIT=16_384,SEVEN_DAYS=7*24*60*60*1000;
-const maps=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions'.split(' '));
+const maps=new Set('papers nativeTags decisions ownership analyses neighbors metadata facts taxonomyRedirects taxonomySupport paperInputs paperAttentionDismissals nativeTagTreatments nativeBindingExclusions definitionOrigins'.split(' '));
 const arrays=new Set('tags suggestions history cleanup pilotIds verifiedConnections models warnings deferredItemIDs taxonomyArchives preparationHistory nativeDefinitionHistory analysisResetHistory factHistory diyComparisonHistory maintenanceTasks reviewItems tagSelectionHistory legacyConsolidationHistory assignmentRuns uncoveredTopics tagShelves automaticSuppressions userEditedTagIds'.split(' '));
 const histories=new Set('history taxonomyArchives preparationHistory nativeDefinitionHistory analysisResetHistory factHistory diyComparisonHistory tagSelectionHistory legacyConsolidationHistory'.split(' '));
 const smallFields=new Set('id paperId itemID title name label status taskId runId createdAt date completedAt lastUsedAt'.split(' '));
@@ -62,7 +62,7 @@ function recordMetadata(collection:string,scalars:Record<string,JsonScalar>,now:
   const timestamp=(name:string)=>{const value=scalars[name];const parsed=typeof value==='string'?Date.parse(value):typeof value==='number'?value:NaN;return Number.isFinite(parsed)?parsed:undefined;};
   const title=typeof scalars.title==='string'?scalars.title:typeof scalars.name==='string'?scalars.name:typeof scalars.label==='string'?scalars.label:undefined;
   const status=typeof scalars.status==='string'?scalars.status:undefined;
-  const category=histories.has(collection)||collection==='assignmentRuns'&&status==='finished'?'history':collection==='analyses'?'cache':'active';
+  const category=collection==='definitionOrigins'?'ledger':histories.has(collection)||collection==='assignmentRuns'&&status==='finished'?'history':collection==='analyses'?'cache':'active';
   return {category,updatedAt:now,...(title?{title,searchText:title.toLocaleLowerCase()}:{}),...(status?{status}:{}),...(typeof scalars.taskId==='string'?{taskId:scalars.taskId}:{}),...(timestamp('completedAt')!==undefined?{completedAt:timestamp('completedAt')}:category==='history'?{completedAt:timestamp('date')??now}:{}),...(category==='cache'?{lastUsedAt:timestamp('lastUsedAt')??now}:{}),...(['running','paused','pending','question'].includes(status??'')?{pinned:true}:{})};
 }
 

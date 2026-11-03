@@ -4,7 +4,7 @@ import {webcrypto} from 'node:crypto';
 import {initialState,migrateState,validState} from '../src/controller.ts';
 import type {AppState} from '../src/controller.ts';
 import type {TagDefinition} from '../src/core.ts';
-import {canonicalTagKey,fingerprint,paperFingerprint} from '../src/core.ts';
+import {fingerprint,paperFingerprint} from '../src/core.ts';
 import {normalizeFacts} from '../src/taxonomy.ts';
 import {WorkspaceStore} from '../src/workspace/storage.ts';
 import {memorySql} from './workspace-storage-adapter.ts';
@@ -15,6 +15,7 @@ import {fingerprintGraph} from '../src/workspace/migration-graph.ts';
 import {createNativeTagDefinitionWork} from '../src/native-tag-definition.ts';
 import {createRegistrySnapshot} from '../src/evidence.ts';
 import {createTagSelection,validTagSelectionWork} from '../src/tag-selection.ts';
+import {initializeWorkflowPolicy} from '../src/workspace/workflow-policy.ts';
 
 const DATE=1_794_033_600_000,DAY=24*60*60*1000;
 const tag=(id='tag-fc'):TagDefinition=>({id,name:'FC',fullName:'fuel cell',description:'Electrochemical devices converting fuel into electricity.',facet:'system',aliases:['fuel cells'],broaderIds:[],relatedIds:[],inclusions:[],exclusions:[],examples:[],custom:false,status:'approved',matchingMode:'auto'});
@@ -41,12 +42,16 @@ test('the concrete target publishes indexed records and drops duplicate state co
   assert.equal((await h.store.reference('papers','1:PAPER'))!.metadata.nativeItemId,1);assert.equal((await h.store.scan('papers',{nativeItemId:1})).rows[0].id,'1:PAPER');assert.equal((await h.store.scan('papers',{nativeItemId:99})).total,0);
   for(const key of ['tags','papers','nativeTags','facts','history','metadata'])assert.equal(await h.store.reference('state',key),undefined,key+' container must not pin all historic records');
   assert.deepEqual(await h.store.get('metadata','storage.processingHistoryPolicy'),'compact-v1');
-  assert.equal((await h.store.scan('papers',{references:[[{collection:'tags',id:'tag-fc',relation:'matches'}]]})).total,1);
-  assert.equal((await h.store.scan('papers',{search:'characterized'})).total,1);assert.equal((await h.store.scan('libraryTags',{search:'fuel cells'})).total,1);
-  const names=await h.store.scan('nativeNames');assert.equal(names.total,2);assert.equal((await h.store.get('nativeNames',canonicalTagKey('FC')) as {paperCount:number}).paperCount,1);
-  assert.equal((await h.store.scan('nativeNamePapers',{taskId:canonicalTagKey('FC')})).total,1);assert.equal((await h.store.scan('migrationBackups')).total,1);
-  assert.equal(await h.store.get('nativeNames',canonicalTagKey('Project'),{path:['manualCount']}),1);assert.equal((await h.store.reference('libraryTags','native:'+canonicalTagKey('Project')))!.metadata.type,'manual-native');assert.equal(await h.store.get('workspace','nativeTagIndexPolicy',{path:['phase']}),'complete');
+  assert.equal((await h.store.scan('papers',{references:[[{collection:'tags',id:'tag-fc',relation:'matches'}]]})).total,0);
+  assert.equal((await h.store.scan('papers',{search:'characterized'})).total,1);assert.equal((await h.store.scan('tags',{search:'fuel cells'})).total,1);
+  for(const collection of ['nativeNames','nativeNamePapers','definitionNames','libraryTags'])assert.equal((await h.store.scan(collection)).total,0);
+  assert.equal((await h.store.scan('migrationBackups')).total,1);assert.deepEqual(await h.store.get('nativeTags','1:PAPER'),source.nativeTags['1:PAPER']);
   assert.equal((await h.store.get('workspace','active') as {generation:string}).generation,'target-generation');await h.store.close();
+});
+
+test('schema-thirteen creation origins stream into permanent records before definition retirement',async()=>{
+  const source=state(),origin={version:1 as const,kind:'ai-build' as const,tagId:'tag-fc',creationFingerprint:fingerprint(source.tags[0]),workId:'validated-build',changeId:'created-ai-tag',recordedAt:DATE};source.definitionOrigins={'tag-fc':origin};assert.equal(validState(source),true);
+  const h=await migrate(source);try{assert.deepEqual(await h.store.get('definitionOrigins','tag-fc'),origin);assert.equal((await h.store.reference('definitionOrigins','tag-fc'))!.metadata.category,'ledger');assert.equal(await h.store.reference('state','definitionOrigins'),undefined);await initializeWorkflowPolicy(h.store,{clock:()=>DATE,yieldControl:async()=>{}});assert.ok(await h.store.reference('tags','tag-fc'));assert.equal(await h.store.reference('retiredDefinitions','tag-fc'),undefined);}finally{await h.store.close();}
 });
 
 test('unverified native bindings cannot become a grounded match during migration',async()=>{

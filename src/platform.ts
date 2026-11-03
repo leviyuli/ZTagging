@@ -27,6 +27,7 @@ function stripHTML(value: string): string {
   return value.replace(/<[^>]*>/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim();
 }
 
+
 export class ZoteroHost implements LibraryHost {
   mutating = new Set<number>();
   private personal(item: any) { return item && item.isRegularItem() && !item.deleted && item.libraryID === Zotero.Libraries.userLibraryID; }
@@ -34,7 +35,7 @@ export class ZoteroHost implements LibraryHost {
     const paper: PaperRecord = {
       id: `${item.libraryID}:${item.key}`, itemID: item.id, libraryID: item.libraryID, key: item.key,
       title: stripHTML(item.getField('title') || ''), abstract: stripHTML(item.getField('abstractNote') || ''),
-      keywords: item.getTags().filter((t: NativeTag) => t.type === 1).map((t: NativeTag) => t.tag),
+      keywords: [],
       summary: '', concepts: [], fingerprint: ''
     };
     paper.fingerprint = paperFingerprint(paper);

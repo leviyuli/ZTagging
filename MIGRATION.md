@@ -1,5 +1,23 @@
 # Migration notes
 
+## Version 1.2.0: AI-built tags and Runs
+
+Install [smart-tags-1.2.0.xpi](https://github.com/leviyuli/ZTagging/releases/download/v1.2.0/smart-tags-1.2.0.xpi) over the existing extension, then restart Zotero. The [release page](https://github.com/leviyuli/ZTagging/releases/tag/v1.2.0) also includes the [source archive](https://github.com/leviyuli/ZTagging/releases/download/v1.2.0/smart-tags-1.2.0-source.zip).
+
+This storage-only compatibility transition retains storage schema 14. It sends no AI request, admits no new definition and changes no Zotero items. Any prepared native-write journal is reconciled before the transition proceeds.
+
+- Keep active definitions only when their AI Build creation is demonstrable. Subsequent corrections retain that origin. Native-derived, manual and uncertain-origin definitions are retired from the plugin's active list; existing Zotero tags remain untouched.
+- Retire native/DIY tasks, shelves, definition questions and obsolete matching attempts. They do not resume or block a new build. Compact retirement markers prevent old work or Undo from reactivating retired definitions.
+- Keep archived definition bodies and previous source/fact/analysis context under the seven-day history window from transition. Context referenced by current evidence, recent Undo or paid-request recovery remains protected. Paid raw replies, spending, ownership and suppression records are preserved.
+- Use the new source-input policy for future work. Native automatic/type-1 tags no longer become scientific keywords. Invalidate their previous factual summaries, matching scopes and search/similarity inputs; retain immutable historical inputs needed to explain earlier paid work.
+- Show one searchable active AI definition list, with optional exact-build filtering. Skip ambiguous new build concepts automatically. An empty active list after retirement is expected when no previous AI origin can be proven: build from papers to create the new list.
+- Replace Activity with **Runs**: one record per Build or Assign action, with Retry attempts retained under that record. Previous paid outcomes remain subject to explicit unknown-request recovery rather than automatic replay.
+- Store **Find papers → Save filter…** inside Smart Tags. Saved AI filters do not create or modify Zotero saved searches and do not infer matches from existing native labels.
+
+Routine builds are additive and report new, reused, skipped and unavailable results. Full replacement remains under More options and requires an explicit change review. Assignment choices and manual protections remain distinct from retired definition questions.
+
+The versioned sections below describe historical releases. Their native/DIY, shelf and Activity instructions are superseded by the v1.2.0 workflow above.
+
 ## Version 1.1.1: reachable choices and visible build results
 
 Install the new XPI over your existing extension and restart Zotero. This update retains **storage schema 14**, saved definitions, scientific evidence, paid replies, Undo and the existing backup retention dates. Updating from 1.1.0 needs no full data migration.

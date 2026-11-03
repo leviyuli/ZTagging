@@ -1,5 +1,6 @@
 import type { TaxonomyProposal } from './taxonomy';
 import type { WarningRecord } from './warnings';
+import type {ConceptFilter} from './concept-filter';
 /** The manager receives display data only. Credentials never belong in a snapshot. */
 export type ManagerPage = 'overview' | 'connection' | 'build' | 'cleanup' | 'assignment' | 'vocabulary' | 'existing-tags' | 'review' | 'library' | 'activity' | 'settings';
 export type Scope = 'pilot' | 'selected' | 'collections' | 'library';
@@ -32,6 +33,7 @@ export interface DisplayTaxonomyProposal extends Omit<TaxonomyProposal, 'tags'> 
   unresolvedMerges?: { fromId: string; toReference: string; reason: string }[];
 }
 export interface DisplayPaper {
+  matchedTagIds?: string[];
   id: string;
   title: string;
   abstract?: string;
@@ -104,16 +106,47 @@ export interface DisplayTagPreparation {
   error?: string;
 }
 export interface DisplayBuildResult {
+  requiresChangeReview?: boolean;
   runId: string;
   status: 'running' | 'paused' | 'completed' | 'needs-information' | 'failed' | 'unknown';
   paperCount: number;
   completedPaperCount: number;
   savedCount: number;
   questionCount: number;
+  reusedCount?: number;
+  skippedCount?: number;
+  unavailableCount?: number;
   shelfId?: string;
   reason?: 'saved' | 'reused' | 'no-new-tags' | 'needs-information' | 'no-eligible-papers';
   message?: string;
   tagNames?: string[];
+}
+export interface DisplayRun {
+  requiresChangeReview?: boolean;
+  id: string;
+  kind: 'build' | 'assignment';
+  status: 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'stopped';
+  createdAt?: number;
+  updatedAt?: number;
+  paperCount: number;
+  completedPaperCount: number;
+  phase?: string;
+  message?: string;
+  error?: string;
+  attemptCount?: number;
+  newCount?: number;
+  reusedCount?: number;
+  skippedCount?: number;
+  unavailableCount?: number;
+  appliedCount?: number;
+  choiceCount?: number;
+  tagNames?: string[];
+  resultRunId?: string;
+  canRetry?: boolean;
+  canStop?: boolean;
+  spentUSD?: number;
+  provider?: string;
+  model?: string;
 }
 export interface ManagerSettings {
   provider: 'api' | 'chatgpt' | 'deepseek';
@@ -161,6 +194,10 @@ export interface DisplayReviewItem {
   workId?: string;
 }
 export interface ManagerSnapshot {
+  transitionSummary?:{message:string;completedAt:number;retiredDefinitions:number;keptDefinitions:number};
+  savedFilters?: {id:string;name:string;filter:ConceptFilter}[];
+  run?: DisplayRun;
+  runs?: DisplayRun[];
   buildResult?: DisplayBuildResult;
   /** Query totals are independent of the bounded rows returned for this page. */
   totals?: { papers: number; tags: number; openChoices: number; history: number; definedTags?: number; assignableTags?: number };

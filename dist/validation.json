@@ -1,10 +1,11 @@
 {
   "extension": "Smart Tags for Zotero",
-  "version": "1.1.1",
-  "verifiedAt": "2026-11-03T03:30:32.633Z",
+  "version": "1.2.0",
+  "verifiedAt": "2026-11-03T09:17:29.903Z",
   "repository": "https://github.com/leviyuli/ZTagging",
   "schemaVersion": 14,
-  "nativeDefinitionProtocolVersion": 2,
+  "workflowPolicyVersion": 1,
+  "scientificSourcePolicyVersion": 2,
   "target": {
     "zotero": "10.0.7",
     "gecko": "140.17.0",
@@ -16,10 +17,10 @@
     "cpu": "13th Gen Intel(R) Core(TM) i5-13400F",
     "ramBytes": 42777710592
   },
-  "scope": "Reachable pending meanings, manual undefined-tag shelf, and persistent exact build outcomes",
+  "scope": "AI-built vocabulary, retired DIY integration, durable logical Runs, source-grounded search and responsive storage",
   "automatedTests": {
-    "command": "npm test",
-    "passed": 1528,
+    "command": "node --experimental-strip-types --test --test-timeout=180000 tests/*.test.ts",
+    "passed": 1474,
     "failed": 0,
     "cancelled": 0,
     "skipped": 0
@@ -30,30 +31,31 @@
   },
   "inMemoryBundle": {
     "status": "passed",
-    "entries": 3,
-    "write": false
+    "entryPoints": 3
   },
-  "nativeCases": {
-    "light": {
+  "nativeRuns": {
+    "syntheticLight": {
       "status": "passed",
-      "completedAt": "2026-11-03T03:22:00.823Z",
+      "completedAt": "2026-11-03T08:57:22.458Z",
       "theme": "light",
-      "graphics": "software",
-      "passed": 35,
+      "graphics": "native-default",
+      "passed": 33,
       "failed": 0,
       "checks": [
         "isolatedProfile",
         "isolatedLibrary",
         "smallWorkspaceInterface",
+        "backgroundInputLatency",
         "automaticNewPaperTaggingOff",
         "schema14Locator",
-        "archiveDatabaseAtMost50MiB",
         "bounded-build",
         "bounded-vocabulary",
         "bounded-assignment",
         "bounded-library",
         "bounded-activity",
         "bounded-settings",
+        "tenThousandPaperCount",
+        "twoThousandDefinitions",
         "decodedCacheBound",
         "warmPageP95",
         "inputLatency",
@@ -72,47 +74,123 @@
         "page-settings",
         "layout-settings",
         "noPluginPageSlice50ms",
-        "buildResultShowsExactSavedCount",
-        "builtTagsLinkHasExactRunMembership",
-        "manualUndefinedShelfIsReachable",
-        "activityOpensVisibleMeaningChoices",
         "idleDisableP95"
       ],
       "metrics": {
-        "startupMs": 523,
-        "archiveDatabaseBytes": 46342144,
-        "idleReclamationMs": 0,
+        "startupMs": 280254,
+        "backgroundInput": {
+          "samples": 1000,
+          "p95": 0.10570000001462176,
+          "p99": 0.14730000001145527,
+          "max": 0.2378000000026077
+        },
         "warmQueries": {
-          "p95": 130,
-          "p99": 148,
-          "max": 148
+          "p95": 87,
+          "p99": 124,
+          "max": 124
         },
         "input": {
-          "p95": 28.22429999999997,
-          "p99": 33.00939999999997,
-          "max": 33.00939999999997
+          "p95": 11.195700000000045,
+          "p99": 13.849899999999934,
+          "max": 13.849899999999934
         },
         "pluginPageSlices": {
-          "samples": 77,
-          "p95": 5.414700000000266,
-          "max": 31.958599999999933
+          "samples": 78,
+          "p95": 2.4412999999476597,
+          "max": 13.442899999965448
         },
         "inputHandlers": {
-          "p95": 23.073100000000068,
-          "max": 24.472399999999993
+          "p95": 9.679900000000032,
+          "max": 12.580799999999954
         },
         "idleDisable": {
-          "p95": 38,
-          "max": 38
+          "p95": 29,
+          "max": 29
         }
       }
     },
-    "dark": {
+    "archiveLight": {
       "status": "passed",
-      "completedAt": "2026-11-03T03:22:29.335Z",
+      "completedAt": "2026-11-03T08:59:39.223Z",
+      "theme": "light",
+      "graphics": "native-default",
+      "passed": 32,
+      "failed": 0,
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "backgroundInputLatency",
+        "automaticNewPaperTaggingOff",
+        "schema14Locator",
+        "archiveDatabaseAtMost50MiB",
+        "bounded-build",
+        "bounded-vocabulary",
+        "bounded-assignment",
+        "bounded-library",
+        "bounded-activity",
+        "bounded-settings",
+        "decodedCacheBound",
+        "warmPageP95",
+        "inputLatency",
+        "searchControlStaysMounted",
+        "keyboardEscapeClearsSearch",
+        "page-build",
+        "layout-build",
+        "page-vocabulary",
+        "layout-vocabulary",
+        "page-assignment",
+        "layout-assignment",
+        "page-library",
+        "layout-library",
+        "page-activity",
+        "layout-activity",
+        "page-settings",
+        "layout-settings",
+        "noPluginPageSlice50ms",
+        "idleDisableP95"
+      ],
+      "metrics": {
+        "startupMs": 27483,
+        "backgroundInput": {
+          "samples": 1000,
+          "p95": 0.1213000000007014,
+          "p99": 0.20389999999679276,
+          "max": 0.3867000000009284
+        },
+        "archiveDatabaseBytes": 47972352,
+        "idleReclamationMs": 0,
+        "warmQueries": {
+          "p95": 67,
+          "p99": 81,
+          "max": 81
+        },
+        "input": {
+          "p95": 8.410400000000038,
+          "p99": 8.577600000000018,
+          "max": 8.577600000000018
+        },
+        "pluginPageSlices": {
+          "samples": 78,
+          "p95": 2.789600000000064,
+          "max": 4.748999999999796
+        },
+        "inputHandlers": {
+          "p95": 5.956000000000003,
+          "max": 6.3881999999999834
+        },
+        "idleDisable": {
+          "p95": 25,
+          "max": 25
+        }
+      }
+    },
+    "archiveDark": {
+      "status": "passed",
+      "completedAt": "2026-11-03T09:00:22.312Z",
       "theme": "dark",
-      "graphics": "software",
-      "passed": 35,
+      "graphics": "native-default",
+      "passed": 31,
       "failed": 0,
       "checks": [
         "isolatedProfile",
@@ -145,52 +223,155 @@
         "page-settings",
         "layout-settings",
         "noPluginPageSlice50ms",
-        "buildResultShowsExactSavedCount",
-        "builtTagsLinkHasExactRunMembership",
-        "manualUndefinedShelfIsReachable",
-        "activityOpensVisibleMeaningChoices",
         "idleDisableP95"
       ],
       "metrics": {
-        "startupMs": 544,
-        "archiveDatabaseBytes": 46342144,
+        "startupMs": 364,
+        "archiveDatabaseBytes": 47972352,
         "idleReclamationMs": 0,
         "warmQueries": {
-          "p95": 145,
-          "p99": 151,
-          "max": 151
+          "p95": 65,
+          "p99": 80,
+          "max": 80
         },
         "input": {
-          "p95": 24.185400000000072,
-          "p99": 31.53909999999999,
-          "max": 31.53909999999999
+          "p95": 8.530599999999993,
+          "p99": 8.713999999999999,
+          "max": 8.713999999999999
         },
         "pluginPageSlices": {
-          "samples": 76,
-          "p95": 4.6950000000006185,
-          "max": 33.431799999999384
+          "samples": 78,
+          "p95": 2.4670999999998457,
+          "max": 4.641099999999824
         },
         "inputHandlers": {
-          "p95": 21.748300000000086,
-          "max": 30.937399999999997
+          "p95": 3.2280000000000086,
+          "max": 3.918600000000012
         },
         "idleDisable": {
-          "p95": 47,
-          "max": 47
+          "p95": 28,
+          "max": 28
+        }
+      }
+    },
+    "workflowLight": {
+      "status": "passed",
+      "completedAt": "2026-11-03T08:48:43.292Z",
+      "theme": "light",
+      "graphics": "native-default",
+      "passed": 34,
+      "failed": 0,
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "backgroundInputLatency",
+        "nativeWorkflowCreatesTwelveSources",
+        "nativeFixtureConnectionVerified",
+        "nativeBuildHasImmediateIdentity",
+        "nativeBuildCompletesWithoutMeaningReview",
+        "nativeFixtureDefinitionSaved",
+        "nativeClearAssignmentsAppliedWithoutReview",
+        "nativeUncertainPaperDoesNotBlockCompletion",
+        "nativeRequestsAreExactlyOnePerPaper",
+        "nativeManualTagsPreserved",
+        "nativeSingleUncertainChoiceVisible",
+        "nativeRecentUndoVisible",
+        "nativeRepeatReusesPaidReplies",
+        "nativeRepeatFinishesWithUncertainChoice",
+        "nativeRepeatPreservesManualTags",
+        "nativeRepeatDoesNotDuplicateChoices",
+        "nativeUndoSurvivesRestart",
+        "nativeUndoChangesActualZoteroTags",
+        "nativeUndoPreservesManualTags",
+        "nativeUndoPreventsImmediateReapplication",
+        "nativeRestartAndUndoReusePaidReplies",
+        "nativeFixtureNeverUsesRealNetwork",
+        "nativeUnknownOutcomeIsNotAutomaticallyResent",
+        "nativeRecoveryCanBeStoppedWithKeyboard",
+        "nativeRecoveryKeepsCompletedResults",
+        "nativeRecoveryAddsNoRetryCharge",
+        "nativeRecoveryNeverUsesRealNetwork",
+        "workflow-layout-build",
+        "workflow-layout-vocabulary",
+        "workflow-layout-assignment",
+        "workflow-layout-activity"
+      ],
+      "metrics": {
+        "startupMs": 693,
+        "backgroundInput": {
+          "samples": 26,
+          "p95": 5.419399999999769,
+          "p99": 6.177900000000136,
+          "max": 6.177900000000136
+        }
+      }
+    },
+    "workflowDark": {
+      "status": "passed",
+      "completedAt": "2026-11-03T08:51:39.887Z",
+      "theme": "dark",
+      "graphics": "native-default",
+      "passed": 34,
+      "failed": 0,
+      "checks": [
+        "isolatedProfile",
+        "isolatedLibrary",
+        "smallWorkspaceInterface",
+        "backgroundInputLatency",
+        "nativeWorkflowCreatesTwelveSources",
+        "nativeFixtureConnectionVerified",
+        "nativeBuildHasImmediateIdentity",
+        "nativeBuildCompletesWithoutMeaningReview",
+        "nativeFixtureDefinitionSaved",
+        "nativeClearAssignmentsAppliedWithoutReview",
+        "nativeUncertainPaperDoesNotBlockCompletion",
+        "nativeRequestsAreExactlyOnePerPaper",
+        "nativeManualTagsPreserved",
+        "nativeSingleUncertainChoiceVisible",
+        "nativeRecentUndoVisible",
+        "nativeRepeatReusesPaidReplies",
+        "nativeRepeatFinishesWithUncertainChoice",
+        "nativeRepeatPreservesManualTags",
+        "nativeRepeatDoesNotDuplicateChoices",
+        "nativeUndoSurvivesRestart",
+        "nativeUndoChangesActualZoteroTags",
+        "nativeUndoPreservesManualTags",
+        "nativeUndoPreventsImmediateReapplication",
+        "nativeRestartAndUndoReusePaidReplies",
+        "nativeFixtureNeverUsesRealNetwork",
+        "nativeUnknownOutcomeIsNotAutomaticallyResent",
+        "nativeRecoveryCanBeStoppedWithKeyboard",
+        "nativeRecoveryKeepsCompletedResults",
+        "nativeRecoveryAddsNoRetryCharge",
+        "nativeRecoveryNeverUsesRealNetwork",
+        "workflow-layout-build",
+        "workflow-layout-vocabulary",
+        "workflow-layout-assignment",
+        "workflow-layout-activity"
+      ],
+      "metrics": {
+        "startupMs": 728,
+        "backgroundInput": {
+          "samples": 27,
+          "p95": 5.76339999999982,
+          "p99": 9.577699999999822,
+          "max": 9.577699999999822
         }
       }
     },
     "package": {
       "status": "passed",
-      "completedAt": "2026-11-03T03:30:04.746Z",
+      "completedAt": "2026-11-03T09:16:30.020Z",
       "theme": "light",
-      "graphics": "software",
-      "passed": 11,
+      "graphics": "native-default",
+      "passed": 12,
       "failed": 0,
       "checks": [
         "isolatedProfile",
         "isolatedLibrary",
         "smallWorkspaceInterface",
+        "backgroundInputLatency",
         "packagedIdentity",
         "packagedInstalledActive",
         "packagedArchiveResources",
@@ -201,17 +382,23 @@
         "packagedRapidTogglePreservesWorkers"
       ],
       "metrics": {
-        "startupMs": 557
+        "startupMs": 4487,
+        "backgroundInput": {
+          "samples": 196,
+          "p95": 2.2040000000001783,
+          "p99": 5.794800000000578,
+          "max": 6.60530000000017
+        }
       },
-      "version": "1.1.1",
-      "idleDisableMs": 21,
+      "version": "1.2.0",
+      "idleDisableMs": 93,
       "rapidToggle": true
     }
   },
   "packageChecks": {
     "status": "passed",
     "installerFiles": 14,
-    "sourceFiles": 220,
+    "sourceFiles": 225,
     "exactSourceBytes": true,
     "productionBundlesMatchInstaller": true,
     "updateVersionAndHashMatch": true,
@@ -222,24 +409,24 @@
   },
   "artifacts": {
     "installer": {
-      "file": "smart-tags-1.1.1.xpi",
-      "bytes": 1129352,
-      "sha256": "704ea0eca99264953af8237e0f736416d959867fb1f6ca33ef067daac8d4e42c"
+      "file": "smart-tags-1.2.0.xpi",
+      "bytes": 1079676,
+      "sha256": "277972b4ee639e6571be892a2a1ff04d8d10a2c4b58adb2a2d19c789fd5bbc43"
     },
     "source": {
-      "file": "smart-tags-1.1.1-source.zip",
-      "bytes": 1192802,
-      "sha256": "ae322ca2fc9aae6efecd9908263bb529392e21dbcab74cd7e48dcabcafc6dc1c"
+      "file": "smart-tags-1.2.0-source.zip",
+      "bytes": 1156806,
+      "sha256": "fd80e117a9ed5981bd74a50e31251e46a272fa5c68ffd174476653fe37afadad"
     }
   },
   "workingNativeLibraryModified": false,
   "workingExtensionCacheModified": false,
   "liveProviderRequests": 0,
   "limits": [
-    "Native UI checks use an isolated copied archive and synthetic build-result display fixture; they do not establish live AI accuracy.",
-    "UI theme runs tested the patch preview; the exact versioned release XPI separately passed installation and lifecycle checks.",
-    "The original full migration and 10,000-paper rollout measurements belong to v1.1.0 and were not repeated for this patch.",
-    "Measured timings describe the documented machine and fixtures, not an absolute latency guarantee.",
-    "Remote Zotero update discovery was not exercised; the public installer and update-feed hash are verified separately."
+    "Scientific workflow checks use a deterministic provider fixture, not a live model accuracy evaluation.",
+    "The one-time synthetic JSON migration took 280.25 seconds; normal interaction and idle disable timings are recorded separately.",
+    "Native theme/performance checks use isolated preview builds; the exact versioned XPI separately passed AddonManager lifecycle checks.",
+    "Measurements describe the documented machine and fixtures, not an absolute latency guarantee.",
+    "Remote Zotero update discovery is not exercised by the native test; the published installer and update-feed hash are verified separately."
   ]
 }
